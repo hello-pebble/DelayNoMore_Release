@@ -1,0 +1,373 @@
+@import url('https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Single+Day&family=Gamja+Flower&display=swap');
+
+body.light-mode {
+  --bg-app: #fbfaf7;
+  /* 아날로그 미색지 느낌 */
+  --bg-card: #ffffff;
+  --bg-card-hover: #f7f6f0;
+  --bg-glass: rgba(251, 250, 247, 0.9);
+
+  --border-light: rgba(0, 0, 0, 0.08);
+  --border-active: #8b5cf6;
+
+  --text-main: #2d3748;
+  --text-muted: #718096;
+  --text-inverse: #ffffff;
+
+  /* Brand Colors */
+  --primary: #6d28d9;
+  --primary-glow: rgba(109, 40, 217, 0.2);
+  --secondary: #2563eb;
+  --secondary-glow: rgba(37, 99, 235, 0.2);
+  --accent: #db2777;
+
+  /* Status Colors */
+  --success: #059669;
+  --success-glow: rgba(5, 150, 105, 0.2);
+  --warning: #d97706;
+  --danger: #dc2626;
+
+  /* Toggle switch (공유 설정 등) */
+  --switch-off: #cbd5e1;
+  --switch-knob: #ffffff;
+
+  /* Multi-goal calendar colors (인덱스별 목표 구분색; 라이트 배경용 진한 채도) */
+  --goal-1: #7c3aed;
+  --goal-2: #2563eb;
+  --goal-3: #059669;
+  --goal-4: #d97706;
+  --goal-5: #db2777;
+  --goal-6: #0891b2;
+
+  /* Notebook elements */
+  --notebook-line: rgba(0, 0, 255, 0.06);
+  --notebook-margin: rgba(239, 68, 68, 0.35);
+  --notebook-grid: rgba(0, 0, 0, 0.03);
+
+  /* Primary Button Mode Colors */
+  --btn-primary-bg: #12141c;
+  --btn-primary-text: #ffffff;
+  --btn-primary-shadow: rgba(0, 0, 0, 0.15);
+  --nav-header-bg: rgba(255, 255, 255, 0.986);
+}
+
+body.dark-mode {
+  --bg-app: #12141c;
+  /* 어두운 다이어리 커버 느낌 */
+  --bg-card: rgba(20, 24, 38, 0.75);
+  --bg-card-hover: rgba(30, 36, 56, 0.9);
+  --bg-glass: rgba(18, 20, 28, 0.85);
+
+  --border-light: rgba(255, 255, 255, 0.08);
+  --border-active: #a78bfa;
+
+  --text-main: #e2e8f0;
+  --text-muted: #94a3b8;
+  --text-inverse: #12141c;
+
+  /* Brand Colors */
+  --primary: #a78bfa;
+  --primary-glow: rgba(167, 139, 250, 0.3);
+  --secondary: #60a5fa;
+  --secondary-glow: rgba(96, 165, 250, 0.3);
+  --accent: #f472b6;
+
+  /* Status Colors */
+  --success: #34d399;
+  --success-glow: rgba(52, 211, 153, 0.2);
+  --warning: #fbbf24;
+  --danger: #f87171;
+
+  /* Toggle switch (공유 설정 등) */
+  --switch-off: #475569;
+  --switch-knob: #e2e8f0;
+
+  /* Multi-goal calendar colors (인덱스별 목표 구분색; 다크 배경용 밝은 채도) */
+  --goal-1: #a78bfa;
+  --goal-2: #60a5fa;
+  --goal-3: #34d399;
+  --goal-4: #fbbf24;
+  --goal-5: #f472b6;
+  --goal-6: #22d3ee;
+
+  /* Notebook elements */
+  --notebook-line: rgba(167, 139, 250, 0.12);
+  --notebook-margin: rgba(244, 114, 182, 0.25);
+  --notebook-grid: rgba(255, 255, 255, 0.02);
+
+  /* Primary Button Mode Colors */
+  --btn-primary-bg: #ffffff;
+  --btn-primary-text: #12141c;
+  --btn-primary-shadow: rgba(255, 255, 255, 0.15);
+  --nav-header-bg: #000000;
+}
+
+:root {
+  --primary-gradient: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+  --font-title: 'Gamja Flower', 'Single Day', sans-serif;
+  --font-body: 'Gowun Dodum', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--bg-app);
+  background-image:
+    linear-gradient(var(--notebook-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--notebook-grid) 1px, transparent 1px);
+  background-size: 20px 20px;
+  background-attachment: fixed;
+  color: var(--text-main);
+  font-size: 15px;
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Notebook UI Helpers */
+.lined-paper {
+  background-image: linear-gradient(var(--notebook-line) 1px, transparent 1px);
+  background-size: 100% 28px;
+  line-height: 28px;
+  border-left: 2px solid var(--notebook-margin);
+  padding-left: 20px;
+  transition: all 0.3s ease;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 120, 0.2);
+  border-radius: 4px;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-light);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* Base Layout */
+#root {
+  width: 100%;
+  max-width: 600px;
+  /* Mobile-first wrapper for app feel */
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  border-left: 1px solid var(--border-light);
+  border-right: 1px solid var(--border-light);
+  background: var(--bg-glass);
+}
+
+/* Navigation Tab Bar */
+.nav-tab-bar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 600px;
+  height: 72px;
+  background: var(--nav-header-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-light);
+  display: grid;
+  /* 탭 개수와 무관하게 항상 한 줄로 균등 분배 (팀 탭 추가로 4개가 되며 3열 고정이 줄바꿈을 유발했음) */
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  align-items: center;
+  z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav-tab-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  height: 100%;
+}
+
+.nav-tab-item.active {
+  color: var(--primary);
+  text-shadow: 0 0 10px var(--primary-glow);
+}
+
+/* Header */
+.app-header {
+  height: 64px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--nav-header-bg);
+  backdrop-filter: blur(10px);
+  position: sticky;
+  top: 0;
+  z-index: 90;
+}
+
+.app-title {
+  font-size: 23px;
+  font-weight: 700;
+  background: linear-gradient(135deg, #a855f7 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulseGlow {
+
+  0%,
+  100% {
+    box-shadow: 0 0 5px var(--primary-glow);
+  }
+
+  50% {
+    box-shadow: 0 0 15px var(--primary);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-left {
+  animation: slideInLeft 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-slide-right {
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Primary Button Styling */
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  border: 1px solid var(--border-light);
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 15px var(--btn-primary-shadow);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+.btn-primary:disabled {
+  background: #334155;
+  color: #64748b;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Secondary Button Styling */
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-light);
+  color: var(--text-main);
+  padding: 12px 24px;
+  border-radius: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* Modal styling */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-content {
+  width: 100%;
+  max-width: 480px;
+  padding: 28px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
