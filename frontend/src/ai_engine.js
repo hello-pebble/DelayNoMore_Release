@@ -137,18 +137,56 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
   }
 }
 
-// LLM이 반환한 tasks가 화면에 그대로 그릴 수 있는 형태인지 검증/정규화한다.
-// (날짜 키 → [{id, content, completed}] 배열) 형태가 아니면 null을 반환해 계획 갱신을 막는다.
+// LLM이 돌려준 다양한 형태를 "날짜 → 할 일 배열" 맵으로 강제 변환한다.
+// 모델마다 스키마가 달라서(예: {tasks:{날짜:[...]}}, {plan:[{date,tasks}]}, 최상위 배열 등)
+// 한 형태만 기대하면 화면이 안 그려진다. 여기서 흔한 변형을 모두 흡수한다.
+function coerceToDateMap(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  let node = raw;
+
+  // 1) {plan|days|schedule|checklist|tasks: [ ... ]} 처럼 배열을 감싼 래퍼면 그 배열을 꺼낸다.
+  if (!Array.isArray(node)) {
+    const arrayKey = ['plan', 'days', 'schedule', 'checklist', 'tasks', 'items']
+      .find((k) => Array.isArray(node[k]));
+    if (arrayKey) {
+      node = node[arrayKey];
+    } else if (node.tasks && typeof node.tasks === 'object') {
+      // 2) {tasks: {날짜: [...]}} → 안쪽 맵 사용
+      node = node.tasks;
+    }
+  }
+
+  // 3) [{date, tasks}, ...] 형태의 배열 → 날짜맵으로 변환
+  if (Array.isArray(node)) {
+    const map = {};
+    node.forEach((item, i) => {
+      if (!item || typeof item !== 'object') return;
+      const date = item.date || item.day || item.name || `Day ${i + 1}`;
+      const list = item.tasks || item.items || item.todos || item.list || [];
+      map[String(date)] = list;
+    });
+    return Object.keys(map).length ? map : null;
+  }
+
+  // 4) 이미 {날짜: [...]} 맵 형태
+  if (typeof node === 'object') return node;
+  return null;
+}
+
+// 화면에 그릴 수 있는 (날짜 → [{id, content, completed}]) 맵으로 검증/정규화한다.
+// 유효한 항목이 하나도 없으면 null을 반환해 계획 갱신을 막는다.
 function normalizeTasks(rawTasks) {
-  if (!rawTasks || typeof rawTasks !== 'object' || Array.isArray(rawTasks)) return null;
-  const dates = Object.keys(rawTasks);
+  const dateMap = coerceToDateMap(rawTasks);
+  if (!dateMap || typeof dateMap !== 'object' || Array.isArray(dateMap)) return null;
+  const dates = Object.keys(dateMap);
   if (dates.length === 0) return null;
 
   const normalized = {};
   for (const date of dates) {
-    const list = rawTasks[date];
-    if (!Array.isArray(list)) return null;
-    normalized[date] = list
+    const list = dateMap[date];
+    if (!Array.isArray(list)) continue;
+    const items = list
       .map((task, idx) => {
         const content = typeof task === 'string' ? task : task?.content;
         if (typeof content !== 'string' || !content.trim()) return null;
@@ -159,8 +197,11 @@ function normalizeTasks(rawTasks) {
         };
       })
       .filter(Boolean);
+    if (items.length > 0) {
+      normalized[date] = items;
+    }
   }
-  return normalized;
+  return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 // 초안 생성 이후의 자유 대화 — LLM이 의도(수정/질문/불명확)를 판단한다.
