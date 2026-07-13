@@ -32,6 +32,9 @@
   오프라인 모드임을 밝히며 가능한 요청 예시와 함께 되묻는다.
 - 기본 모델을 `meta-llama/llama-3-8b-instruct:free` → `qwen/qwen3.7-plus`로 변경
   (`OPENROUTER_MODEL` 환경변수로 여전히 덮어쓰기 가능).
+- OCI 배포 스크립트가 `~/.delaynomore.env`(또는 `ENV_FILE`)를 자동 로드 —
+  API 키를 최초 1회만 파일(chmod 600)로 저장하면 이후 배포에서 키 입력이 불필요하고,
+  셸 히스토리에 키가 남지 않는다. (명령줄로 준 값이 파일 값보다 우선)
 
 ### Fixed
 - OCI 배포 스크립트가 `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` 미설정 시

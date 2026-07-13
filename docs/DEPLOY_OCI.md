@@ -37,11 +37,21 @@ sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/hello-pebble/DelayNoMore_Release.git
 cd DelayNoMore_Release
 
-# 배포 스크립트 실행 (Docker 설치 + 방화벽 + 빌드 + 실행)
-OPENROUTER_API_KEY=<your_key> ./deploy/oci-setup.sh
-# 키 없이 실행하면 프론트가 mock 폴백으로 동작:
-#   ./deploy/oci-setup.sh
+# (최초 1회) API 키를 env 파일로 저장 — 이후 배포부터는 키 입력이 필요 없다
+cat > ~/.delaynomore.env <<'EOF'
+OPENROUTER_API_KEY=sk-or-여기에_실제_키
+OPENROUTER_MODEL=qwen/qwen3.7-plus
+EOF
+chmod 600 ~/.delaynomore.env
+
+# 배포 스크립트 실행 (Docker 설치 + 방화벽 + 빌드 + 실행) — env 파일을 자동으로 읽는다
+./deploy/oci-setup.sh
+# env 파일 없이 키만 일회성으로 줄 수도 있다: OPENROUTER_API_KEY=... ./deploy/oci-setup.sh
+# 키가 아예 없으면 프론트가 mock 폴백으로 동작한다.
 ```
+
+> **키 보안**: env 파일은 `chmod 600`(본인만 읽기)으로 두고, **절대 git에 커밋하지 않는다**.
+> 명령줄에 키를 직접 치면 셸 히스토리(`~/.bash_history`)에 남으므로 env 파일 방식을 권장한다.
 
 - 첫 실행은 이미지 빌드(프론트 npm + 백엔드 gradle)로 몇 분 걸린다.
 - 다른 포트로 노출하려면: `HOST_PORT=8080 OPENROUTER_API_KEY=... ./deploy/oci-setup.sh` (보안 목록도 해당 포트로)
@@ -56,7 +66,7 @@ curl -s http://localhost/api/ai/health         # {"success":...}
 
 ## 5. 운영 팁
 
-- **업데이트 배포**: `git pull` 후 `./deploy/oci-setup.sh` 재실행(컨테이너 교체).
+- **업데이트 배포**: `git pull` 후 `./deploy/oci-setup.sh` 재실행(컨테이너 교체). 키는 `~/.delaynomore.env`에서 자동 로드된다.
 - **로그**: `sudo docker logs -f delaynomore`
 - **재부팅 후 자동 기동**: `--restart unless-stopped`로 이미 처리됨.
 - **HTTPS/도메인**(선택): Caddy 또는 Nginx 리버스 프록시를 앞단에 두고 Let's Encrypt로 인증서 자동 발급. 이 경우 앱은 8080만 노출하고 프록시가 443을 담당.
