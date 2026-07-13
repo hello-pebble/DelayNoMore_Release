@@ -10,7 +10,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 2) 백엔드 빌드 (프론트 산출물을 static 으로 포함)
-FROM gradle:8-jdk17 AS backend
+FROM gradle:8-jdk21 AS backend
 WORKDIR /app
 COPY backend/gradlew ./
 COPY backend/gradle gradle
@@ -23,7 +23,7 @@ COPY --from=frontend /app/frontend/dist src/main/resources/static
 RUN ./gradlew bootJar --no-daemon
 
 # 3) 런타임
-FROM eclipse-temurin:17-jre-alpine
+FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 COPY --from=backend /app/build/libs/*.jar app.jar
 
