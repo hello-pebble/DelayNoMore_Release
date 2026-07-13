@@ -361,8 +361,8 @@ export default function ChatCoach() {
               </div>
             </div>
 
-            {/* 일차별 미션 */}
-            {Object.entries(draftChecklist.tasks).map(([date, taskList], idx) => (
+            {/* 일차별 미션 (tasks가 비정상이어도 화면이 죽지 않게 방어) */}
+            {Object.entries(draftChecklist.tasks || {}).map(([date, taskList], idx) => (
               <div
                 key={date}
                 style={{
@@ -376,7 +376,7 @@ export default function ChatCoach() {
                   Day {idx + 1} · {date}
                 </div>
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {taskList.map((task) => (
+                  {(Array.isArray(taskList) ? taskList : []).map((task) => (
                     <li key={task.id} style={{ fontSize: '14px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
                       <span style={{ color: 'var(--text-muted)' }}>☐</span>
                       <span>{task.content}</span>
