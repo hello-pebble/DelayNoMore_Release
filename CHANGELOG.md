@@ -30,6 +30,14 @@
   LLM 응답의 tasks 형식을 검증(normalize)해 깨진 응답이 화면을 망가뜨리지 않게 한다.
 - mock 폴백 대화 개선 — 인식 못 하는 요청에 "반영했다"고 답하지 않고,
   오프라인 모드임을 밝히며 가능한 요청 예시와 함께 되묻는다.
+- 기본 모델을 `meta-llama/llama-3-8b-instruct:free` → `qwen/qwen3.7-plus`로 변경
+  (`OPENROUTER_MODEL` 환경변수로 여전히 덮어쓰기 가능).
+
+### Fixed
+- OCI 배포 스크립트가 `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` 미설정 시
+  **빈 문자열**을 컨테이너에 넘겨 `application.yml` 기본값이 무시되던 문제 수정 —
+  이제 값이 있을 때만 `-e`를 전달한다. (빈 model로 OpenRouter 호출이 조용히 실패해
+  키가 있어도 mock 폴백으로 동작할 수 있었다.)
 
 ## [0.1.0] - 2026-07-13
 

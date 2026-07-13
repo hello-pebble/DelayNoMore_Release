@@ -39,7 +39,7 @@ OPENROUTER_API_KEY=<your_key> ./gradlew bootRun   # Windows: gradlew.bat bootRun
 ```
 
 - `OPENROUTER_API_KEY`를 주지 않아도 서버는 기동됩니다(이 경우 프론트가 mock 폴백).
-- 모델은 `OPENROUTER_MODEL` 환경변수로 바꿀 수 있습니다(기본: `meta-llama/llama-3-8b-instruct:free`).
+- 모델은 `OPENROUTER_MODEL` 환경변수로 바꿀 수 있습니다(기본: `qwen/qwen3.7-plus`).
 
 ### 2. 프론트엔드 (포트 5173)
 

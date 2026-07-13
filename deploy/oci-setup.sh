@@ -39,13 +39,20 @@ fi
 echo "==> [3/3] 이미지 빌드 및 실행"
 sudo docker build -t "${IMAGE}" .
 sudo docker rm -f "${NAME}" 2>/dev/null || true
+# 값이 비어 있으면 -e 자체를 생략한다. 빈 문자열을 넘기면 Spring이 "변수 존재"로 보고
+# application.yml의 기본값 대신 빈 값을 써버려 AI 호출이 조용히 실패한다.
+ENV_ARGS=(-e PORT=8080)
+if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+  ENV_ARGS+=(-e OPENROUTER_API_KEY="${OPENROUTER_API_KEY}")
+fi
+if [ -n "${OPENROUTER_MODEL:-}" ]; then
+  ENV_ARGS+=(-e OPENROUTER_MODEL="${OPENROUTER_MODEL}")
+fi
 sudo docker run -d \
   --name "${NAME}" \
   --restart unless-stopped \
   -p "${HOST_PORT}:8080" \
-  -e PORT=8080 \
-  -e OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
-  -e OPENROUTER_MODEL="${OPENROUTER_MODEL:-}" \
+  "${ENV_ARGS[@]}" \
   "${IMAGE}"
 
 echo
