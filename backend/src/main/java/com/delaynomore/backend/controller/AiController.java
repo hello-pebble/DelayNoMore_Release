@@ -292,6 +292,10 @@ public class AiController {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("model", model);
             body.put("messages", messages);
+            // 추론(thinking) 계열 모델의 사고를 끈다 — 이 용도(계획 JSON 생성)엔 추론이 불필요하고,
+            // 켜두면 응답이 수십 초 걸리고 사고 텍스트가 섞여 JSON 파싱을 방해한다.
+            // 지원하지 않는 모델은 이 값을 무시한다.
+            body.put("reasoning", Map.of("enabled", false));
 
             ResponseEntity<String> response = restTemplate.postForEntity(
                     apiUrl + "/chat/completions",
@@ -329,7 +333,52 @@ public class AiController {
         if (trimmed.endsWith("```")) {
             trimmed = trimmed.substring(0, trimmed.length() - 3);
         }
-        return trimmed.trim();
+        trimmed = trimmed.trim();
+
+        // 코드펜스를 벗겨도 순수 JSON이 아니면(추론 텍스트/설명이 섞이면) 파싱이 실패한다.
+        // 문자열에서 첫 '{' ~ 짝이 맞는 '}' 까지를 뽑아 JSON 객체만 남긴다(문자열 내 중괄호는 무시).
+        if (!trimmed.startsWith("{")) {
+            String extracted = extractJsonObject(trimmed);
+            if (extracted != null) {
+                return extracted;
+            }
+        }
+        return trimmed;
+    }
+
+    // 임의의 텍스트에서 최상위 JSON 객체({ ... })를 추출한다. 중첩 중괄호와 문자열 리터럴을 고려한다.
+    private String extractJsonObject(String text) {
+        int start = text.indexOf('{');
+        if (start < 0) {
+            return null;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return text.substring(start, i + 1);
+                }
+            }
+        }
+        return null;
     }
 
     // 값을 JSON 문자열로 직렬화한다. 실패 시 프롬프트 조립이 깨지지 않도록 fallback을 반환한다.

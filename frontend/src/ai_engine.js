@@ -104,6 +104,15 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
     });
     console.log("🟢 [Backend API] AI 계획 초안 수신 성공:", resultJson);
 
+    // 응답에서 화면에 그릴 수 있는 tasks를 뽑아 검증한다. 모델이 {tasks:{...}}가 아니라
+    // 날짜맵을 최상위로 주거나(=resultJson 자체), 빈 객체를 주는 경우까지 감안한다.
+    // 유효한 tasks가 없으면 화이트스크린 대신 mock 폴백으로 데모 흐름을 지킨다.
+    const tasks = normalizeTasks(resultJson?.tasks) || normalizeTasks(resultJson);
+    if (!tasks) {
+      console.warn("AI 초안 응답에 유효한 tasks가 없어 mock 폴백으로 대체합니다:", resultJson);
+      return generateMockChecklistDraft(slots, refinementPrompt);
+    }
+
     // REST API이므로 onChunk에 완성된 응답을 한 번에 전달하여 UI 렌더링 지원
     if (onChunk) {
       onChunk(JSON.stringify(resultJson, null, 2));
@@ -115,7 +124,7 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
       duration,
       dailyHours,
       currentLevel,
-      tasks: resultJson.tasks,
+      tasks,
       status: 'DRAFT',
       startDate,
       endDate,
