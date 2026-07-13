@@ -32,6 +32,35 @@ export const postAiDraft = async (payload) => {
   return data;
 };
 
+// 초안 생성 이후의 자유 대화 — 백엔드(/api/ai/chat)가 의도 판단(수정/질문/불명확)까지 LLM에 위임한다.
+// 응답: { reply, planUpdated, tasks? }
+export const postAiChat = async (payload) => {
+  const response = await fetch(`${API_BASE}/ai/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (data && typeof data === 'object' && (data.message || data.error)) ||
+      `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
+};
+
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
 export const getAiHealth = async () => {
   try {

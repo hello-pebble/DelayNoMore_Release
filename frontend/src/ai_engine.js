@@ -1,5 +1,5 @@
 // AI Slot-Filling 및 계획 생성 엔진
-import { postAiDraft, getAiHealth } from "./db_service";
+import { postAiDraft, postAiChat, getAiHealth } from "./db_service";
 import { todayStr } from "./date_utils";
 
 
@@ -126,6 +126,104 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
     console.error("Failed to generate AI checklist draft via Backend API:", error);
     return generateMockChecklistDraft(slots, refinementPrompt);
   }
+}
+
+// LLM이 반환한 tasks가 화면에 그대로 그릴 수 있는 형태인지 검증/정규화한다.
+// (날짜 키 → [{id, content, completed}] 배열) 형태가 아니면 null을 반환해 계획 갱신을 막는다.
+function normalizeTasks(rawTasks) {
+  if (!rawTasks || typeof rawTasks !== 'object' || Array.isArray(rawTasks)) return null;
+  const dates = Object.keys(rawTasks);
+  if (dates.length === 0) return null;
+
+  const normalized = {};
+  for (const date of dates) {
+    const list = rawTasks[date];
+    if (!Array.isArray(list)) return null;
+    normalized[date] = list
+      .map((task, idx) => {
+        const content = typeof task === 'string' ? task : task?.content;
+        if (typeof content !== 'string' || !content.trim()) return null;
+        return {
+          id: task?.id || `t-${date}-${idx}`,
+          content: content.trim(),
+          completed: task?.completed === true
+        };
+      })
+      .filter(Boolean);
+  }
+  return normalized;
+}
+
+// 초안 생성 이후의 자유 대화 — LLM이 의도(수정/질문/불명확)를 판단한다.
+// 반환: { reply: string, updatedDraft: draft | null }
+export async function chatWithCoach(slots, draft, history, message) {
+  try {
+    const result = await postAiChat({
+      goalName: slots.goalName,
+      duration: slots.duration,
+      dailyHours: slots.dailyHours,
+      currentLevel: slots.currentLevel,
+      tasks: draft?.tasks || {},
+      history,
+      message
+    });
+    console.log("🟢 [Backend API] AI 대화 응답 수신 성공:", result);
+
+    const reply = typeof result?.reply === 'string' && result.reply.trim()
+      ? result.reply.trim()
+      : null;
+
+    if (result?.planUpdated === true) {
+      const tasks = normalizeTasks(result.tasks);
+      if (tasks) {
+        return {
+          reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+          updatedDraft: { ...draft, tasks }
+        };
+      }
+      // planUpdated라고 했지만 tasks가 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
+      return {
+        reply: "계획을 수정하다가 형식 오류가 발생했어요. 같은 요청을 한 번만 다시 보내주시겠어요?",
+        updatedDraft: null
+      };
+    }
+
+    if (reply) {
+      return { reply, updatedDraft: null };
+    }
+    throw new Error("empty reply from /api/ai/chat");
+  } catch (error) {
+    console.error("Failed to chat via Backend API:", error);
+    return mockChatWithCoach(slots, draft, message);
+  }
+}
+
+// 대화 폴백 (백엔드/AI 미가용 시) — 아는 키워드면 mock 재생성으로 반영하고,
+// 모르는 요청이면 "반영했다"고 거짓말하는 대신 예시와 함께 되묻는다.
+export function mockChatWithCoach(slots, draft, message) {
+  const text = (message || '').trim();
+
+  const isReduced = text.includes('줄여') || text.includes('적게') || text.includes('힘들어') || text.includes('야근');
+  const isIncreased = text.includes('늘려') || text.includes('많이') || text.includes('부족');
+  const skipWeekend = text.includes('주말') && (text.includes('쉬') || text.includes('빼'));
+
+  if (isReduced || isIncreased || skipWeekend) {
+    const refined = generateMockChecklistDraft(slots, text);
+    const changed = skipWeekend
+      ? "주말을 휴식일로 바꿨습니다"
+      : isReduced
+        ? "하루 분량을 한 단계 줄였습니다"
+        : "하루 분량을 한 단계 늘렸습니다";
+    return {
+      reply: `(오프라인 모드) ${changed}. 오른쪽 체크리스트에서 확인해 보세요.`,
+      updatedDraft: refined
+    };
+  }
+
+  return {
+    reply: "(오프라인 모드) 지금은 AI 연결 없이 동작 중이라 정해진 패턴의 요청만 반영할 수 있어요.\n예: \"주말은 빼줘\", \"일정을 줄여줘\", \"일정을 늘려줘\"",
+    updatedDraft: null
+  };
 }
 
 // 템플릿 기반 계획 생성 (Fallback용 — 백엔드/AI 미가용 시에도 데모 흐름이 끊기지 않게 한다)

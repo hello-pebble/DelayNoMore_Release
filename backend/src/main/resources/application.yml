@@ -6,4 +6,4 @@ openrouter:
   api:
     url: https://openrouter.ai/api/v1
     key: ${OPENROUTER_API_KEY:YOUR_OPENROUTER_API_KEY_HERE}
-    model: ${OPENROUTER_MODEL:meta-llama/llama-3-8b-instruct:free}
+    model: ${OPENROUTER_MODEL:qwen/qwen3.7-plus}

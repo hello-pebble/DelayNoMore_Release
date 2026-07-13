@@ -16,10 +16,31 @@
 - Oracle Cloud(OCI) Always Free 배포 가이드(`docs/DEPLOY_OCI.md`)와
   VM 자동 세팅 스크립트(`deploy/oci-setup.sh`) — Ampere A1 + Docker.
 - 기능 점검 체크리스트 문서(`docs/QA_CHECKLIST.md`) — 버전별 QA 항목.
+- 대화 엔드포인트 `/api/ai/chat` — 초안 생성 이후 유저 메시지를 LLM이 직접 해석해
+  **의도(계획 수정 / 질문·잡담 / 불명확)** 를 판단. 최근 대화 이력을 함께 전달해
+  "반영 안됐는데?" 같은 맥락 의존 발화도 처리한다.
 
 ### Changed
 - 서버 포트를 `${PORT:8080}`로 변경 — 배포 플랫폼(Render·Cloud Run·OCI 등)이
   주입하는 `PORT`를 사용하고, 로컬은 8080 기본값 유지.
+- **LLM 대화 고도화**: 초안 생성 후 채팅이 모든 입력을 수정 요청으로 간주해
+  무조건 재생성하고 고정 문구("요청하신 사항을 계획에 반영했습니다")로 답하던 방식을 제거.
+  이제 LLM의 자연어 답변(무엇을 어떻게 바꿨는지)을 그대로 표시하고,
+  실제로 계획이 바뀐 경우에만 오른쪽 체크리스트를 갱신한다.
+  LLM 응답의 tasks 형식을 검증(normalize)해 깨진 응답이 화면을 망가뜨리지 않게 한다.
+- mock 폴백 대화 개선 — 인식 못 하는 요청에 "반영했다"고 답하지 않고,
+  오프라인 모드임을 밝히며 가능한 요청 예시와 함께 되묻는다.
+- 기본 모델을 `meta-llama/llama-3-8b-instruct:free` → `qwen/qwen3.7-plus`로 변경
+  (`OPENROUTER_MODEL` 환경변수로 여전히 덮어쓰기 가능).
+- OCI 배포 스크립트가 `~/.delaynomore.env`(또는 `ENV_FILE`)를 자동 로드 —
+  API 키를 최초 1회만 파일(chmod 600)로 저장하면 이후 배포에서 키 입력이 불필요하고,
+  셸 히스토리에 키가 남지 않는다. (명령줄로 준 값이 파일 값보다 우선)
+
+### Fixed
+- OCI 배포 스크립트가 `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` 미설정 시
+  **빈 문자열**을 컨테이너에 넘겨 `application.yml` 기본값이 무시되던 문제 수정 —
+  이제 값이 있을 때만 `-e`를 전달한다. (빈 model로 OpenRouter 호출이 조용히 실패해
+  키가 있어도 mock 폴백으로 동작할 수 있었다.)
 
 ## [0.1.0] - 2026-07-13
 
