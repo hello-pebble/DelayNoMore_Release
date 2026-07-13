@@ -14,15 +14,18 @@
 
 ## 구조
 
+화면은 좌우로 분할되어 **왼쪽=AI 코치와의 대화**, **오른쪽=생성된 체크리스트**를 동시에 보여줍니다. (모바일 폭에서는 위아래로 스택됩니다.)
+
 ```
 DelayNoMore_Release/
-├── frontend/   # React 19 + Vite (순수 JS/JSX)
+├── Dockerfile  # 단일 배포: 프론트 빌드 → 백엔드 static 포함 → 하나의 jar/컨테이너
+├── frontend/   # React 19 + Vite (순수 JS/JSX) — 심플 디자인(시스템 폰트, 무배경)
 │   └── src/
-│       ├── App.jsx                    # 테마 + AI 상태 LED + 코치 화면 마운트
+│       ├── App.jsx                    # 헤더 + AI 상태 표시 + 코치 화면 마운트
 │       ├── ai_engine.js               # 슬롯필링 로직 + 계획 생성 + mock 폴백
 │       ├── db_service.js              # 백엔드 AI 프록시 호출(단일 REST 클라이언트)
-│       └── components/chat_coach.jsx  # 대화 UI + 생성된 투두 카드
-└── backend/    # Spring Boot 3.3.1 / Java 17 (AI 프록시 전용)
+│       └── components/chat_coach.jsx  # 좌우 분할: 대화 패널 + 체크리스트 패널
+└── backend/    # Spring Boot 3.3.1 / Java 17 (AI 프록시 + 정적 화면 서빙)
     └── src/main/java/.../controller/AiController.java   # /api/ai/draft, /api/ai/health
 ```
 
@@ -48,10 +51,19 @@ npm run dev
 
 Vite 개발 서버가 `/api/*` 요청을 `http://localhost:8080`으로 프록시합니다.
 
-## 배포
+## 배포 (단일 컨테이너)
 
-- **프론트엔드**: `npm run build` → `frontend/dist`를 정적 호스팅(Vercel · Netlify · Cloudflare Pages 등). 배포 시 `/api/*`를 백엔드 주소로 프록시/리라이트하도록 설정하세요.
-- **백엔드**: `backend/Dockerfile`로 컨테이너 이미지를 빌드해 임의의 Java 호스팅에 배포하고 `OPENROUTER_API_KEY`를 주입하세요.
+프론트엔드와 백엔드를 **하나의 이미지**로 빌드/배포합니다. Spring Boot가 빌드된 프론트엔드 정적 파일과 `/api/*`를 같은 서버(포트 8080)에서 함께 서빙하므로, 프론트/백엔드를 따로 배포하거나 `/api/*` 프록시를 별도로 설정할 필요가 없습니다.
+
+```bash
+# 저장소 루트에서
+docker build -t delaynomore .
+docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
+# http://localhost:8080 접속
+```
+
+- `OPENROUTER_API_KEY` 미설정 시에도 컨테이너는 기동되며, 이 경우 프론트가 mock 폴백으로 동작합니다.
+- Cloud Run · Render · Railway · Fly.io 등 컨테이너를 받는 어떤 호스팅에도 이 이미지 하나만 올리면 됩니다.
 
 ## 환경변수
 
