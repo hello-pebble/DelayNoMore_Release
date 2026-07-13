@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+### Added
+- Render 배포용 블루프린트(`render.yaml`) — 루트 Dockerfile 기반 단일 웹 서비스.
+
+### Changed
+- 서버 포트를 `${PORT:8080}`로 변경 — 배포 플랫폼(Render·Cloud Run·OCI 등)이
+  주입하는 `PORT`를 사용하고, 로컬은 8080 기본값 유지.
+
 ## [0.1.0] - 2026-07-13
 
 첫 데모 릴리스. 원본 [DelayNoMore](https://github.com/hello-pebble/DelayNoMore)의

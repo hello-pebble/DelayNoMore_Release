@@ -1,0 +1,21 @@
+# Render Blueprint — 단일 컨테이너(프론트+API) 웹 서비스.
+# 저장소 루트의 Dockerfile 하나로 빌드/배포한다.
+# 배포: Render 대시보드 → New → Blueprint → 이 저장소 선택.
+services:
+  - type: web
+    name: delaynomore
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # 앱은 Render가 주입하는 PORT로 바인딩(application.yml: ${PORT:8080}).
+    healthCheckPath: /api/ai/health
+    autoDeploy: true
+    envVars:
+      # 값은 Render 대시보드에서 직접 입력(시크릿). 미설정 시 프론트 mock 폴백.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+      # 512MB 무료 티어에서 JVM 메모리 안정화.
+      - key: JAVA_TOOL_OPTIONS
+        value: -XX:MaxRAMPercentage=75

@@ -1,5 +1,6 @@
 server:
-  port: 8080
+  # 배포 플랫폼(Render·Cloud Run·OCI 등)이 주입하는 PORT를 사용, 로컬은 8080 기본값.
+  port: ${PORT:8080}
 
 openrouter:
   api:
