@@ -5,6 +5,7 @@ import {
   getNextQuestion,
   parseUserMessage,
   generateChecklistDraft,
+  chatWithCoach,
   INITIAL_SLOTS
 } from '../ai_engine';
 
@@ -115,46 +116,28 @@ export default function ChatCoach() {
     setIsTyping(true);
 
     try {
-      // 이미 드래프트가 생성되었고, 사용자가 수정 요청 피드백을 주고 있는 상태라면 재수정
+      // 초안 생성 이후에는 자유 대화 모드 — LLM이 의도(수정/질문/불명확)를 직접 판단한다.
+      // 무조건 재생성하고 "반영했습니다"라고 답하던 이전 방식을 대체한다.
       if (draftChecklist) {
-        const botMsgId = generateUniqueId('stream');
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: botMsgId,
-            sender: 'bot',
-            text: `요청하신 사항("${userText}")을 기반으로 계획을 다시 수정하고 있습니다. 잠시만 기다려 주세요.`
-          }
-        ]);
-
         startThinking();
 
-        let hasStartedStreaming = false;
-        // 직전 초안(draftChecklist)을 넘겨 백엔드가 assistant 턴으로 이어 재수정하게 한다.
-        const refined = await generateChecklistDraft(slots, userText, () => {
-          if (!hasStartedStreaming) {
-            hasStartedStreaming = true;
-            stopThinking();
-          }
-          setMessages((prev) =>
-            prev.map(msg =>
-              msg.id === botMsgId
-                ? { ...msg, text: `요청하신 사항("${userText}")을 반영해 계획표를 보완/재조정하고 있습니다...` }
-                : msg
-            )
-          );
-        }, draftChecklist);
+        // 최근 대화 이력(방금 보낸 메시지 제외)을 role/content 형태로 전달해
+        // "반영 안됐는데?" 같은 맥락 의존 발화도 이해할 수 있게 한다.
+        const history = messages.slice(-10).map((msg) => ({
+          role: msg.sender === 'user' ? 'user' : 'assistant',
+          content: msg.text
+        }));
+
+        const { reply, updatedDraft } = await chatWithCoach(slots, draftChecklist, history, userText);
 
         stopThinking();
-        setDraftChecklist(refined);
-        const replyText = `요청하신 사항("${userText}")을 계획에 반영했습니다. 오른쪽 체크리스트에서 확인해 보세요.`;
-        setMessages((prev) =>
-          prev.map(msg =>
-            msg.id === botMsgId
-              ? { ...msg, text: replyText }
-              : msg
-          )
-        );
+        if (updatedDraft) {
+          setDraftChecklist(updatedDraft);
+        }
+        setMessages((prev) => [
+          ...prev,
+          { id: generateUniqueId('bot'), sender: 'bot', text: reply }
+        ]);
         return;
       }
 
@@ -321,7 +304,7 @@ export default function ChatCoach() {
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder={draftChecklist ? "수정 요청 사항을 입력해 주세요..." : "대답을 입력해 주세요..."}
+          placeholder={draftChecklist ? "수정 요청이나 질문을 입력해 주세요..." : "대답을 입력해 주세요..."}
           style={{
             flex: 1,
             padding: '10px 12px',
