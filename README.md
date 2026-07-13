@@ -68,7 +68,7 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 
 ### 플랫폼별 가이드
 
-- **Oracle Cloud(OCI) Always Free** (권장 · 상시 무료): [`docs/DEPLOY_OCI.md`](./docs/DEPLOY_OCI.md) — Ampere A1 VM + Docker, `deploy/oci-setup.sh`로 자동 세팅.
+- **Oracle Cloud(OCI) Always Free** (권장 · 상시 무료): [`docs/DEPLOY_OCI.md`](./docs/DEPLOY_OCI.md) — GitHub Actions가 이미지를 `ghcr.io`에 빌드/푸시하고, VM은 `deploy/oci-pull.sh`로 **빌드 없이 pull만** 해서 배포(낮은 사양 VM 권장). RAM이 넉넉하면 `deploy/oci-setup.sh`로 VM에서 직접 빌드도 가능.
 - **Render**: 루트 `render.yaml` 블루프린트로 배포(New → Blueprint). 무료 티어는 미사용 시 슬립.
 
 ## 환경변수

@@ -29,10 +29,18 @@ OCI는 **① 보안 목록(클라우드)** 과 **② 인스턴스 방화벽(OS)*
 ### ② OS 방화벽
 - 아래 `oci-setup.sh`가 iptables 규칙을 자동으로 추가한다.
 
-## 3. 코드 받기 + 배포 (VM에서 SSH 접속 후)
+## 3. 배포 (VM에서 SSH 접속 후)
+
+**권장: pull 방식** — GitHub Actions가 이미지를 빌드해 `ghcr.io`에 올리므로, VM은 빌드 없이 이미지를 받기만 한다. 낮은 사양 VM(예: 1GB Micro)에서 gradle/npm 빌드로 마비되는 것을 피한다.
+
+> 사전 준비(최초 1회): GitHub 저장소에서 이미지가 한 번 이상 빌드되어 있어야 한다.
+> `main`에 푸시하면 `.github/workflows/image.yml`가 자동 실행되어 이미지를 만든다.
+> 그리고 **패키지를 public으로 공개**해야 VM이 인증 없이 pull 할 수 있다
+> (GitHub → 저장소 → Packages → 해당 패키지 → Package settings → Change visibility → Public).
+> private로 유지하려면 VM에서 `echo <PAT> | sudo docker login ghcr.io -u <GH_USER> --password-stdin` 로 로그인한다.
 
 ```bash
-# git 설치(없으면) 후 저장소 클론
+# git 설치(없으면) 후 저장소 클론 (스크립트만 있으면 되므로 얕은 클론도 가능)
 sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/hello-pebble/DelayNoMore_Release.git
 cd DelayNoMore_Release
@@ -44,17 +52,25 @@ OPENROUTER_MODEL=qwen/qwen3.7-plus
 EOF
 chmod 600 ~/.delaynomore.env
 
-# 배포 스크립트 실행 (Docker 설치 + 방화벽 + 빌드 + 실행) — env 파일을 자동으로 읽는다
-./deploy/oci-setup.sh
-# env 파일 없이 키만 일회성으로 줄 수도 있다: OPENROUTER_API_KEY=... ./deploy/oci-setup.sh
-# 키가 아예 없으면 프론트가 mock 폴백으로 동작한다.
+# 이미지 받아서 실행 (Docker 설치 + 방화벽 + pull + 실행) — env 파일을 자동으로 읽는다
+./deploy/oci-pull.sh
 ```
 
 > **키 보안**: env 파일은 `chmod 600`(본인만 읽기)으로 두고, **절대 git에 커밋하지 않는다**.
 > 명령줄에 키를 직접 치면 셸 히스토리(`~/.bash_history`)에 남으므로 env 파일 방식을 권장한다.
 
-- 첫 실행은 이미지 빌드(프론트 npm + 백엔드 gradle)로 몇 분 걸린다.
-- 다른 포트로 노출하려면: `HOST_PORT=8080 OPENROUTER_API_KEY=... ./deploy/oci-setup.sh` (보안 목록도 해당 포트로)
+- pull 방식은 이미지 다운로드만 하므로 수십 초 내에 끝나고 메모리를 거의 쓰지 않는다.
+- 다른 포트로 노출하려면: `HOST_PORT=8080 ./deploy/oci-pull.sh` (보안 목록도 해당 포트로)
+
+<details>
+<summary>대안: VM에서 직접 빌드 (<code>oci-setup.sh</code>)</summary>
+
+레지스트리를 쓰지 않고 VM에서 소스로 이미지를 빌드한다. **RAM이 넉넉한 shape(Ampere 6GB 등)에서만 권장** — 1GB Micro에서는 빌드가 메모리 부족으로 실패/마비될 수 있다.
+
+```bash
+./deploy/oci-setup.sh   # Docker 설치 + 방화벽 + npm/gradle 빌드 + 실행
+```
+</details>
 
 ## 4. 확인
 
@@ -66,7 +82,7 @@ curl -s http://localhost/api/ai/health         # {"success":...}
 
 ## 5. 운영 팁
 
-- **업데이트 배포**: `git pull` 후 `./deploy/oci-setup.sh` 재실행(컨테이너 교체). 키는 `~/.delaynomore.env`에서 자동 로드된다.
+- **업데이트 배포(pull 방식)**: `main`에 변경이 머지되면 GitHub Actions가 새 이미지를 올린다. VM에서는 `./deploy/oci-pull.sh` 만 다시 실행하면 최신 이미지를 받아 컨테이너를 교체한다(빌드 없음). 키는 `~/.delaynomore.env`에서 자동 로드된다.
 - **로그**: `sudo docker logs -f delaynomore`
 - **재부팅 후 자동 기동**: `--restart unless-stopped`로 이미 처리됨.
 - **HTTPS/도메인**(선택): Caddy 또는 Nginx 리버스 프록시를 앞단에 두고 Let's Encrypt로 인증서 자동 발급. 이 경우 앱은 8080만 노출하고 프록시가 443을 담당.
