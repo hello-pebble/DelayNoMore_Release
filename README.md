@@ -63,7 +63,13 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 ```
 
 - `OPENROUTER_API_KEY` 미설정 시에도 컨테이너는 기동되며, 이 경우 프론트가 mock 폴백으로 동작합니다.
-- Cloud Run · Render · Railway · Fly.io 등 컨테이너를 받는 어떤 호스팅에도 이 이미지 하나만 올리면 됩니다.
+- 앱은 배포 플랫폼이 주입하는 `PORT`로 바인딩합니다(로컬 기본값 8080).
+- Cloud Run · Render · Railway 등 컨테이너를 받는 어떤 호스팅에도 이 이미지 하나만 올리면 됩니다.
+
+### 플랫폼별 가이드
+
+- **Oracle Cloud(OCI) Always Free** (권장 · 상시 무료): [`docs/DEPLOY_OCI.md`](./docs/DEPLOY_OCI.md) — Ampere A1 VM + Docker, `deploy/oci-setup.sh`로 자동 세팅.
+- **Render**: 루트 `render.yaml` 블루프린트로 배포(New → Blueprint). 무료 티어는 미사용 시 슬립.
 
 ## 환경변수
 

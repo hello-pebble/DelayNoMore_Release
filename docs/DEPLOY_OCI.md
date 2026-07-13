@@ -1,0 +1,67 @@
+# Oracle Cloud(OCI) 배포 가이드 — Always Free
+
+단일 컨테이너(Spring Boot가 프론트+API 서빙)를 OCI **Always Free** 자원으로 배포한다.
+권장 구성: **Ampere A1 Compute VM(ARM) + Docker**. (이미지 베이스가 모두 arm64 멀티아치라 그대로 동작)
+
+> AMD 마이크로(x86) Always Free는 RAM이 1GB뿐이라 JVM 빌드/구동이 빠듯하다. **Ampere A1**(최대 4 OCPU / 24GB, 예: 1 OCPU/6GB만 써도 충분)을 권장한다.
+
+## 1. VM 생성 (OCI 콘솔)
+
+1. **Compute → Instances → Create instance**
+2. **Image**: Canonical Ubuntu 22.04 (또는 24.04)
+3. **Shape**: `VM.Standard.A1.Flex` (Ampere) → 예: **1 OCPU / 6 GB** (Always Free 한도 내)
+   - Ampere 용량 부족(Out of capacity) 에러가 나면 다른 가용 도메인/리전으로 재시도.
+4. **Networking**: 퍼블릭 IP **할당**
+5. **SSH key**: 본인 공개키 등록 → 생성
+6. 생성 후 **퍼블릭 IP** 확인
+
+## 2. 인바운드 포트 열기 (2군데 모두 필요)
+
+OCI는 **① 보안 목록(클라우드)** 과 **② 인스턴스 방화벽(OS)** 두 겹을 막는다.
+
+### ① 보안 목록 (콘솔)
+- **Networking → Virtual Cloud Networks → (VCN) → Security Lists → Default Security List**
+- **Add Ingress Rules**:
+  - Source CIDR: `0.0.0.0/0`
+  - IP Protocol: `TCP`
+  - Destination Port Range: `80` (아래 스크립트 기본값)
+
+### ② OS 방화벽
+- 아래 `oci-setup.sh`가 iptables 규칙을 자동으로 추가한다.
+
+## 3. 코드 받기 + 배포 (VM에서 SSH 접속 후)
+
+```bash
+# git 설치(없으면) 후 저장소 클론
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/hello-pebble/DelayNoMore_Release.git
+cd DelayNoMore_Release
+
+# 배포 스크립트 실행 (Docker 설치 + 방화벽 + 빌드 + 실행)
+OPENROUTER_API_KEY=<your_key> ./deploy/oci-setup.sh
+# 키 없이 실행하면 프론트가 mock 폴백으로 동작:
+#   ./deploy/oci-setup.sh
+```
+
+- 첫 실행은 이미지 빌드(프론트 npm + 백엔드 gradle)로 몇 분 걸린다.
+- 다른 포트로 노출하려면: `HOST_PORT=8080 OPENROUTER_API_KEY=... ./deploy/oci-setup.sh` (보안 목록도 해당 포트로)
+
+## 4. 확인
+
+```bash
+sudo docker ps
+curl -s http://localhost/api/ai/health         # {"success":...}
+```
+브라우저에서 **http://<VM_PUBLIC_IP>** 접속.
+
+## 5. 운영 팁
+
+- **업데이트 배포**: `git pull` 후 `./deploy/oci-setup.sh` 재실행(컨테이너 교체).
+- **로그**: `sudo docker logs -f delaynomore`
+- **재부팅 후 자동 기동**: `--restart unless-stopped`로 이미 처리됨.
+- **HTTPS/도메인**(선택): Caddy 또는 Nginx 리버스 프록시를 앞단에 두고 Let's Encrypt로 인증서 자동 발급. 이 경우 앱은 8080만 노출하고 프록시가 443을 담당.
+- **메모리**(선택): 6GB면 여유롭지만, 더 작은 shape면 `-e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75` 추가.
+
+## (대안) OCI Container Instances
+VM 관리 없이 이미지만 올려 실행하는 관리형 옵션. 단, **Always Free 대상이 아님**(사용량 과금).
+이미지를 **OCIR**(Oracle Container Registry)에 푸시한 뒤 Container Instance로 실행한다. 상시 무료가 목적이면 위의 Ampere VM을 권장.
