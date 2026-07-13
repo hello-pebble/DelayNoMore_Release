@@ -1,7 +1,7 @@
 package com.delaynomore.backend.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -196,7 +196,7 @@ public class AiController {
             }
 
             JsonNode root = objectMapper.readTree(response.getBody());
-            String content = root.path("choices").path(0).path("message").path("content").asText("{}");
+            String content = root.path("choices").path(0).path("message").path("content").asString("{}");
             return sanitizeJson(content);
         } catch (ResponseStatusException e) {
             throw e;

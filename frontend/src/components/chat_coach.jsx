@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Bot, RefreshCw } from 'lucide-react';
+import { Send } from 'lucide-react';
 import {
   getNextEmptySlot,
   getNextQuestion,
@@ -123,7 +123,7 @@ export default function ChatCoach() {
           {
             id: botMsgId,
             sender: 'bot',
-            text: `🔄 요청하신 사항("${userText}")을 기반으로 계획을 다시 수정하고 있습니다. 잠시만 기다려 주세요.\n\n`
+            text: `요청하신 사항("${userText}")을 기반으로 계획을 다시 수정하고 있습니다. 잠시만 기다려 주세요.`
           }
         ]);
 
@@ -139,7 +139,7 @@ export default function ChatCoach() {
           setMessages((prev) =>
             prev.map(msg =>
               msg.id === botMsgId
-                ? { ...msg, text: `🔄 요청하신 사항("${userText}")을 기반으로 일차별 계획표를 보완 및 재조정하고 있습니다. 잠시만 기다려 주세요...` }
+                ? { ...msg, text: `요청하신 사항("${userText}")을 반영해 계획표를 보완/재조정하고 있습니다...` }
                 : msg
             )
           );
@@ -147,7 +147,7 @@ export default function ChatCoach() {
 
         stopThinking();
         setDraftChecklist(refined);
-        const replyText = `요청하신 사항("${userText}")을 계획에 반영하여 보완했습니다. 새 일정을 아래 카드에서 확인해 보세요!`;
+        const replyText = `요청하신 사항("${userText}")을 계획에 반영했습니다. 오른쪽 체크리스트에서 확인해 보세요.`;
         setMessages((prev) =>
           prev.map(msg =>
             msg.id === botMsgId
@@ -203,7 +203,7 @@ export default function ChatCoach() {
         {
           id: botMsgId,
           sender: 'bot',
-          text: "🎯 AI 코치가 사용자의 수준과 일정에 맞춤화된 계획표를 조립하고 있습니다. 잠시만 기다려 주세요.\n\n"
+          text: "입력하신 정보로 맞춤 계획표를 만들고 있습니다. 잠시만 기다려 주세요."
         }
       ]);
 
@@ -218,7 +218,7 @@ export default function ChatCoach() {
         setMessages((prev) =>
           prev.map(msg =>
             msg.id === botMsgId
-              ? { ...msg, text: `🎯 AI 코치가 사용자의 수준과 일정에 맞춤화된 계획표를 조립하고 있습니다. 잠시만 기다려 주세요...` }
+              ? { ...msg, text: `맞춤 계획표를 조립하고 있습니다...` }
               : msg
           )
         );
@@ -226,7 +226,7 @@ export default function ChatCoach() {
 
       stopThinking();
       setDraftChecklist(checklist);
-      const replyText = "🎉 축하합니다! 완벽한 계획 수립을 위한 핵심 정보가 모두 채워졌습니다. 귀하를 미루지 않게 해줄 일차별 계획 초안을 작성했습니다. 아래 카드를 확인해 주세요.";
+      const replyText = "계획 초안을 완성했습니다. 오른쪽 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
       setMessages((prev) =>
         prev.map(msg =>
           msg.id === botMsgId
@@ -242,69 +242,34 @@ export default function ChatCoach() {
     }
   };
 
-  const handleRefineRequest = () => {
-    const replyText = "계획의 어떤 부분을 변경하고 싶으신가요? 채팅으로 자세히 알려주시면 맞춤 수정해 드리겠습니다. (예: '수요일은 야근이 있어 가볍게 해줘', '주말 일정을 제외해줘', '일정을 늘려줘')";
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateUniqueId('bot'),
-        sender: 'bot',
-        text: replyText
-      }
-    ]);
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)', position: 'relative' }}>
-      {/* AI 코치 헤더 */}
-      <div style={{ padding: '16px 20px', background: 'var(--bg-glass)', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary-gradient)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Bot size={22} color="white" />
-        </div>
-        <div>
-          <h3 style={{ fontSize: '18px', fontWeight: '700', fontFamily: 'var(--font-title)', color: 'var(--text-main)' }}>지연 제로 AI 코치</h3>
-          <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>1:1 아날로그 극복 일기장</span>
-        </div>
+  // === 왼쪽: 대화 패널 ===
+  const chatPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
+        AI 코치와 대화
       </div>
 
       {/* 대화 영역 */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
         {messages.map((msg) => (
           <div
             key={msg.id}
             className="animate-fade-in"
             style={{
               display: 'flex',
-              justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start',
-              gap: '8px'
+              justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start'
             }}
           >
-            {msg.sender === 'bot' && (
-              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-light)', flexShrink: 0 }}>
-                <Bot size={14} color="var(--primary)" />
-              </div>
-            )}
             <div
-              className={msg.sender === 'bot' ? 'post-it' : ''}
               style={{
-                maxWidth: '85%',
-                padding: '12px 16px',
-                lineHeight: '1.6',
+                maxWidth: '80%',
+                padding: '9px 13px',
+                borderRadius: '12px',
+                lineHeight: '1.5',
                 whiteSpace: 'pre-wrap',
-                // 봇은 포스트잇 메모지 스타일
-                background: msg.sender === 'bot' ? 'var(--bg-card)' : 'transparent',
-                color: msg.sender === 'bot' ? 'var(--text-main)' : 'var(--primary)',
-                // 유저는 공책에 직접 만년필로 적은 손글씨 스타일
-                fontFamily: msg.sender === 'bot' ? 'var(--font-body)' : 'var(--font-title)',
-                fontSize: msg.sender === 'bot' ? '14px' : '18px',
-                fontWeight: msg.sender === 'bot' ? '500' : '700',
-                border: msg.sender === 'bot' ? '1px solid var(--border-light)' : 'none',
-                borderLeft: msg.sender === 'bot' ? '4px solid var(--accent)' : 'none',
-                borderRadius: msg.sender === 'bot' ? '4px' : '0px',
-                boxShadow: msg.sender === 'bot' ? '2px 2px 10px rgba(0,0,0,0.04)' : 'none',
-                textDecoration: msg.sender === 'user' ? 'underline' : 'none',
-                textDecorationColor: 'rgba(139, 92, 246, 0.3)',
-                paddingRight: msg.sender === 'user' ? '8px' : '16px'
+                fontSize: '14px',
+                background: msg.sender === 'user' ? 'var(--bubble-user)' : 'var(--bubble-bot)',
+                color: msg.sender === 'user' ? '#ffffff' : 'var(--text-main)'
               }}
             >
               {msg.text}
@@ -312,91 +277,28 @@ export default function ChatCoach() {
           </div>
         ))}
 
-        {/* AI Thinking indicator with dynamic status and elapsed time */}
+        {/* AI 생각 중 표시 */}
         {isThinking && (
-          <div className="animate-fade-in" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-light)', flexShrink: 0 }}>
-              <Bot size={14} color="var(--primary)" />
-            </div>
-            <div className="glass-panel" style={{
-              padding: '12px 16px',
-              borderRadius: '16px',
-              borderBottomLeftRadius: '4px',
-              border: '1px solid rgba(139, 92, 246, 0.25)',
-              background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(236, 72, 153, 0.08) 100%)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '6px',
-              maxWidth: '80%'
+          <div className="animate-fade-in" style={{ display: 'flex' }}>
+            <div style={{
+              padding: '9px 13px',
+              borderRadius: '12px',
+              background: 'var(--bubble-bot)',
+              fontSize: '13px',
+              color: 'var(--text-muted)'
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '15px', fontWeight: '600', color: 'var(--text-main)' }}>
-                <span style={{ width: '6px', height: '6px', background: 'var(--accent)', borderRadius: '50%', display: 'inline-block', animation: 'pulseGlow 1.2s infinite' }}></span>
-                <span>코치가 분석 중입니다... ({elapsedTime}초 경과)</span>
-              </div>
-              <div style={{ fontSize: '14px', color: 'var(--text-muted)' }}>
-                ⚡ {thinkingStatus}
-              </div>
+              분석 중입니다... ({elapsedTime}초) · {thinkingStatus}
             </div>
           </div>
         )}
 
-        {/* AI Typing indicator */}
-        {isTyping && (
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-light)' }}>
-              <Bot size={14} color="var(--primary)" />
-            </div>
-            <div className="glass-panel" style={{ padding: '10px 16px', borderRadius: '16px', borderBottomLeftRadius: '4px', display: 'flex', gap: '4px' }}>
-              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'pulseGlow 1.2s infinite' }}></span>
-              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'pulseGlow 1.2s infinite', animationDelay: '0.2s' }}></span>
-              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'pulseGlow 1.2s infinite', animationDelay: '0.4s' }}></span>
-            </div>
-          </div>
-        )}
-
-        {/* 생성된 체크리스트 카드 시각화 (공책 줄노트 스타일) */}
-        {draftChecklist && (
-          <div className="glass-panel animate-fade-in" style={{ border: '1px solid var(--border-active)', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '14px', position: 'relative', boxShadow: '0 8px 24px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border-light)', paddingBottom: '12px', marginTop: '6px' }}>
-              <div>
-                <span style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI 제안 계획 초안</span>
-                <h4 style={{ fontSize: '20px', fontWeight: '700', color: 'var(--text-main)', marginTop: '2px', fontFamily: 'var(--font-title)' }}>🎯 {draftChecklist.goalName}</h4>
-              </div>
-              <div style={{ textAlign: 'right', fontSize: '14px', color: 'var(--text-muted)', fontFamily: 'var(--font-title)' }}>
-                기간: <strong style={{ color: 'var(--text-main)' }}>{draftChecklist.duration}일간</strong>
-                <br />
-                하루: <strong style={{ color: 'var(--text-main)' }}>{draftChecklist.dailyHours}시간</strong>
-              </div>
-            </div>
-
-            {/* 일차별 미션 요약 (공책 줄눈 적용) */}
-            <div className="lined-paper" style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '240px', overflowY: 'auto', paddingLeft: '24px', paddingRight: '4px' }}>
-              {Object.entries(draftChecklist.tasks).map(([date, taskList], idx) => (
-                <div key={date} style={{ background: 'rgba(255,255,255,0.01)', padding: '6px 0', borderBottom: '1px dashed var(--border-light)' }}>
-                  <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--primary)', marginBottom: '4px', fontFamily: 'var(--font-title)' }}>
-                    📅 Day {idx + 1} ({date})
-                  </div>
-                  <ul style={{ paddingLeft: '14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    {taskList.map((task) => (
-                      <li key={task.id} style={{ fontSize: '16px', color: 'var(--text-main)', listStyleType: 'circle' }}>
-                        {task.content}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-
-            {/* 수정 루프 버튼 */}
-            <div style={{ display: 'flex', gap: '10px', borderTop: '1px solid var(--border-light)', paddingTop: '16px' }}>
-              <button
-                className="btn-secondary"
-                onClick={handleRefineRequest}
-                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: '15px', fontFamily: 'var(--font-title)', height: '42px' }}
-              >
-                <RefreshCw size={14} />
-                계획 보완/수정
-              </button>
+        {/* 입력 대기 표시 */}
+        {isTyping && !isThinking && (
+          <div style={{ display: 'flex' }}>
+            <div style={{ padding: '9px 13px', borderRadius: '12px', background: 'var(--bubble-bot)', display: 'flex', gap: '4px' }}>
+              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'blink 1.2s infinite' }}></span>
+              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'blink 1.2s infinite', animationDelay: '0.2s' }}></span>
+              <span style={{ width: '6px', height: '6px', background: 'var(--text-muted)', borderRadius: '50%', animation: 'blink 1.2s infinite', animationDelay: '0.4s' }}></span>
             </div>
           </div>
         )}
@@ -408,48 +310,138 @@ export default function ChatCoach() {
       <form
         onSubmit={handleSendMessage}
         style={{
-          padding: '16px 20px',
-          background: 'var(--bg-glass)',
-          borderTop: '1px solid var(--border-light)',
+          padding: '12px 16px',
+          borderTop: '1px solid var(--border)',
           display: 'flex',
-          gap: '10px'
+          gap: '8px',
+          flexShrink: 0
         }}
       >
         <input
           type="text"
-          className="glass-panel"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           placeholder={draftChecklist ? "수정 요청 사항을 입력해 주세요..." : "대답을 입력해 주세요..."}
           style={{
             flex: 1,
-            padding: '12px 16px',
+            padding: '10px 12px',
             background: 'var(--bg-card)',
-            border: '1px solid var(--border-light)',
-            borderRadius: '12px',
+            border: '1px solid var(--border)',
+            borderRadius: '8px',
             color: 'var(--text-main)',
             outline: 'none',
-            fontFamily: 'var(--font-title)',
-            fontSize: '18px'
+            fontSize: '14px'
           }}
         />
         <button
           type="submit"
-          className="btn-primary"
           style={{
-            padding: '12px',
-            width: '46px',
-            height: '46px',
-            borderRadius: '12px',
+            width: '42px',
+            height: '42px',
+            border: 'none',
+            borderRadius: '8px',
+            background: 'var(--primary)',
+            color: '#ffffff',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: 'none'
+            cursor: 'pointer',
+            flexShrink: 0
           }}
         >
           <Send size={16} />
         </button>
       </form>
+    </div>
+  );
+
+  // === 오른쪽: 체크리스트 패널 ===
+  const checklistPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-panel)' }}>
+      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
+        생성된 체크리스트
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
+        {!draftChecklist ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', marginTop: '40px', lineHeight: 1.6 }}>
+            왼쪽 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
+            입력하면 이곳에 계획표가 생성됩니다.
+          </div>
+        ) : (
+          <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {/* 요약 헤더 */}
+            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '6px' }}>{draftChecklist.goalName}</h2>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                기간 {draftChecklist.duration}일 · 하루 {draftChecklist.dailyHours}시간 · {draftChecklist.currentLevel}
+              </div>
+            </div>
+
+            {/* 일차별 미션 */}
+            {Object.entries(draftChecklist.tasks).map(([date, taskList], idx) => (
+              <div
+                key={date}
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '8px',
+                  padding: '12px 14px'
+                }}
+              >
+                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--primary)', marginBottom: '8px' }}>
+                  Day {idx + 1} · {date}
+                </div>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {taskList.map((task) => (
+                    <li key={task.id} style={{ fontSize: '14px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                      <span style={{ color: 'var(--text-muted)' }}>☐</span>
+                      <span>{task.content}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '4px' }}>
+              수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="split-layout">
+      <div className="split-pane split-pane--left">{chatPanel}</div>
+      <div className="split-pane split-pane--right">{checklistPanel}</div>
+
+      <style>{`
+        .split-layout {
+          flex: 1;
+          min-height: 0;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+        }
+        .split-pane {
+          min-height: 0;
+          overflow: hidden;
+        }
+        .split-pane--left {
+          border-right: 1px solid var(--border);
+        }
+        @media (max-width: 760px) {
+          .split-layout {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr 1fr;
+          }
+          .split-pane--left {
+            border-right: none;
+            border-bottom: 1px solid var(--border);
+          }
+        }
+      `}</style>
     </div>
   );
 }
