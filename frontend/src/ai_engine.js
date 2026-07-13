@@ -322,12 +322,15 @@ export function generateMockChecklistDraft(slots, refinementPrompt = '') {
         { id: `t-${i}-rest`, content: "주말 휴식 및 리커버리 (미루지 않고 쉰 나에게 칭찬하기)", completed: false }
       ];
     } else {
-      let count = baseTasks.length;
+      // 하루 할 일 개수를 투자 시간에 비례시킨다(백엔드 프롬프트와 동일한 기준).
+      const dh = Number(dailyHours) || 2;
+      let count = dh <= 1 ? 2 : dh === 2 ? 3 : dh <= 4 ? 4 : dh <= 6 ? 5 : 6;
       if (isReduced) count = Math.max(1, count - 1);
-      if (isIncreased) count = Math.min(5, count + 1);
+      if (isIncreased) count = Math.min(6, count + 1);
 
       for (let j = 0; j < count; j++) {
-        let content = baseTasks[j];
+        // 템플릿(3개)보다 많이 필요하면 앞 항목을 순환하며 '심화'로 채운다.
+        let content = j < baseTasks.length ? baseTasks[j] : `${baseTasks[j % baseTasks.length]} (심화 반복)`;
 
         // 커스텀 수정 키워드 반영
         if (isReduced) {
