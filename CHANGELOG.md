@@ -13,6 +13,8 @@
 
 ### Added
 - Render 배포용 블루프린트(`render.yaml`) — 루트 Dockerfile 기반 단일 웹 서비스.
+- Oracle Cloud(OCI) Always Free 배포 가이드(`docs/DEPLOY_OCI.md`)와
+  VM 자동 세팅 스크립트(`deploy/oci-setup.sh`) — Ampere A1 + Docker.
 
 ### Changed
 - 서버 포트를 `${PORT:8080}`로 변경 — 배포 플랫폼(Render·Cloud Run·OCI 등)이
