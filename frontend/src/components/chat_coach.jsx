@@ -14,9 +14,11 @@ import {
 // 계획 저장(로컬 세션 유지용 — 서버 저장 없음)에 쓰는 localStorage 키.
 const SAVED_PLAN_KEY = 'delaynomore:savedPlan';
 
-// 슬롯필링 중 숫자 질문에 제공하는 빠른 선택지. 자유 입력도 계속 가능하다.
-const DURATION_PRESETS = [3, 5, 7];
-const DAILY_HOURS_PRESETS = [1, 2, 4, 6];
+// 슬롯필링 질문에 제공하는 빠른 선택지. 자유 입력도 계속 가능하다.
+// 라벨 텍스트를 그대로 전송한다(기간/시간은 파서가 숫자만 추출).
+const DURATION_PRESETS = ['3일', '5일', '7일'];
+const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
+const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
 // 계획 저장 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
 // 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 모두 try/catch로 감싼다.
@@ -78,24 +80,41 @@ function buildInitialState() {
 }
 
 // 봇 말풍선 텍스트를 타이핑하듯 점진적으로 드러낸다("스트리밍처럼" 보이는 효과).
+// 실제 토큰 스트리밍(SSE)이 아닌 프론트 연출이므로, 사람이 인지할 수 있는 속도
+// (약 60자/초)로 재생하고 깜빡이는 커서로 진행 중임을 보여준다.
+// (이전 구현은 약 190자/초라 사실상 즉시 표시로 보였다.)
 // 클릭하면 즉시 전체를 보여준다(기다리기 싫은 사용자를 위한 스킵).
 // 부모가 text가 바뀔 때마다 key={text}로 이 컴포넌트를 리마운트시켜
 // placeholder → 최종 답변 전환 시 처음부터 다시 재생되게 한다.
 function TypedBotText({ text }) {
-  const [shown, setShown] = useState('');
+  const [count, setCount] = useState(0);
   useEffect(() => {
     let i = 0;
     const id = setInterval(() => {
-      i += 3;
-      setShown(text.slice(0, i));
+      i += 2;
+      setCount(Math.min(i, text.length));
       if (i >= text.length) clearInterval(id);
-    }, 16);
+    }, 32);
     return () => clearInterval(id);
   }, [text]);
 
+  const done = count >= text.length;
   return (
-    <span onClick={() => setShown(text)} style={{ cursor: shown === text ? 'default' : 'pointer' }}>
-      {shown}
+    <span onClick={() => setCount(text.length)} style={{ cursor: done ? 'default' : 'pointer' }}>
+      {text.slice(0, count)}
+      {!done && (
+        <span
+          style={{
+            display: 'inline-block',
+            width: '2px',
+            height: '1em',
+            background: 'currentColor',
+            marginLeft: '2px',
+            verticalAlign: 'text-bottom',
+            animation: 'blink 1s infinite'
+          }}
+        />
+      )}
     </span>
   );
 }
@@ -438,6 +457,15 @@ export default function ChatCoach() {
     sendMessage(`전체 기간을 ${EXTEND_DAYS}일 더 늘려줘`);
   };
 
+  // 현재 질문의 빠른 답변 선택지 — 하단 구석이 아니라 대화 흐름 안(마지막 말풍선
+  // 바로 아래)에 렌더링해, 질문을 읽는 시선 위치에서 바로 선택할 수 있게 한다.
+  const slotQuickReplies =
+    draftChecklist || isTyping ? [] :
+    currentSlot === REQUIRED_SLOTS.DURATION ? DURATION_PRESETS :
+    currentSlot === REQUIRED_SLOTS.DAILY_HOURS ? DAILY_HOURS_PRESETS :
+    currentSlot === REQUIRED_SLOTS.CURRENT_LEVEL ? LEVEL_PRESETS :
+    [];
+
   // === 왼쪽: 대화 패널 ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
@@ -499,24 +527,24 @@ export default function ChatCoach() {
           </div>
         )}
 
+        {/* 현재 질문의 빠른 답변 — 마지막 봇 말풍선 아래(대화 흐름 안)에 표시 */}
+        {slotQuickReplies.length > 0 && (
+          <div className="animate-fade-in" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {slotQuickReplies.map((label) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => sendQuickReply(label)}
+                style={quickReplyButtonStyle}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div ref={chatEndRef} />
       </div>
-
-      {/* 숫자 질문(기간/하루 시간) 빠른 선택 — 클릭하면 그 값으로 바로 전송, 자유 입력도 계속 가능 */}
-      {!draftChecklist && !isTyping && (currentSlot === REQUIRED_SLOTS.DURATION || currentSlot === REQUIRED_SLOTS.DAILY_HOURS) && (
-        <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
-          {(currentSlot === REQUIRED_SLOTS.DURATION ? DURATION_PRESETS : DAILY_HOURS_PRESETS).map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => sendQuickReply(v)}
-              style={quickReplyButtonStyle}
-            >
-              {v}{currentSlot === REQUIRED_SLOTS.DURATION ? '일' : '시간'}
-            </button>
-          ))}
-        </div>
-      )}
 
       {/* 계획 생성 후 빠른 동작 — 저장 / 처음부터 다시 만들기 / 전체 기간 늘리기 */}
       {draftChecklist && (
