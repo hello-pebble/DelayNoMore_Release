@@ -11,57 +11,36 @@
 
 ## [Unreleased]
 
-### Added
-- Render 배포용 블루프린트(`render.yaml`) — 루트 Dockerfile 기반 단일 웹 서비스.
-- Oracle Cloud(OCI) Always Free 배포 가이드(`docs/DEPLOY_OCI.md`)와
-  VM 자동 세팅 스크립트(`deploy/oci-setup.sh`) — Ampere A1 + Docker.
-- 기능 점검 체크리스트 문서(`docs/QA_CHECKLIST.md`) — 버전별 QA 항목.
-- 대화 엔드포인트 `/api/ai/chat` — 초안 생성 이후 유저 메시지를 LLM이 직접 해석해
-  **의도(계획 수정 / 질문·잡담 / 불명확)** 를 판단. 최근 대화 이력을 함께 전달해
-  "반영 안됐는데?" 같은 맥락 의존 발화도 처리한다.
-- 이미지 빌드/푸시 CI(`.github/workflows/image.yml`) — `main` 푸시/`v*` 태그마다
-  Docker 이미지를 빌드해 `ghcr.io`에 push(latest·커밋 SHA·시맨틱 버전 태그).
-- pull 방식 배포 스크립트(`deploy/oci-pull.sh`) — VM에서 빌드하지 않고 ghcr.io
-  이미지를 받아 실행. 낮은 사양 VM(1GB Micro 등)이 빌드로 마비되는 문제를 근본 해결.
-  런타임 JVM 힙 상한(`-XX:MaxRAMPercentage=50`)도 함께 건다.
-- 배포 회고 및 파라미터 운영 노트(`docs/DEPLOY_RETROSPECTIVE.md`) — 속도(추론 모드 끔)·
-  응답 스키마 매칭 진단/수정 내역과, 향후 AI 파라미터(모델·추론·temperature·개수 정책)를
-  설정으로 외부화하는 제어 방향 정리.
-
-### Changed
-- 서버 포트를 `${PORT:8080}`로 변경 — 배포 플랫폼(Render·Cloud Run·OCI 등)이
-  주입하는 `PORT`를 사용하고, 로컬은 8080 기본값 유지.
-- **LLM 대화 고도화**: 초안 생성 후 채팅이 모든 입력을 수정 요청으로 간주해
-  무조건 재생성하고 고정 문구("요청하신 사항을 계획에 반영했습니다")로 답하던 방식을 제거.
-  이제 LLM의 자연어 답변(무엇을 어떻게 바꿨는지)을 그대로 표시하고,
-  실제로 계획이 바뀐 경우에만 오른쪽 체크리스트를 갱신한다.
-  LLM 응답의 tasks 형식을 검증(normalize)해 깨진 응답이 화면을 망가뜨리지 않게 한다.
-- mock 폴백 대화 개선 — 인식 못 하는 요청에 "반영했다"고 답하지 않고,
-  오프라인 모드임을 밝히며 가능한 요청 예시와 함께 되묻는다.
-- 기본 모델을 `meta-llama/llama-3-8b-instruct:free` → `qwen/qwen3.7-plus`로 변경
-  (`OPENROUTER_MODEL` 환경변수로 여전히 덮어쓰기 가능).
-- OCI 배포 스크립트가 `~/.delaynomore.env`(또는 `ENV_FILE`)를 자동 로드 —
-  API 키를 최초 1회만 파일(chmod 600)로 저장하면 이후 배포에서 키 입력이 불필요하고,
-  셸 히스토리에 키가 남지 않는다. (명령줄로 준 값이 파일 값보다 우선)
-
-### Fixed
-- OCI 배포 스크립트가 `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` 미설정 시
-  **빈 문자열**을 컨테이너에 넘겨 `application.yml` 기본값이 무시되던 문제 수정 —
-  이제 값이 있을 때만 `-e`를 전달한다. (빈 model로 OpenRouter 호출이 조용히 실패해
-  키가 있어도 mock 폴백으로 동작할 수 있었다.)
+_(다음 버전 작업 시 여기에 기록)_
 
 ## [0.1.0] - 2026-07-13
 
 첫 데모 릴리스. 원본 [DelayNoMore](https://github.com/hello-pebble/DelayNoMore)의
 "대화를 통해 투두리스트(하루 단위 실행 계획)를 생성하는" 핵심 흐름만 떼어낸 최소 배포판.
+Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인까지 완료한 버전이다.
 
 ### Added
 - AI 코치와의 슬롯필링 대화 → 계획 초안(투두리스트) 생성/보완 흐름.
 - 좌우 분할 화면: 왼쪽 = AI 코치 대화, 오른쪽 = 생성된 체크리스트 (모바일 폭에서는 상하 스택).
 - 백엔드 AI 프록시(`/api/ai/draft`, `/api/ai/health`) — OpenRouter 키를 서버에만 보관.
+- 대화 엔드포인트 `/api/ai/chat` — 초안 생성 이후 유저 메시지를 LLM이 직접 해석해
+  **의도(계획 수정 / 질문·잡담 / 불명확)** 를 판단. 최근 대화 이력을 함께 전달해
+  "반영 안됐는데?" 같은 맥락 의존 발화도 처리한다.
 - `OPENROUTER_API_KEY` 미설정/백엔드 미가용 시 프론트의 템플릿 기반 mock 폴백.
 - 단일 배포 구성: Spring Boot가 빌드된 프론트엔드 정적 파일과 `/api/*`를 함께 서빙,
   루트 `Dockerfile` 하나로 컨테이너 배포.
+- 이미지 빌드/푸시 CI(`.github/workflows/image.yml`) — `main` 푸시/`v*` 태그마다
+  Docker 이미지를 빌드해 `ghcr.io`에 push(latest·커밋 SHA·시맨틱 버전 태그).
+- pull 방식 배포 스크립트(`deploy/oci-pull.sh`) — VM에서 빌드하지 않고 ghcr.io
+  이미지를 받아 실행. 낮은 사양 VM(1GB Micro 등)이 빌드로 마비되는 문제를 근본 해결.
+  런타임 JVM 힙 상한(`-XX:MaxRAMPercentage=50`)도 함께 건다.
+- Oracle Cloud(OCI) Always Free 배포 가이드(`docs/DEPLOY_OCI.md`)와
+  VM 빌드 방식 스크립트(`deploy/oci-setup.sh`).
+- Render 배포용 블루프린트(`render.yaml`) — 루트 Dockerfile 기반 단일 웹 서비스.
+- 기능 점검 체크리스트 문서(`docs/QA_CHECKLIST.md`) — 버전별 QA 항목.
+- 배포 회고 및 파라미터 운영 노트(`docs/DEPLOY_RETROSPECTIVE.md`) — 속도(추론 모드 끔)·
+  응답 스키마 매칭 진단/수정 내역과, 향후 AI 파라미터(모델·추론·temperature·개수 정책)를
+  설정으로 외부화하는 제어 방향 정리.
 
 ### Changed
 - 디자인을 심플하게 정리 — 커스텀 폰트·노트/그리드 배경·글래스모피즘·테마 토글 제거,
@@ -69,6 +48,33 @@
 - 빌드 Java 버전을 17 → 21로 상향 (`build.gradle` toolchain, `Dockerfile` 이미지).
 - Spring Boot 3.3.1 → 4.1.0 최신화. Jackson 3(`tools.jackson`) 이전에 따라
   `AiController`의 Jackson 사용부 마이그레이션(`asText` → `asString`).
+- 서버 포트를 `${PORT:8080}`로 변경 — 배포 플랫폼(Render·Cloud Run·OCI 등)이
+  주입하는 `PORT`를 사용하고, 로컬은 8080 기본값 유지.
+- **LLM 대화 고도화**: 초안 생성 후 채팅이 모든 입력을 수정 요청으로 간주해
+  무조건 재생성하고 고정 문구("요청하신 사항을 계획에 반영했습니다")로 답하던 방식을 제거.
+  이제 LLM의 자연어 답변(무엇을 어떻게 바꿨는지)을 그대로 표시하고,
+  실제로 계획이 바뀐 경우에만 오른쪽 체크리스트를 갱신한다.
+- 기본 모델을 `meta-llama/llama-3-8b-instruct:free` → `qwen/qwen3.7-plus`로 변경
+  (`OPENROUTER_MODEL` 환경변수로 여전히 덮어쓰기 가능).
+- **추론(thinking) 모드 비활성화** — qwen3.7-plus가 추론 모델이라 요청당 약 95초·
+  reasoning 4천 토큰을 소모하던 것을 `reasoning: {enabled: false}`로 해결.
+- 하루 할 일 개수를 **투자 시간에 비례**하도록 변경(1h→1~2개 … 7h+→5~6개).
+  초안/수정/자유대화 프롬프트와 mock 폴백에 동일 기준 적용.
+- OCI 배포 스크립트가 `~/.delaynomore.env`(또는 `ENV_FILE`)를 자동 로드 —
+  API 키를 최초 1회만 파일(chmod 600)로 저장하면 이후 배포에서 키 입력이 불필요하고,
+  셸 히스토리에 키가 남지 않는다. (명령줄로 준 값이 파일 값보다 우선)
+- mock 폴백 대화 개선 — 인식 못 하는 요청에 "반영했다"고 답하지 않고,
+  오프라인 모드임을 밝히며 가능한 요청 예시와 함께 되묻는다.
+
+### Fixed
+- LLM이 기대와 다른 JSON 스키마(`{plan:[{date,tasks}]}` 등)로 응답하면 체크리스트가
+  비어 보이거나 화면 전체가 죽던(white-screen) 문제 — 다양한 응답 형태를
+  날짜맵으로 흡수하는 정규화(`coerceToDateMap`/`normalizeTasks`)와 렌더링 방어 추가.
+- 백엔드 `sanitizeJson`이 코드펜스 밖 설명/사고 텍스트가 섞인 응답에서도
+  중괄호 균형으로 최상위 JSON 객체만 추출하도록 보강.
+- OCI 배포 스크립트가 `OPENROUTER_API_KEY`/`OPENROUTER_MODEL` 미설정 시
+  **빈 문자열**을 컨테이너에 넘겨 `application.yml` 기본값이 무시되던 문제 수정 —
+  이제 값이 있을 때만 `-e`를 전달한다.
 
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
