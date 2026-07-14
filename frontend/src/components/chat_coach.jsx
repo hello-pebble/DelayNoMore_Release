@@ -79,45 +79,6 @@ function buildInitialState() {
   };
 }
 
-// 봇 말풍선 텍스트를 타이핑하듯 점진적으로 드러낸다("스트리밍처럼" 보이는 효과).
-// 실제 토큰 스트리밍(SSE)이 아닌 프론트 연출이므로, 사람이 인지할 수 있는 속도
-// (약 60자/초)로 재생하고 깜빡이는 커서로 진행 중임을 보여준다.
-// (이전 구현은 약 190자/초라 사실상 즉시 표시로 보였다.)
-// 클릭하면 즉시 전체를 보여준다(기다리기 싫은 사용자를 위한 스킵).
-// 부모가 text가 바뀔 때마다 key={text}로 이 컴포넌트를 리마운트시켜
-// placeholder → 최종 답변 전환 시 처음부터 다시 재생되게 한다.
-function TypedBotText({ text }) {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let i = 0;
-    const id = setInterval(() => {
-      i += 2;
-      setCount(Math.min(i, text.length));
-      if (i >= text.length) clearInterval(id);
-    }, 32);
-    return () => clearInterval(id);
-  }, [text]);
-
-  const done = count >= text.length;
-  return (
-    <span onClick={() => setCount(text.length)} style={{ cursor: done ? 'default' : 'pointer' }}>
-      {text.slice(0, count)}
-      {!done && (
-        <span
-          style={{
-            display: 'inline-block',
-            width: '2px',
-            height: '1em',
-            background: 'currentColor',
-            marginLeft: '2px',
-            verticalAlign: 'text-bottom',
-            animation: 'blink 1s infinite'
-          }}
-        />
-      )}
-    </span>
-  );
-}
 
 // 고유 ID 생성 유틸리티 (중복 Key 방지)
 const generateUniqueId = (prefix = 'msg') => {
@@ -496,7 +457,7 @@ export default function ChatCoach() {
                 color: msg.sender === 'user' ? '#ffffff' : 'var(--text-main)'
               }}
             >
-              {msg.sender === 'bot' ? <TypedBotText key={msg.text} text={msg.text} /> : msg.text}
+              {msg.text}
             </div>
           </div>
         ))}
