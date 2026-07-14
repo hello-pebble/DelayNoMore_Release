@@ -80,7 +80,7 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 
 ## 버전 관리
 
-- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.1.0**.
+- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.2.0**.
 - 버전 규칙은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따르며, 프론트엔드(`package.json`)와 백엔드(`build.gradle`)는 **하나의 제품 버전**으로 통일합니다.
 - 버전별 변경사항은 [`CHANGELOG.md`](./CHANGELOG.md)에 기록합니다.
 - 버전별 기능 점검은 [`docs/QA_CHECKLIST.md`](./docs/QA_CHECKLIST.md)로 확인합니다.

@@ -11,6 +11,15 @@
 
 ## [Unreleased]
 
+_(다음 버전 작업 시 여기에 기록)_
+
+## [0.2.0] - 2026-07-14
+
+UX 개선 릴리스. v0.1.0의 대화형 계획 생성 흐름 위에, 생성된 계획을 **직접 다루고**
+(완료 체크·진행률), **내보내고**(복사·다운로드), **더 빠르게 조작**(질문 빠른 선택,
+저장·기간연장·다시 만들기)할 수 있게 했다. 코드/배포 변경은 없고 프론트 UX와
+백엔드 프롬프트 위주.
+
 ### Added
 - 체크리스트 할 일 **완료 토글** — 클릭하면 체크/취소선으로 표시되고, 요약 헤더에
   완료/전체 진행률 바가 실시간으로 반영된다(세션 내 로컬 상태, 서버 저장 없음).
@@ -95,5 +104,6 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hello-pebble/DelayNoMore_Release/releases/tag/v0.1.0
