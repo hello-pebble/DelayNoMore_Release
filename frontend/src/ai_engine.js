@@ -1,6 +1,6 @@
 // AI Slot-Filling 및 계획 생성 엔진
 import { postAiDraft, postAiChat, getAiHealth } from "./db_service";
-import { todayStr } from "./date_utils";
+import { todayStr, formatLocalDate, parseLocalDate } from "./date_utils";
 
 
 export const REQUIRED_SLOTS = {
@@ -226,9 +226,11 @@ export async function chatWithCoach(slots, draft, history, message) {
     if (result?.planUpdated === true) {
       const tasks = normalizeTasks(result.tasks);
       if (tasks) {
+        const dates = Object.keys(tasks).sort();
         return {
           reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
-          updatedDraft: { ...draft, tasks }
+          // 기간 연장/단축 요청으로 날짜 개수가 바뀌었을 수 있어 duration/endDate를 실제 값으로 재계산한다.
+          updatedDraft: { ...draft, tasks, duration: dates.length, endDate: dates[dates.length - 1] || draft.endDate }
         };
       }
       // planUpdated라고 했지만 tasks가 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
@@ -253,6 +255,19 @@ export async function chatWithCoach(slots, draft, history, message) {
 export function mockChatWithCoach(slots, draft, message) {
   const text = (message || '').trim();
 
+  // "기간을 늘려줘"류는 하루 분량 조정과 다른 요청이므로 먼저 구분한다 —
+  // 기존 Day는 건드리지 않고 새 Day만 이어붙인다. 숫자가 있으면 그만큼, 없으면 3일 기본.
+  const extendDuration = text.includes('기간') && (text.includes('늘려') || text.includes('연장'));
+  if (extendDuration && draft?.tasks) {
+    const numMatch = text.match(/(\d+)\s*일/);
+    const addDays = numMatch ? Math.max(1, Math.min(14, parseInt(numMatch[1], 10))) : 3;
+    const extended = extendMockChecklistDays(draft, slots, addDays);
+    return {
+      reply: `(오프라인 모드) 기간을 ${addDays}일 늘렸습니다. 오른쪽 체크리스트에서 확인해 보세요.`,
+      updatedDraft: extended
+    };
+  }
+
   const isReduced = text.includes('줄여') || text.includes('적게') || text.includes('힘들어') || text.includes('야근');
   const isIncreased = text.includes('늘려') || text.includes('많이') || text.includes('부족');
   const skipWeekend = text.includes('주말') && (text.includes('쉬') || text.includes('빼'));
@@ -276,31 +291,78 @@ export function mockChatWithCoach(slots, draft, message) {
   };
 }
 
+// mock 계획 생성/연장이 공유하는 하루 템플릿(공부/운동). 목표명에 운동 관련 키워드가
+// 있으면 운동 템플릿을, 아니면 공부 템플릿을 순환해서 쓴다.
+const STUDY_TEMPLATES = [
+  ["핵심 개념 파악하기", "기초 용어 정리 및 노트 작성", "1챕터 기본 예제 풀이"],
+  ["핵심 내용 심화 학습", "관련 동영상 강의 시청", "요약본 보며 리마인드"],
+  ["실전 예제 실습하기", "오류 디버깅 및 분석", "배운 내용 블로그/메모장에 정리"],
+  ["기출 문제 또는 종합 실습 도전", "틀린 부분 오답 노트 작성", "부족한 파트 보충 학습"],
+  ["전체 내용 최종 스크리닝", "핵심 암기 사항 재확인", "마무리 회고 및 스스로 피드백"]
+];
+
+const WORKOUT_TEMPLATES = [
+  ["가벼운 스트레칭 및 웜업 10분", "목표 강도 운동 30분 진행", "수분 섭취 및 가벼운 폼롤러 마사지"],
+  ["코어 운동 중심 단기 단련", "인터벌 트레이닝 20분", "근육 이완 스트레칭"],
+  ["목표 세트 수 달성하기 (어제보다 강도 +5%)", "유산소 운동 30분 병행", "샤워 후 식단 기록"],
+  ["전신 컨디셔닝 트레이닝", "정적 스트레칭 15분", "오늘 피로도 점검 및 기록"],
+  ["가벼운 리커버리 러닝/조깅", "전신 폼롤러 스트레칭 20분", "계획 달성 축하 한마디"]
+];
+
+function isWorkoutGoal(goalName) {
+  return goalName.includes('운동') || goalName.includes('러닝') || goalName.includes('헬스') || goalName.includes('다이어트');
+}
+
+// 투자 시간에 비례한 하루 할 일 개수(백엔드 tasksPerDayRange와 동일 기준).
+function mockTaskCountForHours(dailyHours) {
+  const dh = Number(dailyHours) || 2;
+  if (dh <= 1) return 2;
+  if (dh === 2) return 3;
+  if (dh <= 4) return 4;
+  if (dh <= 6) return 5;
+  return 6;
+}
+
+// mock 폴백에서 "기간 늘려줘" 요청을 처리한다 — 기존 Day는 그대로 두고,
+// 마지막 날짜 다음부터 addDays일치 새 Day만 만들어 이어붙인다.
+function extendMockChecklistDays(draft, slots, addDays) {
+  const existingTasks = draft?.tasks || {};
+  const existingDates = Object.keys(existingTasks).sort();
+  const lastDate = parseLocalDate(existingDates[existingDates.length - 1]) || new Date();
+
+  const { goalName } = slots;
+  const activeTemplate = isWorkoutGoal(goalName) ? WORKOUT_TEMPLATES : STUDY_TEMPLATES;
+  const count = mockTaskCountForHours(slots.dailyHours);
+
+  const newTasks = { ...existingTasks };
+  for (let i = 1; i <= addDays; i++) {
+    const d = new Date(lastDate);
+    d.setDate(d.getDate() + i);
+    const dateStr = formatLocalDate(d);
+    const baseTasks = activeTemplate[(existingDates.length + i - 1) % activeTemplate.length];
+    const dayTasks = [];
+    for (let j = 0; j < count; j++) {
+      const content = j < baseTasks.length ? baseTasks[j] : `${baseTasks[j % baseTasks.length]} (심화 반복)`;
+      dayTasks.push({ id: `t-ext-${dateStr}-${j}`, content: `${goalName}: ${content}`, completed: false });
+    }
+    newTasks[dateStr] = dayTasks;
+  }
+
+  const allDates = Object.keys(newTasks).sort();
+  return {
+    ...draft,
+    tasks: newTasks,
+    duration: allDates.length,
+    endDate: allDates[allDates.length - 1]
+  };
+}
+
 // 템플릿 기반 계획 생성 (Fallback용 — 백엔드/AI 미가용 시에도 데모 흐름이 끊기지 않게 한다)
 export function generateMockChecklistDraft(slots, refinementPrompt = '') {
   const { goalName, duration, dailyHours, currentLevel } = slots;
   const tasks = {};
 
-  // 기본 공부/운동 템플릿 구성
-  const isWorkout = goalName.includes('운동') || goalName.includes('러닝') || goalName.includes('헬스') || goalName.includes('다이어트');
-
-  const studyTemplates = [
-    ["핵심 개념 파악하기", "기초 용어 정리 및 노트 작성", "1챕터 기본 예제 풀이"],
-    ["핵심 내용 심화 학습", "관련 동영상 강의 시청", "요약본 보며 리마인드"],
-    ["실전 예제 실습하기", "오류 디버깅 및 분석", "배운 내용 블로그/메모장에 정리"],
-    ["기출 문제 또는 종합 실습 도전", "틀린 부분 오답 노트 작성", "부족한 파트 보충 학습"],
-    ["전체 내용 최종 스크리닝", "핵심 암기 사항 재확인", "마무리 회고 및 스스로 피드백"]
-  ];
-
-  const workoutTemplates = [
-    ["가벼운 스트레칭 및 웜업 10분", "목표 강도 운동 30분 진행", "수분 섭취 및 가벼운 폼롤러 마사지"],
-    ["코어 운동 중심 단기 단련", "인터벌 트레이닝 20분", "근육 이완 스트레칭"],
-    ["목표 세트 수 달성하기 (어제보다 강도 +5%)", "유산소 운동 30분 병행", "샤워 후 식단 기록"],
-    ["전신 컨디셔닝 트레이닝", "정적 스트레칭 15분", "오늘 피로도 점검 및 기록"],
-    ["가벼운 리커버리 러닝/조깅", "전신 폼롤러 스트레칭 20분", "계획 달성 축하 한마디"]
-  ];
-
-  const activeTemplate = isWorkout ? workoutTemplates : studyTemplates;
+  const activeTemplate = isWorkoutGoal(goalName) ? WORKOUT_TEMPLATES : STUDY_TEMPLATES;
 
   // 리플래닝 피드백 키워드 파싱
   const isReduced = refinementPrompt.includes('줄여') || refinementPrompt.includes('적게') || refinementPrompt.includes('힘들어') || refinementPrompt.includes('야근');
@@ -367,4 +429,25 @@ export function generateMockChecklistDraft(slots, refinementPrompt = '') {
 // OpenRouter 연결 상태 점검 (백엔드 프록시 경유 — 키는 서버에만 존재해 브라우저 번들에 노출되지 않는다)
 export async function checkOpenRouterConnection() {
   return getAiHealth();
+}
+
+// 계획을 복사/다운로드용 순수 텍스트로 직렬화한다. 마크다운 체크박스 표기를 써서
+// 노트 앱 등에 붙여넣어도 바로 읽히게 한다.
+export function formatChecklistAsText(checklist) {
+  if (!checklist) return '';
+  const lines = [];
+  lines.push(`# ${checklist.goalName}`);
+  lines.push(`기간 ${checklist.duration}일 · 하루 ${checklist.dailyHours}시간 · ${checklist.currentLevel}`);
+  lines.push('');
+
+  Object.entries(checklist.tasks || {}).forEach(([date, taskList], idx) => {
+    lines.push(`## Day ${idx + 1} · ${date}`);
+    (Array.isArray(taskList) ? taskList : []).forEach((task) => {
+      lines.push(`- [${task.completed ? 'x' : ' '}] ${task.content}`);
+    });
+    lines.push('');
+  });
+
+  lines.push('— DelayNoMore로 생성한 계획입니다.');
+  return lines.join('\n');
 }
