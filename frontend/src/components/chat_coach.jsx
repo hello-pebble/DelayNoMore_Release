@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Copy, Download, Check } from 'lucide-react';
+import { Send, Copy, Download, Check, Save, RotateCcw, CalendarPlus } from 'lucide-react';
 import {
+  REQUIRED_SLOTS,
   getNextEmptySlot,
   getNextQuestion,
   parseUserMessage,
@@ -9,6 +10,72 @@ import {
   formatChecklistAsText,
   INITIAL_SLOTS
 } from '../ai_engine';
+
+// 계획 저장(로컬 세션 유지용 — 서버 저장 없음)에 쓰는 localStorage 키.
+const SAVED_PLAN_KEY = 'delaynomore:savedPlan';
+
+// 슬롯필링 중 숫자 질문에 제공하는 빠른 선택지. 자유 입력도 계속 가능하다.
+const DURATION_PRESETS = [3, 5, 7];
+const DAILY_HOURS_PRESETS = [1, 2, 4, 6];
+
+// 계획 저장 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
+// 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 모두 try/catch로 감싼다.
+function saveSavedPlan(slots, draftChecklist) {
+  try {
+    localStorage.setItem(SAVED_PLAN_KEY, JSON.stringify({ slots, draftChecklist, savedAt: Date.now() }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadSavedPlan() {
+  try {
+    const raw = localStorage.getItem(SAVED_PLAN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.slots || !parsed?.draftChecklist) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearSavedPlan() {
+  try {
+    localStorage.removeItem(SAVED_PLAN_KEY);
+  } catch {
+    // 무시 — 저장이 애초에 안 된 환경이면 지울 것도 없다.
+  }
+}
+
+// 마운트 시 최초 상태를 계산한다 — 저장된 계획이 있으면 복원, 없으면 첫 질문으로 시작.
+// useState의 지연 초기화 함수로 써서(컴포넌트 몸체가 아니라) "effect 안에서 setState"를
+// 피하고, StrictMode가 두 번 호출해도 순수 함수라 안전하다.
+function buildInitialState() {
+  const saved = loadSavedPlan();
+  if (saved) {
+    return {
+      slots: saved.slots,
+      draftChecklist: saved.draftChecklist,
+      currentSlot: null,
+      messages: [
+        {
+          id: 'bot-restored',
+          sender: 'bot',
+          text: `이전에 저장한 "${saved.draftChecklist?.goalName || '계획'}"을 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
+        }
+      ]
+    };
+  }
+  const nextSlot = getNextEmptySlot(INITIAL_SLOTS);
+  return {
+    slots: { ...INITIAL_SLOTS },
+    draftChecklist: null,
+    currentSlot: nextSlot,
+    messages: [{ id: 'bot-init-first', sender: 'bot', text: getNextQuestion(nextSlot) }]
+  };
+}
 
 // 봇 말풍선 텍스트를 타이핑하듯 점진적으로 드러낸다("스트리밍처럼" 보이는 효과).
 // 클릭하면 즉시 전체를 보여준다(기다리기 싫은 사용자를 위한 스킵).
@@ -65,6 +132,19 @@ async function copyTextToClipboard(text) {
   }
 }
 
+const quickReplyButtonStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  padding: '6px 10px',
+  fontSize: '12px',
+  border: '1px solid var(--border)',
+  borderRadius: '999px',
+  background: 'var(--bg-card)',
+  color: 'var(--text-main)',
+  cursor: 'pointer'
+};
+
 const exportButtonStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -79,12 +159,14 @@ const exportButtonStyle = {
 };
 
 export default function ChatCoach() {
-  const [slots, setSlots] = useState({ ...INITIAL_SLOTS });
-  const [messages, setMessages] = useState([]);
+  // 지연 초기화 함수 하나로 최초 상태(저장된 계획 복원 또는 첫 질문)를 한 번만 계산한다.
+  const [initial] = useState(buildInitialState);
+  const [slots, setSlots] = useState(initial.slots);
+  const [messages, setMessages] = useState(initial.messages);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [draftChecklist, setDraftChecklist] = useState(null);
-  const [currentSlot, setCurrentSlot] = useState(null);
+  const [draftChecklist, setDraftChecklist] = useState(initial.draftChecklist);
+  const [currentSlot, setCurrentSlot] = useState(initial.currentSlot);
   const [isThinking, setIsThinking] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [thinkingStatus, setThinkingStatus] = useState('');
@@ -150,29 +232,12 @@ export default function ChatCoach() {
     }
   };
 
-  // 컴포넌트 마운트 시 첫 질문 발송 (StrictMode 이중 실행 가드 탑재)
-  const initedRef = useRef(false);
-  useEffect(() => {
-    if (initedRef.current) return;
-    initedRef.current = true;
+  // 실제 전송 로직 — 입력창 텍스트뿐 아니라 빠른 선택 버튼(기간/시간 프리셋,
+  // "기간 늘리기" 등)에서도 재사용한다.
+  const sendMessage = async (rawText) => {
+    const userText = (rawText || '').trim();
+    if (!userText) return;
 
-    const nextSlot = getNextEmptySlot(slots);
-    setCurrentSlot(nextSlot);
-    setMessages([
-      {
-        id: 'bot-init-first',
-        sender: 'bot',
-        text: getNextQuestion(nextSlot)
-      }
-    ]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleSendMessage = async (e) => {
-    e.preventDefault();
-    if (!inputValue.trim()) return;
-
-    const userText = inputValue.trim();
     const userMsgId = generateUniqueId('user');
 
     // 1. 유저 메시지 추가
@@ -198,6 +263,11 @@ export default function ChatCoach() {
         stopThinking();
         if (updatedDraft) {
           setDraftChecklist(updatedDraft);
+          // 기간 연장/단축처럼 날짜 개수가 바뀌었을 수 있으니 슬롯도 함께 맞춘다
+          // (다음 요청의 [Goal] Duration이 실제 계획과 어긋나지 않게).
+          if (updatedDraft.duration && updatedDraft.duration !== slots.duration) {
+            setSlots((prev) => ({ ...prev, duration: updatedDraft.duration }));
+          }
         }
         setMessages((prev) => [
           ...prev,
@@ -290,6 +360,17 @@ export default function ChatCoach() {
     }
   };
 
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    sendMessage(inputValue);
+  };
+
+  // 슬롯필링 중 숫자 프리셋 버튼 클릭 — 입력창에 채우는 대신 바로 전송한다.
+  const sendQuickReply = (value) => {
+    if (isTyping) return;
+    sendMessage(String(value));
+  };
+
   // 할 일 완료 토글 (로컬 상태만 — 서버 저장 없음, 데모 세션 동안만 유지)
   const toggleTask = (date, taskId) => {
     setDraftChecklist((prev) => {
@@ -325,6 +406,36 @@ export default function ChatCoach() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const [saveFeedback, setSaveFeedback] = useState(null); // null | 'ok' | 'error'
+
+  const handleSavePlan = () => {
+    const ok = saveSavedPlan(slots, draftChecklist);
+    setSaveFeedback(ok ? 'ok' : 'error');
+    setTimeout(() => setSaveFeedback(null), 1800);
+  };
+
+  // 처음부터 다시 만들기 — 저장된 계획도 함께 지워 다음 방문 시 되살아나지 않게 한다.
+  // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
+  const handleResetPlan = () => {
+    if (isTyping) return;
+    clearSavedPlan();
+    setSlots({ ...INITIAL_SLOTS });
+    setDraftChecklist(null);
+    setInputValue('');
+    const nextSlot = getNextEmptySlot(INITIAL_SLOTS);
+    setCurrentSlot(nextSlot);
+    setMessages([
+      { id: generateUniqueId('bot-reset'), sender: 'bot', text: getNextQuestion(nextSlot) }
+    ]);
+  };
+
+  // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
+  const EXTEND_DAYS = 3;
+  const handleExtendDuration = () => {
+    if (isTyping) return;
+    sendMessage(`전체 기간을 ${EXTEND_DAYS}일 더 늘려줘`);
   };
 
   // === 왼쪽: 대화 패널 ===
@@ -390,6 +501,40 @@ export default function ChatCoach() {
 
         <div ref={chatEndRef} />
       </div>
+
+      {/* 숫자 질문(기간/하루 시간) 빠른 선택 — 클릭하면 그 값으로 바로 전송, 자유 입력도 계속 가능 */}
+      {!draftChecklist && !isTyping && (currentSlot === REQUIRED_SLOTS.DURATION || currentSlot === REQUIRED_SLOTS.DAILY_HOURS) && (
+        <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
+          {(currentSlot === REQUIRED_SLOTS.DURATION ? DURATION_PRESETS : DAILY_HOURS_PRESETS).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => sendQuickReply(v)}
+              style={quickReplyButtonStyle}
+            >
+              {v}{currentSlot === REQUIRED_SLOTS.DURATION ? '일' : '시간'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 계획 생성 후 빠른 동작 — 저장 / 처음부터 다시 만들기 / 전체 기간 늘리기 */}
+      {draftChecklist && (
+        <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
+          <button type="button" onClick={handleSavePlan} style={quickReplyButtonStyle}>
+            <Save size={12} />
+            {saveFeedback === 'ok' ? '저장됨' : saveFeedback === 'error' ? '저장 실패' : '계획 저장'}
+          </button>
+          <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={quickReplyButtonStyle}>
+            <CalendarPlus size={12} />
+            기간 +{EXTEND_DAYS}일
+          </button>
+          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>
+            <RotateCcw size={12} />
+            처음부터 다시 만들기
+          </button>
+        </div>
+      )}
 
       {/* 입력바 */}
       <form
