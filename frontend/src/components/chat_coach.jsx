@@ -1,17 +1,81 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Copy, Download, Check } from 'lucide-react';
 import {
   getNextEmptySlot,
   getNextQuestion,
   parseUserMessage,
   generateChecklistDraft,
   chatWithCoach,
+  formatChecklistAsText,
   INITIAL_SLOTS
 } from '../ai_engine';
+
+// 봇 말풍선 텍스트를 타이핑하듯 점진적으로 드러낸다("스트리밍처럼" 보이는 효과).
+// 클릭하면 즉시 전체를 보여준다(기다리기 싫은 사용자를 위한 스킵).
+// 부모가 text가 바뀔 때마다 key={text}로 이 컴포넌트를 리마운트시켜
+// placeholder → 최종 답변 전환 시 처음부터 다시 재생되게 한다.
+function TypedBotText({ text }) {
+  const [shown, setShown] = useState('');
+  useEffect(() => {
+    let i = 0;
+    const id = setInterval(() => {
+      i += 3;
+      setShown(text.slice(0, i));
+      if (i >= text.length) clearInterval(id);
+    }, 16);
+    return () => clearInterval(id);
+  }, [text]);
+
+  return (
+    <span onClick={() => setShown(text)} style={{ cursor: shown === text ? 'default' : 'pointer' }}>
+      {shown}
+    </span>
+  );
+}
 
 // 고유 ID 생성 유틸리티 (중복 Key 방지)
 const generateUniqueId = (prefix = 'msg') => {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+};
+
+// navigator.clipboard는 보안 컨텍스트(HTTPS/localhost)에서만 동작한다.
+// 이 프로젝트의 데모 배포는 평문 HTTP라 그 API가 없을 수 있어, 구형 execCommand로 폴백한다.
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 아래 폴백으로 계속 진행
+    }
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+const exportButtonStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '4px',
+  padding: '5px 9px',
+  fontSize: '12px',
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  background: 'var(--bg-card)',
+  color: 'var(--text-main)',
+  cursor: 'pointer'
 };
 
 export default function ChatCoach() {
@@ -24,6 +88,7 @@ export default function ChatCoach() {
   const [isThinking, setIsThinking] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [thinkingStatus, setThinkingStatus] = useState('');
+  const [copyFeedback, setCopyFeedback] = useState(null); // null | 'ok' | 'error'
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -225,6 +290,43 @@ export default function ChatCoach() {
     }
   };
 
+  // 할 일 완료 토글 (로컬 상태만 — 서버 저장 없음, 데모 세션 동안만 유지)
+  const toggleTask = (date, taskId) => {
+    setDraftChecklist((prev) => {
+      if (!prev) return prev;
+      const dayTasks = prev.tasks?.[date];
+      if (!Array.isArray(dayTasks)) return prev;
+      return {
+        ...prev,
+        tasks: {
+          ...prev.tasks,
+          [date]: dayTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
+        }
+      };
+    });
+  };
+
+  const handleCopyPlan = async () => {
+    const text = formatChecklistAsText(draftChecklist);
+    const ok = await copyTextToClipboard(text);
+    setCopyFeedback(ok ? 'ok' : 'error');
+    setTimeout(() => setCopyFeedback(null), 1800);
+  };
+
+  const handleDownloadPlan = () => {
+    const text = formatChecklistAsText(draftChecklist);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (draftChecklist?.goalName || 'plan').replace(/[\\/:*?"<>|]/g, '').slice(0, 30);
+    a.href = url;
+    a.download = `delaynomore-${safeName}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   // === 왼쪽: 대화 패널 ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
@@ -255,7 +357,7 @@ export default function ChatCoach() {
                 color: msg.sender === 'user' ? '#ffffff' : 'var(--text-main)'
               }}
             >
-              {msg.text}
+              {msg.sender === 'bot' ? <TypedBotText key={msg.text} text={msg.text} /> : msg.text}
             </div>
           </div>
         ))}
@@ -338,11 +440,51 @@ export default function ChatCoach() {
     </div>
   );
 
+  // 전체 진행률(완료/전체 개수) — 헤더 요약과 진행 바에 함께 쓴다.
+  const allTasks = draftChecklist
+    ? Object.values(draftChecklist.tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []))
+    : [];
+  const completedCount = allTasks.filter((t) => t.completed).length;
+  const totalCount = allTasks.length;
+
   // === 오른쪽: 체크리스트 패널 ===
   const checklistPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-panel)' }}>
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
-        생성된 체크리스트
+      <div style={{
+        padding: '10px 16px',
+        borderBottom: '1px solid var(--border)',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}>
+        <span style={{ fontWeight: 600, fontSize: '14px' }}>생성된 체크리스트</span>
+        {draftChecklist && (
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              onClick={handleCopyPlan}
+              title="계획을 텍스트로 복사"
+              style={{
+                ...exportButtonStyle,
+                ...(copyFeedback === 'error' ? { color: 'var(--warning)', borderColor: 'var(--warning)' } : {})
+              }}
+            >
+              {copyFeedback === 'ok' && <Check size={13} />}
+              {copyFeedback !== 'ok' && <Copy size={13} />}
+              {copyFeedback === 'ok' ? '복사됨' : copyFeedback === 'error' ? '복사 실패' : '복사'}
+            </button>
+            <button
+              type="button"
+              onClick={handleDownloadPlan}
+              title="계획을 .txt 파일로 다운로드"
+              style={exportButtonStyle}
+            >
+              <Download size={13} />
+              다운로드
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
@@ -356,20 +498,41 @@ export default function ChatCoach() {
             {/* 요약 헤더 */}
             <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
               <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '6px' }}>{draftChecklist.goalName}</h2>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '8px' }}>
                 기간 {draftChecklist.duration}일 · 하루 {draftChecklist.dailyHours}시간 · {draftChecklist.currentLevel}
               </div>
+              {totalCount > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{ flex: 1, height: '6px', borderRadius: '3px', background: 'var(--border)', overflow: 'hidden' }}>
+                    <div
+                      style={{
+                        height: '100%',
+                        borderRadius: '3px',
+                        background: 'var(--primary)',
+                        width: `${Math.round((completedCount / totalCount) * 100)}%`,
+                        transition: 'width 0.3s ease'
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {completedCount}/{totalCount} 완료
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* 일차별 미션 (tasks가 비정상이어도 화면이 죽지 않게 방어) */}
+            {/* 일차별 미션 (tasks가 비정상이어도 화면이 죽지 않게 방어) — Day마다 살짝 늦게 나타나 순차 생성 느낌을 준다 */}
             {Object.entries(draftChecklist.tasks || {}).map(([date, taskList], idx) => (
               <div
                 key={date}
+                className="animate-fade-in"
                 style={{
                   background: 'var(--bg-card)',
                   border: '1px solid var(--border)',
                   borderRadius: '8px',
-                  padding: '12px 14px'
+                  padding: '12px 14px',
+                  animationDelay: `${Math.min(idx, 8) * 70}ms`,
+                  animationFillMode: 'backwards'
                 }}
               >
                 <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--primary)', marginBottom: '8px' }}>
@@ -377,9 +540,29 @@ export default function ChatCoach() {
                 </div>
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {(Array.isArray(taskList) ? taskList : []).map((task) => (
-                    <li key={task.id} style={{ fontSize: '14px', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>☐</span>
-                      <span>{task.content}</span>
+                    <li
+                      key={task.id}
+                      onClick={() => toggleTask(date, task.id)}
+                      style={{
+                        fontSize: '14px',
+                        display: 'flex',
+                        gap: '8px',
+                        alignItems: 'flex-start',
+                        cursor: 'pointer',
+                        userSelect: 'none'
+                      }}
+                    >
+                      <span style={{ color: task.completed ? 'var(--primary)' : 'var(--text-muted)', flexShrink: 0 }}>
+                        {task.completed ? '☑' : '☐'}
+                      </span>
+                      <span
+                        style={{
+                          textDecoration: task.completed ? 'line-through' : 'none',
+                          color: task.completed ? 'var(--text-muted)' : 'var(--text-main)'
+                        }}
+                      >
+                        {task.content}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -387,7 +570,8 @@ export default function ChatCoach() {
             ))}
 
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '4px' }}>
-              수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")
+              수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
+              할 일을 클릭하면 완료 표시가 됩니다.
             </div>
           </div>
         )}

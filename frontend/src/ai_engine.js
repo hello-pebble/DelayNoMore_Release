@@ -368,3 +368,24 @@ export function generateMockChecklistDraft(slots, refinementPrompt = '') {
 export async function checkOpenRouterConnection() {
   return getAiHealth();
 }
+
+// 계획을 복사/다운로드용 순수 텍스트로 직렬화한다. 마크다운 체크박스 표기를 써서
+// 노트 앱 등에 붙여넣어도 바로 읽히게 한다.
+export function formatChecklistAsText(checklist) {
+  if (!checklist) return '';
+  const lines = [];
+  lines.push(`# ${checklist.goalName}`);
+  lines.push(`기간 ${checklist.duration}일 · 하루 ${checklist.dailyHours}시간 · ${checklist.currentLevel}`);
+  lines.push('');
+
+  Object.entries(checklist.tasks || {}).forEach(([date, taskList], idx) => {
+    lines.push(`## Day ${idx + 1} · ${date}`);
+    (Array.isArray(taskList) ? taskList : []).forEach((task) => {
+      lines.push(`- [${task.completed ? 'x' : ' '}] ${task.content}`);
+    });
+    lines.push('');
+  });
+
+  lines.push('— DelayNoMore로 생성한 계획입니다.');
+  return lines.join('\n');
+}
