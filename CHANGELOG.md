@@ -18,6 +18,11 @@
   SSE를 직접 파싱하며, 스트림 실패 시 비스트리밍(`/api/ai/chat`) → mock 순으로 폴백한다.
   - 응답은 "산문 reply → `===PLAN===` 구분자 → 계획 JSON" 형태로 분리해, JSON을 토큰 단위로
     흘리지 않고 사람이 읽는 텍스트만 스트리밍한다(깨진 JSON이 화면을 죽이는 문제를 구조적으로 제거).
+- **HTTPS 배포 지원** — `deploy/Caddyfile` + `deploy/oci-pull.sh`에 `DOMAIN` 환경변수 하나로
+  [Caddy](https://caddyserver.com) 리버스 프록시를 자동 구성한다. Let's Encrypt 인증서 자동
+  발급/갱신, HTTP(80)→HTTPS(443) 자동 리다이렉트, 앱은 `127.0.0.1:8080`로만 노출(직접 공개 안 함).
+  Spring에 `forward-headers-strategy: framework`를 켜 프록시의 `X-Forwarded-Proto`를 신뢰한다.
+  배포 가이드(`docs/DEPLOY_OCI.md`)에 HTTPS 절 추가.
 
 ### Changed
 - **토큰 사용량 절감** — 자유 대화 경로를 전면 개편.
@@ -28,6 +33,18 @@
   - 대화 이력 전송을 **최근 12턴 → 6턴**으로 축소.
   - 자유 대화 응답에 `max_tokens` 상한을 둬 폭주 생성 비용을 방어(추론이 꺼져 있어 정상 응답은 잘리지 않음).
 - 비스트리밍 `/api/ai/chat` 응답 계약도 patch로 통일 — `{reply, planUpdated, patch}`.
+- 프론트 기간 입력 상한을 **30일 → 14일**로 낮춰 서버 검증 규칙과 일치시켰다(불일치 시 mock으로
+  새던 문제 예방).
+
+### Fixed
+- **서버측 입력 검증** — `/api/ai/draft`가 빈 목표·`0일`·`25시간` 같은 잘못된 입력도 `200 OK`로
+  계획을 생성하던 문제. 이제 서버에서 `goalName`(공백 제외 2자+)·`duration`(정수 1~14)·
+  `dailyHours`(정수 1~24)·`currentLevel`(2자+)을 검증하고, 위반 시 계획을 만들지 않고
+  **`400 Bad Request` + 필드별 오류**(`{error, message, fields}`)를 반환한다. 프론트가 막아도 API가
+  직접 호출될 수 있으므로 서버가 최종 방어선이 된다.
+- **생성 계획의 범위 쏠림 완화** — 정보처리기사 실기처럼 여러 영역으로 구성된 목표에서 계획이 한
+  소주제(예: 데이터베이스/SQL)로만 몰리던 문제. 초안 프롬프트에 "목표의 주요 영역을 먼저 식별하고
+  일수에 비례해 전 영역에 고르게 분배(breadth-before-depth)"하도록 지침을 보강했다.
 
 ## [0.2.0] - 2026-07-14
 

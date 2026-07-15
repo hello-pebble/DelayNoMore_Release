@@ -1,6 +1,9 @@
 server:
   # 배포 플랫폼(Render·Cloud Run·OCI 등)이 주입하는 PORT를 사용, 로컬은 8080 기본값.
   port: ${PORT:8080}
+  # HTTPS는 앞단 리버스 프록시(Caddy)가 종단하고 앱은 평문 HTTP로 받는다.
+  # 프록시가 붙이는 X-Forwarded-* (특히 Proto=https)를 신뢰해 스킴/호스트를 올바로 인식한다.
+  forward-headers-strategy: framework
 
 openrouter:
   api:
