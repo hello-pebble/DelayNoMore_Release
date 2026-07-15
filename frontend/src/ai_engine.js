@@ -55,8 +55,9 @@ export function parseUserMessage(message, currentSlot) {
 
     case REQUIRED_SLOTS.DURATION: {
       const days = parseInt(trimmed.replace(/[^0-9]/g, ''), 10);
-      if (isNaN(days) || days <= 0 || days > 30) {
-        return { isValid: false, error: "1일에서 30일 사이의 숫자로 입력해 주세요." };
+      // 서버 검증(1~14일)과 동일한 상한 — 어긋나면 백엔드가 400을 주고 mock으로 새기 때문에 맞춘다.
+      if (isNaN(days) || days <= 0 || days > 14) {
+        return { isValid: false, error: "1일에서 14일 사이의 숫자로 입력해 주세요." };
       }
       return { value: days, isValid: true };
     }

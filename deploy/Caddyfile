@@ -1,0 +1,19 @@
+# DelayNoMore HTTPS 리버스 프록시 (Caddy)
+#
+# Caddy는 이 파일 하나로 다음을 자동 처리한다:
+#   - Let's Encrypt 인증서 자동 발급/갱신 (TLS-ALPN·HTTP-01 챌린지)
+#   - HTTP(80) → HTTPS(443) 자동 리다이렉트
+#   - HTTPS 종단 후 뒤단 앱(평문 8080)으로 리버스 프록시
+#
+# {$DOMAIN} 은 실행 시 환경변수로 주입된다(deploy/oci-pull.sh 가 -e DOMAIN 으로 전달).
+# 인증서 만료 알림 메일을 받고 싶으면 아래 전역 블록 주석을 풀고 주소를 채운다.
+#
+# {
+#     email you@example.com
+# }
+
+{$DOMAIN} {
+	encode gzip
+	# 뒤단 앱은 127.0.0.1:8080 에만 바인딩된다(공개 노출 없음). Caddy가 host 네트워크라 로컬로 접근.
+	reverse_proxy 127.0.0.1:8080
+}
