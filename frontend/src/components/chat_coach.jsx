@@ -6,7 +6,7 @@ import {
   getNextQuestion,
   parseUserMessage,
   generateChecklistDraft,
-  chatWithCoach,
+  streamChatWithCoach,
   formatChecklistAsText,
   INITIAL_SLOTS
 } from '../ai_engine';
@@ -232,15 +232,39 @@ export default function ChatCoach() {
         startThinking();
 
         // 최근 대화 이력(방금 보낸 메시지 제외)을 role/content 형태로 전달해
-        // "반영 안됐는데?" 같은 맥락 의존 발화도 이해할 수 있게 한다.
-        const history = messages.slice(-10).map((msg) => ({
+        // "반영 안됐는데?" 같은 맥락 의존 발화도 이해할 수 있게 한다. (토큰 절약: 최근 6턴)
+        const history = messages.slice(-6).map((msg) => ({
           role: msg.sender === 'user' ? 'user' : 'assistant',
           content: msg.text
         }));
 
-        const { reply, updatedDraft } = await chatWithCoach(slots, draftChecklist, history, userText);
+        // 답변 말풍선을 미리 만들지 않고, 첫 토큰이 도착하는 순간 생성해 실시간으로 채운다.
+        // (thinking 표시 → 첫 토큰에서 말풍선으로 전환 → 이후 토큰마다 갱신)
+        const botMsgId = generateUniqueId('bot');
+        let botCreated = false;
+        const onToken = (fullText) => {
+          if (!botCreated) {
+            botCreated = true;
+            stopThinking();
+            setMessages((prev) => [...prev, { id: botMsgId, sender: 'bot', text: fullText }]);
+          } else {
+            setMessages((prev) => prev.map((m) => (m.id === botMsgId ? { ...m, text: fullText } : m)));
+          }
+        };
+
+        const { reply, updatedDraft } = await streamChatWithCoach(
+          slots, draftChecklist, history, userText, onToken
+        );
 
         stopThinking();
+        // 최종 reply로 말풍선을 확정한다(스트림 미사용 mock 폴백이거나, 마지막에 기본 문구로
+        // 대체된 경우까지 일관되게 반영).
+        if (!botCreated) {
+          setMessages((prev) => [...prev, { id: botMsgId, sender: 'bot', text: reply }]);
+        } else {
+          setMessages((prev) => prev.map((m) => (m.id === botMsgId ? { ...m, text: reply } : m)));
+        }
+
         if (updatedDraft) {
           setDraftChecklist(updatedDraft);
           // 기간 연장/단축처럼 날짜 개수가 바뀌었을 수 있으니 슬롯도 함께 맞춘다
@@ -249,10 +273,6 @@ export default function ChatCoach() {
             setSlots((prev) => ({ ...prev, duration: updatedDraft.duration }));
           }
         }
-        setMessages((prev) => [
-          ...prev,
-          { id: generateUniqueId('bot'), sender: 'bot', text: reply }
-        ]);
         return;
       }
 

@@ -1,5 +1,5 @@
 // AI Slot-Filling 및 계획 생성 엔진
-import { postAiDraft, postAiChat, getAiHealth } from "./db_service";
+import { postAiDraft, postAiChat, streamAiChat, getAiHealth } from "./db_service";
 import { todayStr, formatLocalDate, parseLocalDate } from "./date_utils";
 
 
@@ -204,7 +204,109 @@ function normalizeTasks(rawTasks) {
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
-// 초안 생성 이후의 자유 대화 — LLM이 의도(수정/질문/불명확)를 판단한다.
+// 계획 patch(변경된 날짜만: "날짜 → 문자열 배열", 값이 null이면 삭제)를 현재 계획에 병합한다.
+// 백엔드가 전체 계획을 재전송하지 않고 바뀐 부분만 보내므로(토큰 절약), 병합은 프론트에서 한다.
+// 문자열을 {id, content, completed} 객체로 복원하고 날짜순으로 다시 정렬한다.
+function applyPlanPatch(currentTasks, patch) {
+  if (!patch || typeof patch !== 'object') return null;
+  const next = { ...(currentTasks || {}) };
+
+  for (const [date, value] of Object.entries(patch)) {
+    if (value === null) {
+      // 기간 단축 등 — 해당 날짜 삭제
+      delete next[date];
+      continue;
+    }
+    if (!Array.isArray(value)) continue;
+    const items = value
+      .map((task, idx) => {
+        const content = typeof task === 'string' ? task : task?.content;
+        if (typeof content !== 'string' || !content.trim()) return null;
+        return { id: `t-${date}-${idx}`, content: content.trim(), completed: false };
+      })
+      .filter(Boolean);
+    if (items.length > 0) {
+      next[date] = items;
+    } else {
+      delete next[date];
+    }
+  }
+
+  // 날짜 키를 오름차순으로 다시 정렬해 Day 순서를 맞춘다.
+  const ordered = {};
+  Object.keys(next).sort().forEach((k) => { ordered[k] = next[k]; });
+  return Object.keys(ordered).length > 0 ? ordered : null;
+}
+
+// patch를 draft에 적용해 갱신된 draft를 만든다(기간 연장/단축 시 duration/endDate 재계산).
+function draftWithPatch(draft, patch) {
+  const tasks = applyPlanPatch(draft?.tasks, patch);
+  if (!tasks) return null;
+  const dates = Object.keys(tasks).sort();
+  return { ...draft, tasks, duration: dates.length, endDate: dates[dates.length - 1] || draft.endDate };
+}
+
+// 초안 생성 이후의 자유 대화(스트리밍) — 산문 reply는 토큰이 오는 대로 onToken(누적 텍스트)으로
+// 흘려보내고, 계획 변경분(patch)은 스트림 끝에서 병합한다. 반환: { reply, updatedDraft }.
+// 스트림이 아예 실패(토큰 0개)하면 비스트리밍 → mock 순으로 폴백한다.
+export async function streamChatWithCoach(slots, draft, history, message, onToken) {
+  let replyText = '';
+  let patch = null;
+  let streamError = null;
+
+  try {
+    await streamAiChat(
+      {
+        goalName: slots.goalName,
+        duration: slots.duration,
+        dailyHours: slots.dailyHours,
+        currentLevel: slots.currentLevel,
+        tasks: draft?.tasks || {},
+        history,
+        message
+      },
+      (evt) => {
+        if (evt.type === 'token') {
+          replyText += evt.t || '';
+          if (onToken) onToken(replyText);
+        } else if (evt.type === 'plan') {
+          patch = evt.patch || null;
+        } else if (evt.type === 'error') {
+          streamError = evt.m || 'stream error';
+        }
+      }
+    );
+
+    // 토큰을 하나도 못 받았는데 에러였다면 폴백으로 넘긴다.
+    if (streamError && !replyText.trim() && !patch) {
+      throw new Error(streamError);
+    }
+
+    if (patch) {
+      const updatedDraft = draftWithPatch(draft, patch);
+      if (updatedDraft) {
+        return {
+          reply: replyText.trim() || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+          updatedDraft
+        };
+      }
+    }
+
+    if (replyText.trim()) {
+      return { reply: replyText.trim(), updatedDraft: null };
+    }
+    throw new Error("empty stream reply");
+  } catch (error) {
+    console.error("Streaming chat failed, falling back to non-stream/mock:", error);
+    // 이미 일부 산문을 보여준 상태에서 폴백하면 답이 중복 갱신되니, 받은 게 있으면 그걸로 마감한다.
+    if (replyText.trim()) {
+      return { reply: replyText.trim(), updatedDraft: patch ? draftWithPatch(draft, patch) : null };
+    }
+    return chatWithCoach(slots, draft, history, message);
+  }
+}
+
+// 초안 생성 이후의 자유 대화(비스트리밍 폴백) — LLM이 의도(수정/질문/불명확)를 판단한다.
 // 반환: { reply: string, updatedDraft: draft | null }
 export async function chatWithCoach(slots, draft, history, message) {
   try {
@@ -224,16 +326,14 @@ export async function chatWithCoach(slots, draft, history, message) {
       : null;
 
     if (result?.planUpdated === true) {
-      const tasks = normalizeTasks(result.tasks);
-      if (tasks) {
-        const dates = Object.keys(tasks).sort();
+      const updatedDraft = draftWithPatch(draft, result.patch);
+      if (updatedDraft) {
         return {
           reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
-          // 기간 연장/단축 요청으로 날짜 개수가 바뀌었을 수 있어 duration/endDate를 실제 값으로 재계산한다.
-          updatedDraft: { ...draft, tasks, duration: dates.length, endDate: dates[dates.length - 1] || draft.endDate }
+          updatedDraft
         };
       }
-      // planUpdated라고 했지만 tasks가 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
+      // planUpdated라고 했지만 patch가 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
       return {
         reply: "계획을 수정하다가 형식 오류가 발생했어요. 같은 요청을 한 번만 다시 보내주시겠어요?",
         updatedDraft: null
