@@ -209,7 +209,7 @@ public class AiController {
         messages.add(message("user", userPrompt));
 
         // 초안은 계획 전체를 생성하므로 상한을 두지 않는다(길이가 곧 내용).
-        return ResponseEntity.ok(sanitizeJson(callOpenRouterRaw(messages, 0)));
+        return ResponseEntity.ok(cleanPlanJson(sanitizeJson(callOpenRouterRaw(messages, 0))));
     }
 
     /**
@@ -501,6 +501,10 @@ public class AiController {
                     continue; // keep-alive/부분 라인 등은 무시
                 }
                 if (delta == null || delta.isEmpty()) continue;
+                // 모델이 흘리는 한자/가나 등 비한국어 CJK 문자를 스트림 단계에서 제거한다
+                // (산문 토큰·patch JSON 문자열 값 모두 커버, 구분자엔 CJK가 없어 안전).
+                delta = stripCjk(delta);
+                if (delta.isEmpty()) continue;
                 feedDelta(delta, replyPending, jsonBuf, inJson, emitter);
             }
         }
@@ -570,9 +574,9 @@ public class AiController {
         if (raw == null) raw = "";
         int idx = raw.indexOf(PLAN_SENTINEL);
         if (idx < 0) {
-            reply = raw.trim();
+            reply = cleanKoreanText(raw.trim());
         } else {
-            reply = raw.substring(0, idx).trim();
+            reply = cleanKoreanText(raw.substring(0, idx).trim());
             patch = parsePatch(raw.substring(idx + PLAN_SENTINEL.length()));
             planUpdated = patch != null && !patch.isEmpty();
         }
@@ -596,9 +600,66 @@ public class AiController {
         try {
             JsonNode node = objectMapper.readTree(extracted);
             if (!node.isObject() || node.isEmpty()) return null;
-            return objectMapper.convertValue(node, Map.class);
+            Map<String, Object> map = objectMapper.convertValue(node, Map.class);
+            // patch의 태스크 문자열에서도 비한국어 CJK 문자를 제거한다(체크리스트 표시용).
+            return (Map<String, Object>) cleanValue(map);
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    // qwen 등 중국어권 모델이 한국어에 섞어 내는 한자(漢字)·가나 등 비한국어 CJK 문자를 제거한다.
+    // 프롬프트 규칙만으로는 가끔 새기 때문에, 화면에 나가기 전 결정적으로 걸러 순수 한국어를 보장한다.
+    // 히라가나/가타카나(3040-30FF), CJK 확장 A(3400-4DBF), 통합 한자(4E00-9FFF), 호환 한자(F900-FAFF).
+    // 한글·라틴(RSA·TCP/IP 등)·숫자·기호는 보존한다.
+    private static final java.util.regex.Pattern CJK_NOISE =
+            java.util.regex.Pattern.compile("[\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF]");
+
+    private String stripCjk(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return CJK_NOISE.matcher(s).replaceAll("");
+    }
+
+    // stripCjk 후, 문자를 지우며 생긴 중복 공백을 정리하고 앞뒤 공백을 제거한다(문자열 전체 정제용).
+    // 스트림 단계에서 한자를 먼저 지운 문자열(이미 이중 공백만 남은 경우)도 여기서 정리되도록
+    // 조기 반환 없이 항상 공백을 정규화한다(정규화는 멱등이라 원본이 깨끗하면 그대로 유지된다).
+    private String cleanKoreanText(String s) {
+        if (s == null || s.isEmpty()) return s;
+        // 공백 정리는 같은 줄(스페이스/탭)에만 적용 — 줄바꿈 구조는 보존한다.
+        return stripCjk(s)
+                .replaceAll("[ \\t]{2,}", " ")
+                .replaceAll("[ \\t]+(\\n)", "$1")
+                .trim();
+    }
+
+    // 파싱된 값(String/List/Map)을 재귀적으로 순회하며 모든 문자열에 cleanKoreanText를 적용한다.
+    @SuppressWarnings("unchecked")
+    private Object cleanValue(Object v) {
+        if (v instanceof String s) return cleanKoreanText(s);
+        if (v instanceof List<?> list) {
+            List<Object> out = new ArrayList<>();
+            for (Object o : list) out.add(cleanValue(o));
+            return out;
+        }
+        if (v instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                out.put(String.valueOf(e.getKey()), cleanValue(e.getValue()));
+            }
+            return out;
+        }
+        return v;
+    }
+
+    // 초안 계획 JSON을 파싱해 모든 태스크 문자열에서 비한국어 CJK 문자를 제거하고 다시 직렬화한다.
+    // 파싱이 실패하면(비정상 JSON) 원본을 그대로 두고 프론트 정규화에 맡긴다.
+    private String cleanPlanJson(String json) {
+        if (json == null || json.isBlank()) return json;
+        try {
+            Object parsed = objectMapper.readValue(json, Object.class);
+            return objectMapper.writeValueAsString(cleanValue(parsed));
+        } catch (Exception e) {
+            return json;
         }
     }
 
