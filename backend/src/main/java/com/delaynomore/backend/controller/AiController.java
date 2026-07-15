@@ -152,6 +152,9 @@ public class AiController {
                 - Shape: an object mapping each date ("YYYY-MM-DD") to an array of task strings.
                   Example: {"2026-07-14": ["핵심 개념 정리하기", "예제 1개 풀이"], "2026-07-15": ["..."]}
                 - Each task is a plain string written in natural Korean (한국어). No ids, no status fields.
+                - Write tasks in PURE Korean only. Do NOT use Chinese characters/Hanja (漢字, e.g. 限時·重點)
+                  or any non-Korean script; use plain Korean instead ("시간 제한", "핵심"). Do NOT insert stray
+                  markdown symbols (_, *, `, ~) inside task text — write clean sentences.
                 - Tasks must be concrete and specific to the stated goal, sized realistically for the given
                   daily hours and current level. Avoid vague filler like "열심히 하기".
                 Coverage (breadth before depth):
@@ -265,7 +268,8 @@ public class AiController {
                    question with 1-2 concrete example requests. Do NOT change the plan.
 
                 Output format (PLAIN TEXT, not wrapped in JSON):
-                - First write your reply to the user in natural Korean (한국어), 1-4 sentences. When you changed
+                - First write your reply to the user in natural, PURE Korean (한국어), 1-4 sentences — no Chinese
+                  characters/Hanja (漢字) or other non-Korean script. When you changed
                   the plan, state concretely WHAT changed (which days/tasks). Never claim a change you didn't make.
                   If an earlier request in the conversation was not reflected yet (e.g. "반영 안됐는데?"),
                   re-apply that earlier request now.
@@ -275,6 +279,8 @@ public class AiController {
                   task list. Do NOT include unchanged dates.
                     * Each task is a plain Korean string. No ids, no status fields.
                       Example: {"2026-07-16": ["새 할 일 1", "새 할 일 2"]}
+                    * PURE Korean only — no Chinese characters/Hanja (漢字) or other non-Korean script,
+                      and no stray markdown symbols (_, *, `, ~) inside task strings.
                     * EDIT a day  → map that date to its full new task list.
                     * ADD days (extend) → add new date keys as consecutive calendar dates continuing
                       immediately after the latest date currently in [Current plan].
