@@ -175,10 +175,14 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
     // 응답에서 화면에 그릴 수 있는 tasks를 뽑아 검증한다. 모델이 {tasks:{...}}가 아니라
     // 날짜맵을 최상위로 주거나(=resultJson 자체), 빈 객체를 주는 경우까지 감안한다.
     // 유효한 tasks가 없으면 화이트스크린 대신 mock 폴백으로 데모 흐름을 지킨다.
-    const tasks = normalizeTasks(resultJson?.tasks) || normalizeTasks(resultJson);
+    let tasks = normalizeTasks(resultJson?.tasks) || normalizeTasks(resultJson);
     if (!tasks) {
       console.warn("AI 초안 응답에 유효한 tasks가 없어 mock 폴백으로 대체합니다:", resultJson);
-      return generateMockChecklistDraft(slots, refinementPrompt);
+      return generateMockChecklistDraft(slots, refinementPrompt, previousDraft);
+    }
+    // 재수정(이전 초안 존재) 시, 날짜·내용이 그대로인 할 일은 완료 체크를 보존한다.
+    if (previousDraft?.tasks) {
+      tasks = carryOverCompleted(previousDraft.tasks, tasks);
     }
 
     // REST API이므로 onChunk에 완성된 응답을 한 번에 전달하여 UI 렌더링 지원
@@ -201,7 +205,7 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
 
   } catch (error) {
     console.error("Failed to generate AI checklist draft via Backend API:", error);
-    return generateMockChecklistDraft(slots, refinementPrompt);
+    return generateMockChecklistDraft(slots, refinementPrompt, previousDraft);
   }
 }
 
@@ -272,6 +276,25 @@ function normalizeTasks(rawTasks) {
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
+// 대화 수정으로 계획이 다시 만들어질 때, 이전 계획에서 완료한 항목의 체크를 보존한다.
+// 같은 날짜에 같은 내용의 할 일이 다시 등장하면 완료로 간주한다 — 내용이 바뀐 항목은
+// 다른 할 일이 된 것이므로 미완료로 리셋되는 게 맞다. (같은 날짜에 내용이 중복되는
+// 드문 경우 하나만 완료였어도 모두 완료로 매칭되지만, 허용 가능한 수준으로 본다.)
+function carryOverCompleted(prevTasks, nextTasks) {
+  if (!prevTasks || !nextTasks) return nextTasks;
+  const result = {};
+  for (const [date, list] of Object.entries(nextTasks)) {
+    const prevList = Array.isArray(prevTasks[date]) ? prevTasks[date] : [];
+    const completedContents = new Set(
+      prevList.filter((t) => t?.completed).map((t) => t.content)
+    );
+    result[date] = (Array.isArray(list) ? list : []).map((t) =>
+      !t.completed && completedContents.has(t.content) ? { ...t, completed: true } : t
+    );
+  }
+  return result;
+}
+
 // 계획 patch(변경된 날짜만: "날짜 → 문자열 배열", 값이 null이면 삭제)를 현재 계획에 병합한다.
 // 백엔드가 전체 계획을 재전송하지 않고 바뀐 부분만 보내므로(토큰 절약), 병합은 프론트에서 한다.
 // 문자열을 {id, content, completed} 객체로 복원하고 날짜순으로 다시 정렬한다.
@@ -303,7 +326,9 @@ function applyPlanPatch(currentTasks, patch) {
   // 날짜 키를 오름차순으로 다시 정렬해 Day 순서를 맞춘다.
   const ordered = {};
   Object.keys(next).sort().forEach((k) => { ordered[k] = next[k]; });
-  return Object.keys(ordered).length > 0 ? ordered : null;
+  if (Object.keys(ordered).length === 0) return null;
+  // patch로 다시 만들어진 날짜에서도, 내용이 그대로인 할 일은 완료 체크를 보존한다.
+  return carryOverCompleted(currentTasks, ordered);
 }
 
 // patch를 draft에 적용해 갱신된 draft를 만든다(기간 연장/단축 시 duration/endDate 재계산).
@@ -441,7 +466,8 @@ export function mockChatWithCoach(slots, draft, message) {
   const skipWeekend = text.includes('주말') && (text.includes('쉬') || text.includes('빼'));
 
   if (isReduced || isIncreased || skipWeekend) {
-    const refined = generateMockChecklistDraft(slots, text);
+    // 재생성이지만 날짜·내용이 그대로인 할 일은 완료 체크를 보존한다(previousDraft 전달).
+    const refined = generateMockChecklistDraft(slots, text, draft);
     const changed = skipWeekend
       ? "주말을 휴식일로 바꿨습니다"
       : isReduced
@@ -526,7 +552,8 @@ function extendMockChecklistDays(draft, slots, addDays) {
 }
 
 // 템플릿 기반 계획 생성 (Fallback용 — 백엔드/AI 미가용 시에도 데모 흐름이 끊기지 않게 한다)
-export function generateMockChecklistDraft(slots, refinementPrompt = '') {
+// previousDraft가 있으면(재수정 폴백) 날짜·내용이 같은 할 일의 완료 체크를 보존한다.
+export function generateMockChecklistDraft(slots, refinementPrompt = '', previousDraft = null) {
   const { goalName, duration, dailyHours, currentLevel } = slots;
   const tasks = {};
 
@@ -586,7 +613,7 @@ export function generateMockChecklistDraft(slots, refinementPrompt = '') {
     duration,
     dailyHours,
     currentLevel,
-    tasks,
+    tasks: carryOverCompleted(previousDraft?.tasks, tasks) || tasks,
     status: 'DRAFT',
     startDate: getFormattedDate(0),
     endDate: getFormattedDate(duration - 1),
