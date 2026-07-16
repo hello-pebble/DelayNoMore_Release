@@ -15,8 +15,7 @@
 
 실시간성·안정성·품질 강화 릴리스. v0.2.0의 대화형 계획 생성/조작 흐름 위에,
 봇 답변을 **실시간 스트리밍**으로 흘리고 토큰 사용량을 대폭 줄였으며, 서버 입력
-검증·계획 범위 분배·한국어 출력 순도 같은 **품질/견고성**을 보강하고 **HTTPS 배포**를
-지원한다.
+검증·계획 범위 분배·한국어 출력 순도 같은 **품질/견고성**을 보강했다.
 
 ### Added
 - 자유 대화 **실시간 토큰 스트리밍**(SSE) — 새 엔드포인트 `POST /api/ai/chat/stream`.
@@ -25,11 +24,6 @@
   SSE를 직접 파싱하며, 스트림 실패 시 비스트리밍(`/api/ai/chat`) → mock 순으로 폴백한다.
   - 응답은 "산문 reply → `===PLAN===` 구분자 → 계획 JSON" 형태로 분리해, JSON을 토큰 단위로
     흘리지 않고 사람이 읽는 텍스트만 스트리밍한다(깨진 JSON이 화면을 죽이는 문제를 구조적으로 제거).
-- **HTTPS 배포 지원** — `deploy/Caddyfile` + `deploy/oci-pull.sh`에 `DOMAIN` 환경변수 하나로
-  [Caddy](https://caddyserver.com) 리버스 프록시를 자동 구성한다. Let's Encrypt 인증서 자동
-  발급/갱신, HTTP(80)→HTTPS(443) 자동 리다이렉트, 앱은 `127.0.0.1:8080`로만 노출(직접 공개 안 함).
-  Spring에 `forward-headers-strategy: framework`를 켜 프록시의 `X-Forwarded-Proto`를 신뢰한다.
-  배포 가이드(`docs/DEPLOY_OCI.md`)에 HTTPS 절 추가.
 
 ### Changed
 - **토큰 사용량 절감** — 자유 대화 경로를 전면 개편.
