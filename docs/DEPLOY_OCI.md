@@ -24,8 +24,7 @@ OCI는 **① 보안 목록(클라우드)** 과 **② 인스턴스 방화벽(OS)*
 - **Add Ingress Rules**:
   - Source CIDR: `0.0.0.0/0`
   - IP Protocol: `TCP`
-  - Destination Port Range: `80` (HTTP 기본값)
-  - **HTTPS를 쓸 거면 `443` 도 함께 추가** (아래 6번 참고).
+  - Destination Port Range: `80` (아래 스크립트 기본값)
 
 ### ② OS 방화벽
 - 아래 `oci-setup.sh`가 iptables 규칙을 자동으로 추가한다.
@@ -87,42 +86,6 @@ curl -s http://localhost/api/ai/health         # {"success":...}
 - **로그**: `sudo docker logs -f delaynomore`
 - **재부팅 후 자동 기동**: `--restart unless-stopped`로 이미 처리됨.
 - **메모리**(선택): 6GB면 여유롭지만, 더 작은 shape면 `-e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75` 추가.
-
-## 6. HTTPS 적용 (도메인 + 인증서 + 자동 리다이렉트)
-
-공개 운영 전에는 HTTPS가 필요하다. `oci-pull.sh`는 **`DOMAIN` 환경변수만 주면** 앞단에
-[Caddy](https://caddyserver.com) 리버스 프록시를 자동 구성한다. Caddy가 하는 일:
-
-- **Let's Encrypt 인증서 자동 발급/갱신** (별도 certbot·크론 불필요)
-- **HTTP(80) → HTTPS(443) 자동 리다이렉트**
-- HTTPS를 종단한 뒤 뒤단 앱(평문 `127.0.0.1:8080`)으로 프록시. 앱은 공개 포트에 직접 노출되지 않는다.
-
-### 사전 준비
-1. **도메인**을 하나 준비하고, 그 도메인의 **A 레코드(있으면 AAAA도)** 를 이 VM의 **퍼블릭 IP**로 설정.
-   DNS가 전파되어 `dig +short todo.example.com` 이 VM IP를 돌려줘야 인증서 발급이 성공한다.
-2. **OCI 보안 목록**에 인바운드 **80** 과 **443** 을 모두 추가(위 2번). (80은 ACME 챌린지·리다이렉트용)
-
-### 실행
-```bash
-# 도메인만 넘기면 끝 — 앱 컨테이너를 로컬 바인딩으로 재기동하고 Caddy를 띄운다.
-DOMAIN=todo.example.com ./deploy/oci-pull.sh
-
-# 상시로 쓰려면 env 파일에 넣어두면 이후 배포에도 자동 적용된다.
-echo 'DOMAIN=todo.example.com' >> ~/.delaynomore.env
-```
-
-### 확인
-```bash
-sudo docker ps                              # delaynomore + delaynomore-caddy 두 컨테이너
-sudo docker logs -f delaynomore-caddy       # "certificate obtained successfully" 확인
-curl -sI http://todo.example.com            # 301/308 → https 리다이렉트
-curl -s  https://todo.example.com/api/ai/health
-```
-브라우저에서 **https://todo.example.com** 접속(자물쇠 표시). `http://` 로 들어와도 자동으로 `https://` 로 전환된다.
-
-> - 인증서/설정은 Docker named volume(`caddy_data`,`caddy_config`)에 저장돼 재시작해도 재발급하지 않는다(레이트리밋 회피).
-> - 만료 알림 메일을 받고 싶으면 `deploy/Caddyfile`의 전역 `email` 블록 주석을 풀고 주소를 채운다(선택).
-> - DNS가 아직 VM을 안 가리키면 발급이 실패하며 Caddy 로그에 사유가 남는다 — DNS 전파 후 `sudo docker restart delaynomore-caddy`.
 
 ## (대안) OCI Container Instances
 VM 관리 없이 이미지만 올려 실행하는 관리형 옵션. 단, **Always Free 대상이 아님**(사용량 과금).
