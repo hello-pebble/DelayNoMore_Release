@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Copy, Download, Check, Save, RotateCcw, CalendarPlus } from 'lucide-react';
+import { Send, Copy, Download, Check, RotateCcw, CalendarPlus } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
   getNextEmptySlot,
@@ -21,6 +21,7 @@ const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
 // 계획 저장 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
+// 계획이 생기거나 바뀔 때마다(생성·수정·완료 체크) 자동 호출되므로 별도 저장 버튼은 없다.
 // 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 모두 try/catch로 감싼다.
 function saveSavedPlan(slots, draftChecklist) {
   try {
@@ -65,7 +66,7 @@ function buildInitialState() {
         {
           id: 'bot-restored',
           sender: 'bot',
-          text: `이전에 저장한 "${saved.draftChecklist?.goalName || '계획'}"을 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
+          text: `이전에 만든 "${saved.draftChecklist?.goalName || '계획'}"을 완료 기록까지 그대로 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
         }
       ]
     };
@@ -172,6 +173,13 @@ export default function ChatCoach() {
       if (statusTimerRef.current) clearInterval(statusTimerRef.current);
     };
   }, []);
+
+  // 자동 저장 — 계획이 생성/수정되거나 항목 완료를 토글할 때마다 localStorage에 반영해,
+  // 새로고침해도 마지막 상태(항목별 완료 여부 포함)가 그대로 복원되게 한다.
+  // 계획이 없을 때(초기화 직후 등)는 handleResetPlan이 이미 지웠으므로 건드리지 않는다.
+  useEffect(() => {
+    if (draftChecklist) saveSavedPlan(slots, draftChecklist);
+  }, [slots, draftChecklist]);
 
   const startThinking = () => {
     setIsThinking(true);
@@ -374,7 +382,7 @@ export default function ChatCoach() {
     sendMessage(String(value));
   };
 
-  // 할 일 완료 토글 (로컬 상태만 — 서버 저장 없음, 데모 세션 동안만 유지)
+  // 할 일 완료 토글 — 상태 변경은 자동 저장 effect가 localStorage에 반영한다(서버 저장 없음).
   const toggleTask = (date, taskId) => {
     setDraftChecklist((prev) => {
       if (!prev) return prev;
@@ -411,18 +419,12 @@ export default function ChatCoach() {
     URL.revokeObjectURL(url);
   };
 
-  const [saveFeedback, setSaveFeedback] = useState(null); // null | 'ok' | 'error'
-
-  const handleSavePlan = () => {
-    const ok = saveSavedPlan(slots, draftChecklist);
-    setSaveFeedback(ok ? 'ok' : 'error');
-    setTimeout(() => setSaveFeedback(null), 1800);
-  };
-
-  // 처음부터 다시 만들기 — 저장된 계획도 함께 지워 다음 방문 시 되살아나지 않게 한다.
+  // 처음부터 다시 만들기(전체 초기화) — 저장된 계획·완료 기록까지 함께 지워 다음 방문 시
+  // 되살아나지 않게 한다. 자동 저장이라 되돌릴 수 없으므로 실수 방지용 확인 창을 띄운다.
   // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
   const handleResetPlan = () => {
     if (isTyping) return;
+    if (draftChecklist && !window.confirm('계획과 완료 기록을 모두 지우고 처음부터 다시 시작할까요?')) return;
     clearSavedPlan();
     setSlots({ ...INITIAL_SLOTS });
     setDraftChecklist(null);
@@ -530,13 +532,9 @@ export default function ChatCoach() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* 계획 생성 후 빠른 동작 — 저장 / 처음부터 다시 만들기 / 전체 기간 늘리기 */}
+      {/* 계획 생성 후 빠른 동작 — 전체 기간 늘리기 / 처음부터 다시 만들기(저장은 자동) */}
       {draftChecklist && (
         <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
-          <button type="button" onClick={handleSavePlan} style={quickReplyButtonStyle}>
-            <Save size={12} />
-            {saveFeedback === 'ok' ? '저장됨' : saveFeedback === 'error' ? '저장 실패' : '계획 저장'}
-          </button>
           <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={quickReplyButtonStyle}>
             <CalendarPlus size={12} />
             기간 +{EXTEND_DAYS}일
@@ -728,7 +726,7 @@ export default function ChatCoach() {
 
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '4px' }}>
               수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
-              할 일을 클릭하면 완료 표시가 됩니다.
+              할 일을 클릭하면 완료 표시가 됩니다. 계획과 완료 기록은 이 브라우저에 자동 저장됩니다.
             </div>
           </div>
         )}
