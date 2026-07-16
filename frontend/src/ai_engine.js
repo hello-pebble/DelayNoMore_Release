@@ -411,7 +411,7 @@ export async function chatWithCoach(slots, draft, history, message) {
     if (reply) {
       return { reply, updatedDraft: null };
     }
-    throw new Error("empty reply from /api/ai/chat");
+    throw new Error("empty reply from /api/v1/ai/chats");
   } catch (error) {
     console.error("Failed to chat via Backend API:", error);
     return mockChatWithCoach(slots, draft, message);

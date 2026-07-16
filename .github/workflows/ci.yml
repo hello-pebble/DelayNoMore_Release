@@ -25,7 +25,7 @@ jobs:
       - run: npm run build
 
   backend:
-    name: Backend (compile + bootJar)
+    name: Backend (build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,4 +37,4 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: gradle
-      - run: ./gradlew bootJar --no-daemon
+      - run: ./gradlew build --no-daemon

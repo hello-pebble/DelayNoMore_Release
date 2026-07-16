@@ -76,7 +76,7 @@ chmod 600 ~/.delaynomore.env
 
 ```bash
 sudo docker ps
-curl -s http://localhost/api/ai/health         # {"success":...}
+curl -s http://localhost/api/v1/ai/health      # {"success":true,"data":{"connected":...},...}
 ```
 브라우저에서 **http://<VM_PUBLIC_IP>** 접속.
 

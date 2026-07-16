@@ -11,6 +11,25 @@
 
 ## [Unreleased]
 
+### Changed
+- **백엔드 코드 규칙(CONVENTIONS) 정렬 리팩토링** — 단일 `AiController`(약 1,000줄)에 몰려 있던
+  로직을 레이어로 분리: `domain/ai/{controller,service,client,dto}` + `global/{response,error,config}`.
+  - Controller는 `@Valid` 검증·Service 호출만, 비즈니스 로직(프롬프트 조립·응답 정제·SSE 릴레이)은
+    Service 계층(`AiService`/`AiPromptBuilder`/`AiResponseParser`)으로, OpenRouter HTTP 호출은
+    `OpenRouterClient`로 이동.
+  - `Map<String, Object>` 수동 검증 → **요청 DTO + Bean Validation**(`@NotBlank`/`@Min`/`@Max`)으로 교체.
+  - `RestTemplate` → **`RestClient`** 전환(Boot 4 규칙, `spring-boot-starter-restclient` 추가).
+  - 예외 처리를 `BusinessException(ErrorCode)` + `GlobalExceptionHandler` 한 곳으로 통일.
+  - springdoc(Swagger) 도입 — 컨트롤러에 `@Tag`/`@Operation`, `/swagger-ui.html` 제공.
+  - Service 단위 테스트 추가(`AiServiceTest`, `AiResponseParserTest`).
+- **(호환성 깨짐) REST API 계약 변경** — URL 버저닝과 공통 응답 래퍼 도입. 프론트 호출부(`db_service.js`),
+  `render.yaml` 헬스체크 경로, 배포 스크립트/문서도 함께 갱신.
+  - 경로: `/api/ai/{health,draft,draft/stream,chat,chat/stream}` →
+    `/api/v1/ai/{health,drafts,drafts/stream,chats,chats/stream}` (리소스 복수형).
+  - JSON 응답을 `{ success, data, error }`(ApiResponse)로 래핑. 검증 실패는
+    `error.fieldErrors`(필드 → 사유), 오류 분기는 `error.code`(ErrorCode)로 판별.
+    SSE 스트림 이벤트 계약(`day`/`token`/`plan`/`done`/`error`)은 그대로 유지.
+
 ## [0.3.0] - 2026-07-16
 
 실시간성·안정성·품질 강화 릴리스. v0.2.0의 대화형 계획 생성/조작 흐름 위에,

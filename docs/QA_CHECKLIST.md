@@ -78,7 +78,7 @@
 ## H. 배포 / 운영 (VM에서)
 - [ ] `sudo docker ps` → `delaynomore` **Up** (Restarting 반복 아님 = 메모리 OK)
 - [ ] VM 재부팅 후에도 자동 기동 (`--restart unless-stopped`)
-- [ ] `curl -s http://localhost/api/ai/health` 정상 응답
+- [ ] `curl -s http://localhost/api/v1/ai/health` 정상 응답
 
 ---
 

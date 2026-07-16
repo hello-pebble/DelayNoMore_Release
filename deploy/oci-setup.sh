@@ -82,5 +82,5 @@ sudo docker run -d \
 echo
 echo "완료. 상태 확인:"
 echo "  sudo docker ps"
-echo "  curl -s http://localhost:${HOST_PORT}/api/ai/health"
+echo "  curl -s http://localhost:${HOST_PORT}/api/v1/ai/health"
 echo "브라우저: http://<VM_PUBLIC_IP>:${HOST_PORT}"
