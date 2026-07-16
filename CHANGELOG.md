@@ -11,6 +11,11 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-16
+
+초안 생성 체감 개선 릴리스. 계획이 "분석 중 → 통째로" 나타나던 것을,
+**하루 단위로 실시간 스트리밍**해 우측 체크리스트가 Day1부터 하나씩 채워지게 했다.
+
 ### Added
 - 초안 계획 **Day별 실시간 스트리밍** — 새 엔드포인트 `POST /api/ai/draft/stream`. 계획을
   "하루 = 한 줄(NDJSON)"로 생성하게 하고, 한 줄(=하루)이 완성될 때마다 `day` 이벤트로 흘려보내
@@ -151,7 +156,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hello-pebble/DelayNoMore_Release/releases/tag/v0.1.0
