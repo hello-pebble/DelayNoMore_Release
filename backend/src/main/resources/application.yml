@@ -2,6 +2,12 @@ server:
   # 배포 플랫폼(Render·Cloud Run·OCI 등)이 주입하는 PORT를 사용, 로컬은 8080 기본값.
   port: ${PORT:8080}
 
+spring:
+  jackson:
+    deserialization:
+      # duration: 3.5 같은 소수가 정수 필드로 조용히 절삭되지 않게 한다("정수여야 합니다" 규칙 → 400).
+      accept-float-as-int: false
+
 openrouter:
   api:
     url: https://openrouter.ai/api/v1

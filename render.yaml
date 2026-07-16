@@ -8,7 +8,7 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     # 앱은 Render가 주입하는 PORT로 바인딩(application.yml: ${PORT:8080}).
-    healthCheckPath: /api/ai/health
+    healthCheckPath: /api/v1/ai/health
     autoDeploy: true
     envVars:
       # 값은 Render 대시보드에서 직접 입력(시크릿). 미설정 시 프론트 mock 폴백.
