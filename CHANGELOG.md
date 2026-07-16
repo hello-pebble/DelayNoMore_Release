@@ -9,14 +9,27 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
-## [Unreleased]
+## [0.4.0] - 2026-07-16
+
+여러 계획 보관 릴리스. 계획 영속화를 브라우저 localStorage에서 **서버 보관함**으로 옮겨,
+여러 계획을 만들어 두고 목록에서 전환/삭제할 수 있다. 로그인/DB는 후속 단계로 미루고,
+지금은 **서버 인메모리(휘발성)** 에 사용자 구분 없이 보관해 모든 방문자가 같은 목록을 보며
+원격으로 기능을 테스트할 수 있다. 백엔드 코드 규칙(CONVENTIONS) 정렬 리팩토링도 포함.
 
 ### Added
-- **계획 자동 저장** — 계획이 생성·수정되거나 항목 완료를 토글할 때마다 localStorage에 자동
-  반영되어, 새로고침해도 **항목별 완료 여부와 진행률까지** 그대로 복원된다. (기존에는 수동
-  "계획 저장" 버튼을 다시 누르지 않으면 완료 체크가 새로고침 시 유실됐다.)
-- "처음부터 다시 만들기"(전체 초기화)에 **실수 방지 확인 창** 추가 — 자동 저장 체제에서는
-  초기화가 곧 저장분 삭제라 되돌릴 수 없기 때문.
+- **여러 계획 보관** — 새 도메인 `domain/plan`과 REST `/api/v1/plans`
+  (POST/GET/GET{id}/PUT{id}/DELETE{id}, ApiResponse 래핑, Bean Validation, 보관 한도 50건).
+  저장소는 `ConcurrentHashMap` 인메모리로 **휘발성**(서버 재시작 시 초기화)이며 사용자 구분
+  없이 모든 방문자가 공용으로 쓴다(원격 데모용). 추후 로그인+PostgreSQL로 교체할 수 있게
+  Repository 시그니처는 DB 관례(save/findAll/findById/update/deleteById)를 유지한다.
+  - 우측 패널에 **"보관된 계획" 접이식 목록** — 목표명·기간/시간·완료 진행률·저장일·고정(🔒)
+    표시, 클릭으로 전환, 휴지통으로 삭제(모든 방문자 목록에서 제거), "새 계획 만들기" 지원.
+    목록을 열 때마다 다시 불러와 다른 방문자의 변경이 반영된다.
+- **계획 자동 보관/동기화** — 초안이 완성되면 서버 보관함에 자동 등록되고, 이후의 변경
+  (대화 수정·항목 완료 토글·고정)은 600ms 디바운스로 자동 반영된다. 새로고침하면
+  **마지막으로 보던 계획**이 서버에서 자동 복원된다(localStorage에는 계획 데이터가 아닌
+  마지막 계획 ID 포인터 `delaynomore:lastViewedPlanId`만 남긴다). 서버가 꺼져 있어도
+  계획 생성·대화는 mock 폴백으로 계속 동작한다(목록만 오류 표시 + 다시 시도).
 
 ### Fixed
 - **대화로 계획을 수정해도 완료 체크가 보존**되도록 개선 — 기존에는 수정된 날짜의 할 일이
@@ -25,11 +38,18 @@
   모두에 적용.
 
 ### Changed
-- **"계획 저장" 버튼의 의미가 보관 → 고정(확정)으로 변경** — 영속화는 자동 저장이 맡고,
+- **"계획 저장" 버튼의 의미가 보관 → 고정(확정)으로 변경** — 영속화는 자동 보관/동기화가 맡고,
   버튼은 계획을 `CONFIRMED`로 잠근다. 고정 후에는 대화·"기간 +3일" 버튼으로 계획을 수정할
   수 없고(수정안이 와도 반영하지 않고 안내), 완료 체크와 질문만 가능하다. 확정 시 확인 창을
-  띄우며, 체크리스트 헤더에 "고정됨" 배지가 표시된다. 새로고침해도 고정 상태가 유지되고,
-  해제 방법은 "처음부터 다시 만들기"(전체 초기화)뿐이다.
+  띄우며, 체크리스트 헤더에 "고정됨" 배지가 표시된다. 고정 상태는 서버 보관함에 저장되어
+  다른 방문자의 목록에도 🔒로 보인다.
+- **"처음부터 다시 만들기"가 보관된 계획을 삭제하지 않음** — 현재 계획을 보관함에 남긴 채
+  새 계획의 슬롯필링을 시작한다(확인 창 문구도 그에 맞게 변경). 고정된 계획을 바꾸고 싶으면
+  새 계획을 만들고, 필요할 때 목록에서 이전 계획을 삭제하면 된다.
+
+### Removed
+- **(호환성) localStorage 계획 저장 제거** — 기존 단일 저장 키(`delaynomore:savedPlan`)를
+  더 이상 읽지 않으며, 이전 브라우저에 저장돼 있던 계획은 마이그레이션하지 않는다(데모 데이터).
 - **백엔드 코드 규칙(CONVENTIONS) 정렬 리팩토링** — 단일 `AiController`(약 1,000줄)에 몰려 있던
   로직을 레이어로 분리: `domain/ai/{controller,service,client,dto}` + `global/{response,error,config}`.
   - Controller는 `@Valid` 검증·Service 호출만, 비즈니스 로직(프롬프트 조립·응답 정제·SSE 릴레이)은
@@ -186,7 +206,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hello-pebble/DelayNoMore_Release/releases/tag/v0.1.0
