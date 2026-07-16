@@ -1,5 +1,5 @@
 // AI Slot-Filling 및 계획 생성 엔진
-import { postAiDraft, postAiChat, streamAiChat, getAiHealth } from "./db_service";
+import { postAiDraft, postAiChat, streamAiChat, streamAiDraft, getAiHealth } from "./db_service";
 import { todayStr, formatLocalDate, parseLocalDate } from "./date_utils";
 
 
@@ -84,6 +84,73 @@ export function parseUserMessage(message, currentSlot) {
 // 오늘(+offsetDays) 기준 YYYY-MM-DD — 로컬 날짜 유틸에 위임(단일 구현).
 export function getFormattedDate(offsetDays = 0) {
   return todayStr(offsetDays);
+}
+
+// 초안 생성 스트리밍 — "하루 = 한 이벤트"로 도착하는 대로 체크리스트를 Day1부터 하나씩 채운다.
+// onDay(partialDraft, dayCount)로 부분 계획을 넘겨 우측 패널이 점진적으로 그려지게 한다.
+// 스트림이 실패하거나 한 건도 못 받으면 비스트리밍 generateChecklistDraft(→ 최종적으로 mock)로 폴백한다.
+export async function streamChecklistDraft(slots, onDay) {
+  const { goalName, duration, dailyHours, currentLevel } = slots;
+  const startDate = getFormattedDate(0);
+  const endDate = getFormattedDate(duration - 1);
+  const tasks = {};
+  let dayCount = 0;
+  let streamError = null;
+
+  // 지금까지 모인 날짜로 정렬된 draft 스냅샷을 만든다(Day 순서 보장).
+  const snapshot = () => {
+    const ordered = {};
+    Object.keys(tasks).sort().forEach((k) => { ordered[k] = tasks[k]; });
+    const dates = Object.keys(ordered);
+    return {
+      id: `chk-${Date.now()}`,
+      goalName,
+      duration: dates.length || duration,
+      dailyHours,
+      currentLevel,
+      tasks: ordered,
+      status: 'DRAFT',
+      startDate,
+      endDate: dates[dates.length - 1] || endDate,
+      createdAt: new Date().toISOString()
+    };
+  };
+
+  try {
+    await streamAiDraft(
+      { goalName, duration, dailyHours, currentLevel },
+      (evt) => {
+        if (evt.type === 'day' && evt.date && Array.isArray(evt.tasks)) {
+          const items = evt.tasks
+            .map((t, idx) => {
+              const content = typeof t === 'string' ? t : t?.content;
+              if (typeof content !== 'string' || !content.trim()) return null;
+              return { id: `t-${evt.date}-${idx}`, content: content.trim(), completed: false };
+            })
+            .filter(Boolean);
+          if (items.length > 0) {
+            tasks[evt.date] = items;
+            dayCount += 1;
+            if (onDay) onDay(snapshot(), dayCount);
+          }
+        } else if (evt.type === 'error') {
+          streamError = evt.m || 'draft stream error';
+        }
+      }
+    );
+
+    if (dayCount === 0) {
+      throw new Error(streamError || 'no days streamed');
+    }
+    return snapshot();
+  } catch (error) {
+    console.error("Streaming draft failed, falling back to non-stream/mock:", error);
+    // 일부라도 이미 받은 게 있으면 그걸로 마감(부분 계획), 아니면 비스트리밍 재생성으로 폴백.
+    if (dayCount > 0) {
+      return snapshot();
+    }
+    return generateChecklistDraft(slots);
+  }
 }
 
 // AI 기반 계획표 초안 생성 (백엔드 프록시 경유, 실패 시 mock 폴백)

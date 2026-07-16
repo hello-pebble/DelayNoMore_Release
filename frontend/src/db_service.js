@@ -61,11 +61,10 @@ export const postAiChat = async (payload) => {
   return data;
 };
 
-// 자유 대화 스트리밍(SSE) — /api/ai/chat/stream 이 흘려보내는 이벤트를 파싱해 onEvent로 넘긴다.
-// EventSource는 POST를 못 하므로 fetch + ReadableStream 리더로 직접 SSE를 파싱한다.
-// 이벤트(각각 "data: <JSON>\n\n"): {type:'token',t} / {type:'plan',patch} / {type:'done'} / {type:'error',m}
-export const streamAiChat = async (payload, onEvent) => {
-  const response = await fetch(`${API_BASE}/ai/chat/stream`, {
+// SSE(fetch + ReadableStream) 공통 파서 — EventSource는 POST를 못 하므로 직접 파싱한다.
+// 각 이벤트는 "data: <JSON>\n\n" 형태. path의 엔드포인트가 흘려보내는 JSON을 onEvent로 넘긴다.
+const consumeSse = async (path, payload, onEvent) => {
+  const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -103,6 +102,14 @@ export const streamAiChat = async (payload, onEvent) => {
     }
   }
 };
+
+// 자유 대화 스트리밍(SSE) — /api/ai/chat/stream.
+// 이벤트: {type:'token',t} / {type:'plan',patch} / {type:'done'} / {type:'error',m}
+export const streamAiChat = (payload, onEvent) => consumeSse('/ai/chat/stream', payload, onEvent);
+
+// 초안 생성 스트리밍(SSE) — /api/ai/draft/stream. 하루(=한 줄)가 완성될 때마다 day 이벤트가 온다.
+// 이벤트: {type:'day',date,tasks:[...]} / {type:'done'} / {type:'error',m}
+export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/draft/stream', payload, onEvent);
 
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
 export const getAiHealth = async () => {

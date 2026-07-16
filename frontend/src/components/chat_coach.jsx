@@ -5,7 +5,7 @@ import {
   getNextEmptySlot,
   getNextQuestion,
   parseUserMessage,
-  generateChecklistDraft,
+  streamChecklistDraft,
   streamChatWithCoach,
   formatChecklistAsText,
   INITIAL_SLOTS
@@ -327,16 +327,19 @@ export default function ChatCoach() {
 
       startThinking();
 
+      // 초안을 Day별로 스트리밍 — 하루가 도착할 때마다 우측 체크리스트를 한 칸씩 채운다.
       let hasStartedStreaming = false;
-      const checklist = await generateChecklistDraft(updatedSlots, '', () => {
+      const checklist = await streamChecklistDraft(updatedSlots, (partialDraft, dayCount) => {
         if (!hasStartedStreaming) {
           hasStartedStreaming = true;
           stopThinking();
         }
+        // 도착한 Day까지의 부분 계획을 즉시 반영(우측 패널이 Day1부터 순차적으로 나타남).
+        setDraftChecklist(partialDraft);
         setMessages((prev) =>
           prev.map(msg =>
             msg.id === botMsgId
-              ? { ...msg, text: `맞춤 계획표를 조립하고 있습니다...` }
+              ? { ...msg, text: `맞춤 계획표를 만들고 있어요... (Day ${dayCount})` }
               : msg
           )
         );
