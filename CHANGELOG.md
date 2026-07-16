@@ -11,6 +11,13 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-16
+
+실시간성·안정성·품질 강화 릴리스. v0.2.0의 대화형 계획 생성/조작 흐름 위에,
+봇 답변을 **실시간 스트리밍**으로 흘리고 토큰 사용량을 대폭 줄였으며, 서버 입력
+검증·계획 범위 분배·한국어 출력 순도 같은 **품질/견고성**을 보강하고 **HTTPS 배포**를
+지원한다.
+
 ### Added
 - 자유 대화 **실시간 토큰 스트리밍**(SSE) — 새 엔드포인트 `POST /api/ai/chat/stream`.
   봇의 산문 답변을 토큰이 도착하는 대로 흘려보내 실제 타이핑처럼 나타나게 하고,
@@ -143,6 +150,7 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hello-pebble/DelayNoMore_Release/releases/tag/v0.1.0
