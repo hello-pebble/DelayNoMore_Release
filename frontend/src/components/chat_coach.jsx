@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Copy, Download, Check, Save, RotateCcw, CalendarPlus } from 'lucide-react';
+import { Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
   getNextEmptySlot,
@@ -20,7 +20,9 @@ const DURATION_PRESETS = ['3일', '5일', '7일'];
 const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
-// 계획 저장 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
+// 계획 영속화 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
+// 계획이 생기거나 바뀔 때마다(생성·수정·완료 체크·고정) 자동 호출된다. 별도의 "계획 저장"
+// 버튼은 보관용이 아니라 계획을 CONFIRMED로 "고정"하는 용도다(아래 handleSavePlan 참고).
 // 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 모두 try/catch로 감싼다.
 function saveSavedPlan(slots, draftChecklist) {
   try {
@@ -57,6 +59,8 @@ function clearSavedPlan() {
 function buildInitialState() {
   const saved = loadSavedPlan();
   if (saved) {
+    const goalName = saved.draftChecklist?.goalName || '계획';
+    const locked = saved.draftChecklist?.status === 'CONFIRMED';
     return {
       slots: saved.slots,
       draftChecklist: saved.draftChecklist,
@@ -65,7 +69,9 @@ function buildInitialState() {
         {
           id: 'bot-restored',
           sender: 'bot',
-          text: `이전에 저장한 "${saved.draftChecklist?.goalName || '계획'}"을 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
+          text: locked
+            ? `저장(고정)된 "${goalName}" 계획을 완료 기록까지 그대로 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요. 새로 시작하려면 "처음부터 다시 만들기"를 눌러주세요.`
+            : `이전에 만든 "${goalName}"을 완료 기록까지 그대로 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
         }
       ]
     };
@@ -156,6 +162,10 @@ export default function ChatCoach() {
   const thinkingTimerRef = useRef(null);
   const statusTimerRef = useRef(null);
 
+  // 계획 고정 여부 — "계획 저장"을 누르면 CONFIRMED가 되어, 이후에는 대화로 계획을
+  // 수정할 수 없다(강제성 부여: 확정한 계획은 실행만, 재협상 없음). 완료 체크는 계속 가능.
+  const isLocked = draftChecklist?.status === 'CONFIRMED';
+
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -172,6 +182,13 @@ export default function ChatCoach() {
       if (statusTimerRef.current) clearInterval(statusTimerRef.current);
     };
   }, []);
+
+  // 자동 저장 — 계획이 생성/수정되거나 항목 완료를 토글할 때마다 localStorage에 반영해,
+  // 새로고침해도 마지막 상태(항목별 완료 여부 포함)가 그대로 복원되게 한다.
+  // 계획이 없을 때(초기화 직후 등)는 handleResetPlan이 이미 지웠으므로 건드리지 않는다.
+  useEffect(() => {
+    if (draftChecklist) saveSavedPlan(slots, draftChecklist);
+  }, [slots, draftChecklist]);
 
   const startThinking = () => {
     setIsThinking(true);
@@ -266,6 +283,19 @@ export default function ChatCoach() {
         }
 
         if (updatedDraft) {
+          // 고정된 계획은 수정을 반영하지 않는다 — LLM/mock이 수정안을 만들어 와도 버리고,
+          // 고정 사실을 안내한다(확정한 계획에 강제성 부여).
+          if (isLocked) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: generateUniqueId('bot'),
+                sender: 'bot',
+                text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+              }
+            ]);
+            return;
+          }
           setDraftChecklist(updatedDraft);
           // 기간 연장/단축처럼 날짜 개수가 바뀌었을 수 있으니 슬롯도 함께 맞춘다
           // (다음 요청의 [Goal] Duration이 실제 계획과 어긋나지 않게).
@@ -374,7 +404,7 @@ export default function ChatCoach() {
     sendMessage(String(value));
   };
 
-  // 할 일 완료 토글 (로컬 상태만 — 서버 저장 없음, 데모 세션 동안만 유지)
+  // 할 일 완료 토글 — 상태 변경은 자동 저장 effect가 localStorage에 반영한다(서버 저장 없음).
   const toggleTask = (date, taskId) => {
     setDraftChecklist((prev) => {
       if (!prev) return prev;
@@ -411,18 +441,30 @@ export default function ChatCoach() {
     URL.revokeObjectURL(url);
   };
 
-  const [saveFeedback, setSaveFeedback] = useState(null); // null | 'ok' | 'error'
-
+  // 계획 저장 = 고정(CONFIRMED) — 이후 대화로는 계획을 수정할 수 없게 된다.
+  // 단순 보관이 아니라 "이 계획대로 실행하겠다"는 확정 행위라, 실수 방지 확인 창을 띄운다.
+  // (영속화 자체는 자동 저장 effect가 담당하므로 여기서는 상태 전환만 한다.)
   const handleSavePlan = () => {
-    const ok = saveSavedPlan(slots, draftChecklist);
-    setSaveFeedback(ok ? 'ok' : 'error');
-    setTimeout(() => setSaveFeedback(null), 1800);
+    if (!draftChecklist || isLocked || isTyping) return;
+    if (!window.confirm('계획을 저장하면 고정되어 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
+    setDraftChecklist((prev) => (prev ? { ...prev, status: 'CONFIRMED', confirmedAt: new Date().toISOString() } : prev));
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateUniqueId('bot'),
+        sender: 'bot',
+        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
+      }
+    ]);
   };
 
-  // 처음부터 다시 만들기 — 저장된 계획도 함께 지워 다음 방문 시 되살아나지 않게 한다.
+  // 처음부터 다시 만들기(전체 초기화) — 저장된 계획·완료 기록까지 함께 지워 다음 방문 시
+  // 되살아나지 않게 한다. 자동 저장이라 되돌릴 수 없으므로 실수 방지용 확인 창을 띄운다.
+  // 고정된 계획을 바꾸고 싶을 때의 유일한 탈출구이기도 하다.
   // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
   const handleResetPlan = () => {
     if (isTyping) return;
+    if (draftChecklist && !window.confirm('계획과 완료 기록을 모두 지우고 처음부터 다시 시작할까요?')) return;
     clearSavedPlan();
     setSlots({ ...INITIAL_SLOTS });
     setDraftChecklist(null);
@@ -435,9 +477,10 @@ export default function ChatCoach() {
   };
 
   // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
+  // 계획 수정에 해당하므로 고정된 계획에서는 동작하지 않는다(버튼도 숨김).
   const EXTEND_DAYS = 3;
   const handleExtendDuration = () => {
-    if (isTyping) return;
+    if (isTyping || isLocked) return;
     sendMessage(`전체 기간을 ${EXTEND_DAYS}일 더 늘려줘`);
   };
 
@@ -530,17 +573,27 @@ export default function ChatCoach() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* 계획 생성 후 빠른 동작 — 저장 / 처음부터 다시 만들기 / 전체 기간 늘리기 */}
+      {/* 계획 생성 후 빠른 동작 — 저장(고정) / 전체 기간 늘리기 / 처음부터 다시 만들기.
+          고정 후에는 수정 계열 버튼(저장·기간 늘리기)을 숨기고 고정 표시만 남긴다. */}
       {draftChecklist && (
         <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
-          <button type="button" onClick={handleSavePlan} style={quickReplyButtonStyle}>
-            <Save size={12} />
-            {saveFeedback === 'ok' ? '저장됨' : saveFeedback === 'error' ? '저장 실패' : '계획 저장'}
-          </button>
-          <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={quickReplyButtonStyle}>
-            <CalendarPlus size={12} />
-            기간 +{EXTEND_DAYS}일
-          </button>
+          {isLocked ? (
+            <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
+              <Lock size={12} />
+              고정된 계획 — 대화 수정 불가
+            </span>
+          ) : (
+            <>
+              <button type="button" onClick={handleSavePlan} disabled={isTyping} style={quickReplyButtonStyle}>
+                <Save size={12} />
+                계획 저장(고정)
+              </button>
+              <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={quickReplyButtonStyle}>
+                <CalendarPlus size={12} />
+                기간 +{EXTEND_DAYS}일
+              </button>
+            </>
+          )}
           <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>
             <RotateCcw size={12} />
             처음부터 다시 만들기
@@ -563,7 +616,11 @@ export default function ChatCoach() {
           type="text"
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
-          placeholder={draftChecklist ? "수정 요청이나 질문을 입력해 주세요..." : "대답을 입력해 주세요..."}
+          placeholder={
+            isLocked ? "질문을 입력해 주세요... (계획은 고정되어 수정 불가)" :
+            draftChecklist ? "수정 요청이나 질문을 입력해 주세요..." :
+            "대답을 입력해 주세요..."
+          }
           style={{
             flex: 1,
             padding: '10px 12px',
@@ -615,7 +672,25 @@ export default function ChatCoach() {
         alignItems: 'center',
         justifyContent: 'space-between'
       }}>
-        <span style={{ fontWeight: 600, fontSize: '14px' }}>생성된 체크리스트</span>
+        <span style={{ fontWeight: 600, fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          생성된 체크리스트
+          {isLocked && (
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '3px',
+              fontSize: '11px',
+              fontWeight: 600,
+              color: 'var(--primary)',
+              border: '1px solid var(--primary)',
+              borderRadius: '999px',
+              padding: '1px 8px'
+            }}>
+              <Lock size={10} />
+              고정됨
+            </span>
+          )}
+        </span>
         {draftChecklist && (
           <div style={{ display: 'flex', gap: '6px' }}>
             <button
@@ -727,8 +802,17 @@ export default function ChatCoach() {
             ))}
 
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '4px' }}>
-              수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
-              할 일을 클릭하면 완료 표시가 됩니다.
+              {isLocked ? (
+                <>
+                  계획이 저장(고정)되어 대화로는 수정할 수 없습니다. 할 일 클릭으로 완료 체크를 이어가세요.<br />
+                  계획과 완료 기록은 이 브라우저에 자동 저장됩니다.
+                </>
+              ) : (
+                <>
+                  수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
+                  할 일을 클릭하면 완료 표시가 됩니다. "계획 저장"을 누르면 계획이 고정되어 수정할 수 없게 됩니다.
+                </>
+              )}
             </div>
           </div>
         )}
