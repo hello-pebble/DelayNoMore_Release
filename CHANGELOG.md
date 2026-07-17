@@ -9,6 +9,32 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.4.1] - 2026-07-17
+
+안정화 릴리스. 체크리스트 접근성(키보드·스크린리더), 고정 계획의 수정 차단 시점,
+보관함 진행률 지연, HTTP 환경의 복사 실패 안내를 다듬었다. 기능 추가는 없고 기존 흐름의
+거친 부분을 매끄럽게 하는 패치.
+
+### Added
+- **체크리스트 할 일을 실제 `<input type="checkbox">`로** 렌더링 — 예전에는 클릭 전용
+  `<li>`(마우스만)에 `☑/☐` 유니코드 글리프를 그려 키보드 접근이 불가능했다. 이제 `<label>`로
+  감싼 네이티브 체크박스라 **`Tab`으로 포커스 + `Space`로 완료 토글**이 되고, 텍스트 클릭도
+  그대로 토글되며 스크린리더가 체크박스로 인식한다(체크박스 색은 테마 `--primary`).
+
+### Fixed
+- **고정(CONFIRMED) 계획의 수정 요청을 AI 호출 전에 차단** — 예전에는 "주말은 빼줘" 같은
+  수정 요청도 AI를 먼저 호출해 답변을 스트리밍한 뒤에야 🔒 안내를 띄웠다(호출 낭비 + 답변과
+  안내가 뒤섞임). 이제 확실한 수정 요청은 AI를 부르지 않고 🔒 안내만 한 번 표시한다. 질문
+  (수정 키워드 없음)은 그대로 통과해 고정 계획에서도 대화로 물어볼 수 있다. 판별 기준은 오프라인
+  mock 폴백과 동일한 키워드 휴리스틱(`isPlanModificationRequest`)이고, 기존 사후 가드는 휴리스틱이
+  놓친 변형 요청용 안전망으로 남긴다.
+- **보관함을 펼친 상태에서도 진행률 즉시 갱신** — 목록의 현재 계획 행이 서버 스냅샷을 읽어,
+  600ms 디바운스 동기화 전에는 완료 체크 후에도 옛 수치로 남았다. 이제 현재 계획 행은 라이브
+  상태(`draftChecklist`)에서 진행률을 읽어, 체크 즉시 본문 진행 바와 같은 값이 된다.
+- **HTTP 환경의 복사 실패 안내를 명확히** — `execCommand` 폴백까지 실패하면 버튼이 잠깐
+  "복사 실패"로만 바뀌어 다음 행동을 알 수 없었다. 이제 실패 시 봇 메시지로 원인(비-HTTPS
+  배포의 브라우저 정책)과 대안("다운로드" 버튼 또는 직접 선택 복사)을 안내한다.
+
 ## [0.4.0] - 2026-07-16
 
 여러 계획 보관 릴리스. 계획 영속화를 브라우저 localStorage에서 **서버 보관함**으로 옮겨,
@@ -212,7 +238,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.1.0...v0.2.0
