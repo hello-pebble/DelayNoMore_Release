@@ -193,7 +193,6 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
-  const [showTodayView, setShowTodayView] = useState(true); // 오늘 보기(가운데 밴드) 접이식 — 기본 펼침
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -305,8 +304,8 @@ export default function ChatCoach() {
         sender: 'bot',
         text: kind === 'restored'
           ? (locked
-            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 아래 체크리스트에서 완료 체크를 이어가세요.`
-            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 아래 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
+            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요.`
+            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
           : (locked
             ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
             : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
@@ -360,7 +359,7 @@ export default function ChatCoach() {
           {
             id: generateUniqueId('bot'),
             sender: 'bot',
-            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 아래 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
           }
         ]);
       } else {
@@ -616,7 +615,7 @@ export default function ChatCoach() {
       setDraftChecklist(checklist);
       // 완성된 초안을 서버 보관함에 자동 등록(부분 스트리밍 중에는 등록하지 않는다).
       archiveNewPlan(checklist);
-      const replyText = "계획 초안을 완성했습니다. 아래 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
+      const replyText = "계획 초안을 완성했습니다. 오른쪽 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
       setMessages((prev) =>
         prev.map(msg =>
           msg.id === botMsgId
@@ -742,7 +741,7 @@ export default function ChatCoach() {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 아래 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
+        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
       }
     ]);
   };
@@ -846,7 +845,7 @@ export default function ChatCoach() {
     currentSlot === REQUIRED_SLOTS.CURRENT_LEVEL ? LEVEL_PRESETS :
     [];
 
-  // === 상단: 대화 패널 ===
+  // === 왼쪽: 대화 패널 ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
@@ -1035,47 +1034,46 @@ export default function ChatCoach() {
   const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
   const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
 
-  // === 오늘 할 일 밴드 (대화와 체크리스트 사이 · 접이식) ===
-  // 보관된 계획이 하나도 없으면 밴드 자체를 숨긴다(첫 방문 화면을 어지럽히지 않게 —
-  // planListBar와 같은 정책). 펼칠 때 refreshPlans()로 다른 기기/방문자의 변경을 반영한다.
-  const todayBar = savedPlans.length > 0 && (
-    <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
-      <button
-        type="button"
-        onClick={() => {
-          const next = !showTodayView;
-          setShowTodayView(next);
-          if (next) refreshPlans();
-        }}
+  // === 오늘 할 일 패널 (가운데 칸 · 항상 표시) ===
+  // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
+  // 다른 기기/방문자의 변경을 반영한다(자동 갱신은 마운트 fetch + 각 조작 경로가 담당).
+  const todayPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-card)' }}>
+      <div
         style={{
-          width: '100%',
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '8px 16px',
-          fontSize: '13px',
-          fontWeight: 600,
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--text-main)',
-          cursor: 'pointer'
+          fontSize: '14px',
+          fontWeight: 600
         }}
       >
-        <Sun size={13} style={{ color: 'var(--primary)' }} />
+        <Sun size={14} style={{ color: 'var(--primary)' }} />
         오늘 할 일
         {todayTotal > 0 && (
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 400 }}>
             오늘 {todayDone}/{todayTotal} 완료
           </span>
         )}
-        <span style={{ marginLeft: 'auto', display: 'flex' }}>
-          {showTodayView ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </span>
-      </button>
-      {showTodayView && (
-        <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {todayGroups.length === 0 ? (
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>오늘 할 일이 없습니다</div>
+        <button
+          type="button"
+          onClick={refreshPlans}
+          title="오늘 할 일 새로고침"
+          style={{ marginLeft: 'auto', display: 'flex', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+        >
+          <RefreshCw size={13} />
+        </button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {savedPlans.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>
+              보관된 계획이 아직 없습니다.<br />계획을 만들면 오늘 할 일이 여기에 모여요.
+            </div>
+          ) : todayGroups.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>오늘 할 일이 없습니다</div>
           ) : (
             todayGroups.map((group) => (
               <div
@@ -1142,8 +1140,7 @@ export default function ChatCoach() {
               </div>
             ))
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 
@@ -1255,7 +1252,7 @@ export default function ChatCoach() {
     </div>
   );
 
-  // === 하단: 체크리스트 패널 ===
+  // === 오른쪽: 체크리스트 패널 ===
   const checklistPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-panel)' }}>
       <div style={{
@@ -1318,7 +1315,7 @@ export default function ChatCoach() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
         {!draftChecklist ? (
           <div style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', marginTop: '40px', lineHeight: 1.6 }}>
-            위 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
+            왼쪽 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
             입력하면 이곳에 계획표가 생성됩니다.
           </div>
         ) : (
@@ -1417,7 +1414,7 @@ export default function ChatCoach() {
                 </>
               ) : (
                 <>
-                  수정하려면 위 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
+                  수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
                   할 일을 클릭하면 완료 표시가 됩니다. "계획 저장"을 누르면 계획이 고정되어 수정할 수 없게 됩니다.<br />
                   계획은 서버 보관함에 자동 보관되어, 위 "보관된 계획" 목록에서 여러 개를 오가며 쓸 수 있습니다.
                 </>
@@ -1429,29 +1426,43 @@ export default function ChatCoach() {
     </div>
   );
 
-  // 세로 3단 스택 — 위=대화, 가운데=오늘 할 일 밴드, 아래=체크리스트. 모든 폭에서 동일한
-  // 구성이라 모바일 분기(미디어쿼리)가 필요 없다. 밴드는 내용 높이만 차지하고(flexShrink 0,
-  // 내부 스크롤), 대화/체크리스트가 남은 높이를 반씩 나눈다.
+  // 가로 3칸 — 왼쪽=대화, 가운데=오늘 할 일, 오른쪽=체크리스트. 가운데 칸은 목록 성격이라
+  // 살짝 좁게 잡는다. 모바일 폭에서는 위아래 스택으로 전환하고, 오늘 칸은 화면을 다
+  // 차지하지 않게 높이를 제한한다(내부 스크롤).
   return (
     <div className="split-layout">
       <div className="split-pane split-pane--chat">{chatPanel}</div>
-      {todayBar}
+      <div className="split-pane split-pane--today">{todayPanel}</div>
       <div className="split-pane split-pane--checklist">{checklistPanel}</div>
 
       <style>{`
         .split-layout {
           flex: 1;
           min-height: 0;
-          display: flex;
-          flex-direction: column;
+          display: grid;
+          grid-template-columns: 1.1fr 0.8fr 1.1fr;
         }
         .split-pane {
-          flex: 1;
           min-height: 0;
           overflow: hidden;
         }
-        .split-pane--chat {
-          border-bottom: 1px solid var(--border);
+        .split-pane--chat,
+        .split-pane--today {
+          border-right: 1px solid var(--border);
+        }
+        @media (max-width: 760px) {
+          .split-layout {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr auto 1fr;
+          }
+          .split-pane--chat,
+          .split-pane--today {
+            border-right: none;
+            border-bottom: 1px solid var(--border);
+          }
+          .split-pane--today {
+            max-height: 40vh;
+          }
         }
       `}</style>
     </div>
