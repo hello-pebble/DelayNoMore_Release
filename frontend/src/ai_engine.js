@@ -87,7 +87,7 @@ export function getFormattedDate(offsetDays = 0) {
 }
 
 // 초안 생성 스트리밍 — "하루 = 한 이벤트"로 도착하는 대로 체크리스트를 Day1부터 하나씩 채운다.
-// onDay(partialDraft, dayCount)로 부분 계획을 넘겨 우측 패널이 점진적으로 그려지게 한다.
+// onDay(partialDraft, dayCount)로 부분 계획을 넘겨 체크리스트가 점진적으로 그려지게 한다.
 // 스트림이 실패하거나 한 건도 못 받으면 비스트리밍 generateChecklistDraft(→ 최종적으로 mock)로 폴백한다.
 export async function streamChecklistDraft(slots, onDay) {
   const { goalName, duration, dailyHours, currentLevel } = slots;

@@ -90,7 +90,7 @@ function fromPlanResponse(plan) {
   return { slots, draftChecklist };
 }
 
-// 완료 진행률(완료/전체 개수) — 우측 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
+// 완료 진행률(완료/전체 개수) — 체크리스트 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
 // tasks가 비정상이어도 화면이 죽지 않게 방어적으로 계산한다.
 function getPlanProgress(tasks) {
   const all = Object.values(tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []));
@@ -193,7 +193,6 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
-  const [showTodayView, setShowTodayView] = useState(true); // 오늘 보기(상단 밴드) 접이식 — 기본 펼침
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -594,14 +593,14 @@ export default function ChatCoach() {
 
       startThinking();
 
-      // 초안을 Day별로 스트리밍 — 하루가 도착할 때마다 우측 체크리스트를 한 칸씩 채운다.
+      // 초안을 Day별로 스트리밍 — 하루가 도착할 때마다 체크리스트를 한 칸씩 채운다.
       let hasStartedStreaming = false;
       const checklist = await streamChecklistDraft(updatedSlots, (partialDraft, dayCount) => {
         if (!hasStartedStreaming) {
           hasStartedStreaming = true;
           stopThinking();
         }
-        // 도착한 Day까지의 부분 계획을 즉시 반영(우측 패널이 Day1부터 순차적으로 나타남).
+        // 도착한 Day까지의 부분 계획을 즉시 반영(체크리스트가 Day1부터 순차적으로 나타남).
         setDraftChecklist(partialDraft);
         setMessages((prev) =>
           prev.map(msg =>
@@ -659,7 +658,7 @@ export default function ChatCoach() {
     });
   };
 
-  // 오늘 보기(상단 밴드)에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
+  // 오늘 보기 밴드에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
   // draftChecklist가 단일 진실 원천으로 남아 디바운스 동기화 경로가 그대로 동작한다
   // (사본 분기·동기화 경합 없음). 비활성 계획이면 savedPlans 스냅샷을 낙관적으로 갱신하고
   // 전체 계획을 즉시 PUT한다(백엔드는 부분 갱신이 없음). 디바운스는 두지 않는다 —
@@ -708,7 +707,7 @@ export default function ChatCoach() {
         {
           id: generateUniqueId('bot'),
           sender: 'bot',
-          text: '⚠️ 이 환경에서는 자동 복사가 제한돼요(HTTPS가 아닌 배포에서 브라우저가 클립보드를 막는 경우). 오른쪽 위 "다운로드" 버튼으로 .txt 파일로 저장하거나, 계획 텍스트를 직접 선택해 복사해 주세요.'
+          text: '⚠️ 이 환경에서는 자동 복사가 제한돼요(HTTPS가 아닌 배포에서 브라우저가 클립보드를 막는 경우). 체크리스트의 "다운로드" 버튼으로 .txt 파일로 저장하거나, 계획 텍스트를 직접 선택해 복사해 주세요.'
         }
       ]);
     }
@@ -1035,47 +1034,46 @@ export default function ChatCoach() {
   const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
   const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
 
-  // === 오늘 할 일 밴드 (화면 상단 전폭 · 접이식) ===
-  // 보관된 계획이 하나도 없으면 밴드 자체를 숨긴다(첫 방문 화면을 어지럽히지 않게 —
-  // planListBar와 같은 정책). 펼칠 때 refreshPlans()로 다른 기기/방문자의 변경을 반영한다.
-  const todayBar = savedPlans.length > 0 && (
-    <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
-      <button
-        type="button"
-        onClick={() => {
-          const next = !showTodayView;
-          setShowTodayView(next);
-          if (next) refreshPlans();
-        }}
+  // === 오늘 할 일 패널 (가운데 칸 · 항상 표시) ===
+  // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
+  // 다른 기기/방문자의 변경을 반영한다(자동 갱신은 마운트 fetch + 각 조작 경로가 담당).
+  const todayPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-card)' }}>
+      <div
         style={{
-          width: '100%',
+          padding: '10px 16px',
+          borderBottom: '1px solid var(--border)',
+          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '8px 16px',
-          fontSize: '13px',
-          fontWeight: 600,
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--text-main)',
-          cursor: 'pointer'
+          fontSize: '14px',
+          fontWeight: 600
         }}
       >
-        <Sun size={13} style={{ color: 'var(--primary)' }} />
+        <Sun size={14} style={{ color: 'var(--primary)' }} />
         오늘 할 일
         {todayTotal > 0 && (
           <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 400 }}>
             오늘 {todayDone}/{todayTotal} 완료
           </span>
         )}
-        <span style={{ marginLeft: 'auto', display: 'flex' }}>
-          {showTodayView ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </span>
-      </button>
-      {showTodayView && (
-        <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {todayGroups.length === 0 ? (
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>오늘 할 일이 없습니다</div>
+        <button
+          type="button"
+          onClick={refreshPlans}
+          title="오늘 할 일 새로고침"
+          style={{ marginLeft: 'auto', display: 'flex', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
+        >
+          <RefreshCw size={13} />
+        </button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {savedPlans.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>
+              보관된 계획이 아직 없습니다.<br />계획을 만들면 오늘 할 일이 여기에 모여요.
+            </div>
+          ) : todayGroups.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>오늘 할 일이 없습니다</div>
           ) : (
             todayGroups.map((group) => (
               <div
@@ -1117,7 +1115,7 @@ export default function ChatCoach() {
                 </div>
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '4px', margin: 0, padding: 0 }}>
                   {group.tasks.map((task) => (
-                    // 우측 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
+                    // 본문 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
                     // 텍스트 클릭 토글 + Tab 포커스/Space 토글이 네이티브로 동작한다.
                     <li key={task.id} style={{ fontSize: '13px' }}>
                       <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer', userSelect: 'none' }}>
@@ -1142,12 +1140,11 @@ export default function ChatCoach() {
               </div>
             ))
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 
-  // === 보관된 계획 목록 (우측 패널 헤더 아래 접이식 바) ===
+  // === 보관된 계획 목록 (체크리스트 패널 헤더 아래 접이식 바) ===
   // 서버 공유 보관함이라 폴링 없이 "열 때마다 refetch"로 다른 방문자의 변경을 반영한다.
   const planListBar = (savedPlans.length > 0 || plansStatus === 'error') && (
     <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1429,39 +1426,45 @@ export default function ChatCoach() {
     </div>
   );
 
+  // 가로 3칸 — 왼쪽=대화, 가운데=오늘 할 일, 오른쪽=체크리스트. 가운데 칸은 목록 성격이라
+  // 살짝 좁게 잡는다. 모바일 폭에서는 위아래 스택으로 전환하고, 오늘 칸은 화면을 다
+  // 차지하지 않게 높이를 제한한다(내부 스크롤).
   return (
-    <>
-      {todayBar}
-      <div className="split-layout">
-        <div className="split-pane split-pane--left">{chatPanel}</div>
-        <div className="split-pane split-pane--right">{checklistPanel}</div>
+    <div className="split-layout">
+      <div className="split-pane split-pane--chat">{chatPanel}</div>
+      <div className="split-pane split-pane--today">{todayPanel}</div>
+      <div className="split-pane split-pane--checklist">{checklistPanel}</div>
 
-        <style>{`
+      <style>{`
         .split-layout {
           flex: 1;
           min-height: 0;
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1.1fr 0.8fr 1.1fr;
         }
         .split-pane {
           min-height: 0;
           overflow: hidden;
         }
-        .split-pane--left {
+        .split-pane--chat,
+        .split-pane--today {
           border-right: 1px solid var(--border);
         }
         @media (max-width: 760px) {
           .split-layout {
             grid-template-columns: 1fr;
-            grid-template-rows: 1fr 1fr;
+            grid-template-rows: 1fr auto 1fr;
           }
-          .split-pane--left {
+          .split-pane--chat,
+          .split-pane--today {
             border-right: none;
             border-bottom: 1px solid var(--border);
           }
+          .split-pane--today {
+            max-height: 40vh;
+          }
         }
-        `}</style>
-      </div>
-    </>
+      `}</style>
+    </div>
   );
 }
