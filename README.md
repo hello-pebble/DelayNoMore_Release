@@ -7,7 +7,7 @@
 
 ## 기능
 
-1. AI 코치가 4가지를 순서대로 질문합니다 — **목표 → 기간(1~30일) → 하루 투자 시간(1~24h) → 현재 수준**.
+1. AI 코치가 4가지를 순서대로 질문합니다 — **목표 → 기간(1~14일) → 하루 투자 시간(1~24h) → 현재 수준**.
 2. 입력이 모두 채워지면 백엔드가 OpenRouter로 하루 단위 계획 초안(투두리스트)을 생성합니다.
 3. 초안 생성 후에는 **자유 대화 모드**가 됩니다 — LLM이 메시지의 의도를 판단해, 수정 요청이면 계획을 고치고 무엇을 바꿨는지 설명하고(예: "주말은 빼줘"), 질문이면 답하고, 불명확하면 되묻습니다.
 4. `OPENROUTER_API_KEY`가 없거나 백엔드가 응답하지 않으면 프론트가 **템플릿 기반 mock 계획**으로 자동 폴백하여 데모 흐름이 끊기지 않습니다.
@@ -17,7 +17,7 @@
 
 ## 구조
 
-화면은 좌우로 분할되어 **왼쪽=AI 코치와의 대화**, **오른쪽=생성된 체크리스트**를 동시에 보여줍니다. (모바일 폭에서는 위아래로 스택됩니다.)
+화면은 좌우로 분할되어 **왼쪽=AI 코치와의 대화**, **오른쪽=생성된 체크리스트**를 동시에 보여줍니다. (모바일 폭에서는 위아래로 스택됩니다.) 분할 화면 위(헤더 아래)에는 보관된 계획들의 오늘 항목을 모은 **"오늘 할 일" 접이식 밴드**가 표시됩니다.
 
 ```
 DelayNoMore_Release/
@@ -27,7 +27,8 @@ DelayNoMore_Release/
 │       ├── App.jsx                    # 헤더 + AI 상태 표시 + 코치 화면 마운트
 │       ├── ai_engine.js               # 슬롯필링 로직 + 계획 생성 + mock 폴백
 │       ├── db_service.js              # 백엔드 호출(단일 REST 클라이언트) — AI 프록시 + 계획 보관함
-│       └── components/chat_coach.jsx  # 좌우 분할: 대화 패널 + 체크리스트/보관함 패널
+│       ├── date_utils.js              # 로컬 기준 'YYYY-MM-DD' 포맷/파싱/오늘 날짜 유틸
+│       └── components/chat_coach.jsx  # 오늘 할 일 밴드 + 좌우 분할(대화 패널 · 체크리스트/보관함 패널)
 └── backend/    # Spring Boot 4.1 / Java 21 (AI 프록시 + 계획 보관함 + 정적 화면 서빙)
     └── src/main/java/.../
         ├── domain/ai/   # controller·service·client·dto — /api/v1/ai/{health,drafts,chats}(+/stream)
@@ -89,7 +90,7 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 - 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.5.0**.
 - 버전 규칙은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따르며, 프론트엔드(`package.json`)와 백엔드(`build.gradle`)는 **하나의 제품 버전**으로 통일합니다.
 - 버전별 변경사항은 [`CHANGELOG.md`](./CHANGELOG.md)에 기록합니다.
-- 버전별 기능 점검은 [`docs/QA_CHECKLIST.md`](./docs/QA_CHECKLIST.md)로 확인합니다.
+- 버전별 기능 점검은 [`docs/QA_CHECKLIST.md`](./docs/QA_CHECKLIST.md)로 확인하고, 릴리스별 수행 결과는 `docs/QA_RESULT_vX.Y.Z.md`로 기록합니다(최신: [`docs/QA_RESULT_v0.5.0.md`](./docs/QA_RESULT_v0.5.0.md)).
 - 배포 회고와 AI 파라미터 제어 방향은 [`docs/DEPLOY_RETROSPECTIVE.md`](./docs/DEPLOY_RETROSPECTIVE.md)에 정리했습니다.
 - 브랜치 전략은 **트렁크 기반** — `main`은 항상 배포 가능한 상태로 유지하고, 기능마다 짧게 사는 브랜치 → PR → `main` 머지 → `vX.Y.Z` 태그를 찍습니다.
 - PR/`main` 푸시 시 [CI](./.github/workflows/ci.yml)가 프론트(lint+build)·백엔드(bootJar) 빌드를 검증합니다.
