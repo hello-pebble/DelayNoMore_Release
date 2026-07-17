@@ -197,6 +197,9 @@ export default function ChatCoach() {
   const statusTimerRef = useRef(null);
   const hasInteractedRef = useRef(false); // 비동기 자동 복원이 사용자의 새 입력을 덮어쓰지 않게
   const syncTimerRef = useRef(null); // 서버 자동 동기화 디바운스 타이머
+  const dirtyRef = useRef(null); // 아직 서버에 반영 안 된 최신 변경 { id, payload }
+  const lastSyncedRef = useRef(null); // 서버에 있는 것으로 아는 payload의 JSON — 불필요한 재전송(no-op PUT) 억제
+  const archivePendingRef = useRef(false); // 초안이 아직 보관되지 못해(서버 미가용) 재시도가 필요한 상태
 
   // 계획 고정 여부 — "계획 저장"을 누르면 CONFIRMED가 되어, 이후에는 대화로 계획을
   // 수정할 수 없다(강제성 부여: 확정한 계획은 실행만, 재협상 없음). 완료 체크는 계속 가능.
@@ -230,6 +233,51 @@ export default function ChatCoach() {
     }
   };
 
+  // 대기 중인 자동 동기화(디바운스 타이머·미반영 변경·재보관 대기)를 모두 취소한다.
+  // 활성 계획을 삭제할 때 호출해, 방금 지운 계획이 뒤늦은 PUT의 404→재생성으로 되살아나지 않게 한다.
+  const cancelPendingSync = () => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    dirtyRef.current = null;
+    archivePendingRef.current = false;
+  };
+
+  // 대기 중인 변경을 즉시 서버에 반영한다(디바운스를 기다리지 않고). 계획 전환·리셋 직전에
+  // 호출해, 아직 PUT되지 않은 완료 토글/수정이 유실되지 않게 한다.
+  // recreateIfMissing=false: 떠나는 계획이 이미 삭제됐어도 새로 만들지 않는다(orphan 방지).
+  const syncActivePlan = async ({ recreateIfMissing }) => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    const pending = dirtyRef.current;
+    if (!pending) return;
+    dirtyRef.current = null;
+    try {
+      await updatePlan(pending.id, pending.payload);
+      lastSyncedRef.current = JSON.stringify(pending.payload);
+    } catch (err) {
+      if (err.code !== 'PLAN_NOT_FOUND') {
+        console.warn('계획 동기화 실패 — 다음 변경 때 다시 시도합니다:', err);
+        dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도
+        return;
+      }
+      if (!recreateIfMissing) return;
+      // 백그라운드 동기화 중 대상이 사라짐(다른 방문자 삭제·서버 재시작) — 작업을 잃지 않게 새로 보관.
+      try {
+        const saved = await createPlan(pending.payload);
+        lastSyncedRef.current = JSON.stringify(pending.payload);
+        setActivePlanId(saved.id);
+        writeLastViewedPlanId(saved.id);
+      } catch {
+        setActivePlanId(null);
+        clearLastViewedPlanId();
+      }
+    }
+  };
+
   // 보관함의 계획을 화면 상태로 복원한다 — 새로고침 복원(restored)과 목록 전환(switched) 공용.
   // messages를 안내 말풍선 하나로 교체하는 이유: 이전 계획에 대한 대화 이력이 LLM history
   // (최근 6턴)에 섞여 새 계획 수정을 오염시키는 것을 차단하기 위해서다.
@@ -237,6 +285,10 @@ export default function ChatCoach() {
     const { slots: restoredSlots, draftChecklist: restoredDraft } = fromPlanResponse(plan);
     const goalName = plan.goalName || '계획';
     const locked = restoredDraft.status === 'CONFIRMED';
+    // 방금 서버에서 읽은 상태이므로 "이미 동기화됨"으로 기록 — 복원 직후 no-op PUT을 막는다.
+    lastSyncedRef.current = JSON.stringify(toPlanPayload(restoredDraft));
+    dirtyRef.current = null;
+    archivePendingRef.current = false;
     setSlots(restoredSlots);
     setDraftChecklist(restoredDraft);
     setCurrentSlot(null);
@@ -286,16 +338,20 @@ export default function ChatCoach() {
     };
   }, []);
 
-  // 초안이 완성되면 서버 보관함에 자동 등록한다(모든 방문자의 목록에 나타남).
-  // 보관함이 가득 찼거나 서버가 죽어 있으면 미보관 상태로 계속 쓰되, 한도 초과만 안내한다.
+  // 초안이 완성되면(또는 서버 미가용으로 실패했던 보관을 재시도할 때) 서버 보관함에 등록한다.
+  // 성공하면 활성 계획이 되고, 서버가 죽어 있으면 재시도 대기 상태로, 한도 초과면 안내만 한다.
   const archiveNewPlan = async (checklist) => {
+    const payload = toPlanPayload(checklist);
     try {
-      const saved = await createPlan(toPlanPayload(checklist));
+      const saved = await createPlan(payload);
+      archivePendingRef.current = false;
+      lastSyncedRef.current = JSON.stringify(payload); // 방금 보관 → no-op PUT 억제
       setActivePlanId(saved.id);
       writeLastViewedPlanId(saved.id);
       refreshPlans();
     } catch (err) {
       if (err.code === 'PLAN_LIMIT_EXCEEDED') {
+        archivePendingRef.current = false; // 한도 초과는 재시도해도 소용없으니 포기하고 안내만
         setMessages((prev) => [
           ...prev,
           {
@@ -305,34 +361,49 @@ export default function ChatCoach() {
           }
         ]);
       } else {
-        console.warn('계획 보관 실패(서버 미가용?) — 미보관 상태로 계속 진행합니다:', err);
+        // 서버 미가용 등 일시 오류 — 재시도 대기로 표시해, 서버 복구 후 다음 변경 때 다시 보관한다.
+        archivePendingRef.current = true;
+        console.warn('계획 보관 실패(서버 미가용?) — 다음 변경 때 재시도합니다:', err);
       }
     }
   };
 
-  // 자동 동기화 — 보관된 계획의 변경(대화 수정·완료 토글·고정)을 600ms 디바운스로 서버에
-  // 반영한다. 다른 브라우저에서 목록을 열면 진행률·고정 상태가 갱신되어 보인다(원격 시연 핵심).
-  // 공유 저장소라 동시 수정은 last-write-wins로 허용하고, 대상이 사라졌으면(다른 방문자 삭제
-  // 또는 서버 재시작) 새로 보관해 이어 간다.
+  // 자동 동기화 — 계획 변경(대화 수정·완료 토글·고정)을 600ms 디바운스로 서버에 반영한다.
+  // 다른 브라우저에서 목록을 열면 진행률·고정 상태가 갱신되어 보인다(원격 시연 핵심).
+  // 이미 서버에 있는 내용과 같으면(복원/보관 직후) 아무것도 보내지 않는다(no-op PUT 억제).
+  // cleanup에서 타이머를 지우지 않는 이유: dep 변경(전환 등)에 취소되면 대기 중 변경이 유실되기
+  // 때문. 전환/리셋은 syncActivePlan으로 먼저 flush하고, 삭제는 cancelPendingSync로 취소한다.
   useEffect(() => {
-    if (activePlanId == null || !draftChecklist) return undefined;
-    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = setTimeout(async () => {
-      try {
-        await updatePlan(activePlanId, toPlanPayload(draftChecklist));
-      } catch (err) {
-        if (err.code !== 'PLAN_NOT_FOUND') return; // 일시 오류는 다음 변경 때 재시도된다
-        try {
-          const saved = await createPlan(toPlanPayload(draftChecklist));
-          setActivePlanId(saved.id);
-          writeLastViewedPlanId(saved.id);
-        } catch {
-          setActivePlanId(null);
-          clearLastViewedPlanId();
-        }
+    if (!draftChecklist) return;
+    const payloadStr = JSON.stringify(toPlanPayload(draftChecklist));
+    if (payloadStr === lastSyncedRef.current) {
+      // 현재 상태가 서버와 동일(복원/보관 직후, 또는 토글을 되돌림) — 대기 중이던 이전 변경도
+      // 무의미하니 함께 취소한다(낡은 상태가 뒤늦게 PUT되는 것을 막는다).
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
       }
-    }, SYNC_DEBOUNCE_MILLIS);
-    return () => clearTimeout(syncTimerRef.current);
+      dirtyRef.current = null;
+      return;
+    }
+
+    if (activePlanId != null) {
+      dirtyRef.current = { id: activePlanId, payload: JSON.parse(payloadStr) };
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => {
+        syncTimerRef.current = null;
+        syncActivePlan({ recreateIfMissing: true });
+      }, SYNC_DEBOUNCE_MILLIS);
+    } else if (archivePendingRef.current) {
+      // 미보관 초안(이전 보관 실패) — 변경이 생기면 서버가 살아났는지 다시 시도한다.
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      const snapshot = draftChecklist;
+      syncTimerRef.current = setTimeout(() => {
+        syncTimerRef.current = null;
+        archiveNewPlan(snapshot);
+      }, SYNC_DEBOUNCE_MILLIS);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftChecklist, activePlanId]);
 
   const startThinking = () => {
@@ -613,9 +684,11 @@ export default function ChatCoach() {
   // 남으므로(활성 포인터만 해제) 언제든 목록에서 다시 불러올 수 있다. 고정된 계획을 바꾸고
   // 싶을 때의 탈출구이기도 하다: 새 계획을 만들고, 필요하면 목록에서 이전 계획을 삭제한다.
   // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
-  const handleResetPlan = () => {
+  const handleResetPlan = async () => {
     if (isTyping) return;
     if (draftChecklist && !window.confirm('현재 계획은 보관함에 남고, 새 계획을 처음부터 시작합니다. 계속할까요?')) return;
+    // 떠나기 전에 대기 중 변경(완료 토글 등)을 마저 저장한다 — 보관함에 남길 것이므로 유실 금지.
+    await syncActivePlan({ recreateIfMissing: false });
     setActivePlanId(null);
     clearLastViewedPlanId();
     setShowPlanList(false);
@@ -637,6 +710,8 @@ export default function ChatCoach() {
       setShowPlanList(false);
       return;
     }
+    // 전환 전에 현재 계획의 대기 중 변경을 마저 저장한다(디바운스가 취소돼 유실되지 않게).
+    await syncActivePlan({ recreateIfMissing: false });
     try {
       const plan = await fetchPlan(planId);
       restorePlan(plan, 'switched');
@@ -656,6 +731,13 @@ export default function ChatCoach() {
     const entry = savedPlans.find((p) => p.id === planId);
     const goalName = entry?.goalName || '계획';
     if (!window.confirm(`"${goalName}" 계획을 보관함에서 삭제할까요? 모든 방문자의 목록에서 사라집니다.`)) return;
+    if (planId === activePlanId) {
+      // 대기 중 자동 동기화를 먼저 취소한다 — 그러지 않으면 뒤늦은 PUT이 404→재생성으로
+      // 방금 지운 계획을 새 id로 되살릴 수 있다. 화면 계획은 그대로 두되 미보관 상태로 전환.
+      cancelPendingSync();
+      setActivePlanId(null);
+      clearLastViewedPlanId();
+    }
     try {
       await deletePlan(planId);
     } catch (err) {
@@ -663,11 +745,6 @@ export default function ChatCoach() {
         window.alert('계획을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
         return;
       }
-    }
-    if (planId === activePlanId) {
-      // 화면에 보던 계획은 그대로 두되, 방금 지웠으니 미보관 상태로 전환한다(자동 재보관 안 함).
-      setActivePlanId(null);
-      clearLastViewedPlanId();
     }
     refreshPlans();
   };

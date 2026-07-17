@@ -20,7 +20,10 @@ public class PlanService {
 
     private final PlanRepository planRepository;
 
-    public PlanResponse create(PlanSaveRequest request) {
+    // synchronized: 한도 검사(count)와 저장(save)을 원자적으로 묶는다. 공유 데모 저장소라
+    // 여러 방문자가 동시에 생성하면 각자 검사를 통과한 뒤 저장해 상한 50건을 넘길 수 있는데
+    // (TOCTOU), 생성 경로를 직렬화해 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
+    public synchronized PlanResponse create(PlanSaveRequest request) {
         if (planRepository.count() >= MAX_PLANS) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
         }
