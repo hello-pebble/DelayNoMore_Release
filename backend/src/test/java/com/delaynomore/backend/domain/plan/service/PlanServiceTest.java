@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.service;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -19,7 +20,7 @@ class PlanServiceTest {
     private static final int MAX_PLANS = 50;
     private static final long MISSING_ID = 999L;
 
-    private final PlanService planService = new PlanService(new PlanRepository());
+    private final PlanService planService = new PlanService(new PlanRepository(), new ReflectionRepository());
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

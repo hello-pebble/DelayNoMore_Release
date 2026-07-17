@@ -103,6 +103,13 @@ export const fetchPlans = () => requestJson('/plans', null, 'GET');
 export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 
+// 하루 마무리 회고 — 계획별·날짜별 1건(PUT=업서트). 완료 개수는 보내지 않는다(서버가
+// plan.tasks에서 재계산). 저장은 서버 기준 오늘(Asia/Seoul) 날짜만 허용된다.
+// 호출부는 err.code(REFLECTION_NOT_FOUND / PLAN_NOT_FOUND 등)로 분기한다.
+export const putReflection = (planId, date, payload) => requestJson(`/plans/${planId}/reflections/${date}`, payload, 'PUT');
+export const fetchReflection = (planId, date) => requestJson(`/plans/${planId}/reflections/${date}`, null, 'GET');
+export const fetchReflections = (planId) => requestJson(`/plans/${planId}/reflections`, null, 'GET');
+
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
 // 백엔드 data({connected, reason})를 기존 화면 계약({success, reason})으로 되돌려 준다.
 export const getAiHealth = async () => {
