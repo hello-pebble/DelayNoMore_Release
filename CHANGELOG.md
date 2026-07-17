@@ -9,6 +9,27 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.5.0] - 2026-07-17
+
+"오늘 할 일" 릴리스. 여러 계획을 보관하게 되면서(v0.4.0) 오늘 실행할 일이 계획별로 흩어져
+하나씩 열어봐야 했던 문제를, **화면 상단의 오늘 보기 밴드** 하나로 해결한다. 백엔드 변경 없음
+(기존 `/api/v1/plans` 전체 갱신 PUT을 그대로 사용).
+
+### Added
+- **오늘 할 일 밴드(오늘 보기)** — 헤더 아래 화면 상단에 접이식 밴드를 추가해, **모든 보관된
+  계획**에서 오늘 날짜의 할 일만 모아 **계획 이름과 함께** 보여준다(고정된 계획은 🔒 표시,
+  보고 있는 계획은 "보는 중" 표시).
+  - **밴드에서 바로 완료 체크** — 우측 체크리스트와 같은 네이티브 체크박스(키보드 접근 포함).
+    체크는 원본 계획에 **즉시 양방향 반영**된다: 보고 있는 계획이면 라이브 상태(체크리스트·진행
+    바)와 공유하고, 다른 계획이면 낙관적으로 갱신한 뒤 서버에 바로 저장한다(실패 시 롤백+안내,
+    이미 삭제된 계획이면 목록 갱신). 새로고침·다른 기기에서도 같은 완료 상태가 보인다.
+  - 밴드 머리에 **"오늘 n/m 완료" 진행률**, 오늘 항목이 하나도 없으면 **"오늘 할 일이 없습니다"**
+    안내, 계획별 **"계획 보기" 버튼**으로 해당 계획으로 바로 이동(기존 보관함 전환 재사용).
+  - 펼칠 때마다 보관함을 다시 불러와 다른 방문자/기기의 변경이 반영된다. 보관된 계획이 없으면
+    밴드 자체를 숨긴다.
+- 계획을 전환하거나 새로 만들 때, 떠나는 계획의 보관함 스냅샷을 라이브 상태로 최신화 —
+  오늘 보기/보관함 목록이 전환 직후 낡은 완료 수치를 보이지 않는다.
+
 ## [0.4.1] - 2026-07-17
 
 안정화 릴리스. 체크리스트 접근성(키보드·스크린리더), 고정 계획의 수정 차단 시점,
@@ -238,7 +259,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.2.0...v0.3.0

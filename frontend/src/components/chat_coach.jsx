@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
-  FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw
+  FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -15,6 +15,7 @@ import {
   INITIAL_SLOTS
 } from '../ai_engine';
 import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan } from '../db_service';
+import { todayStr } from '../date_utils';
 
 // "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
 // localStorage에 남긴다(계획 자체는 서버 보관함에 있고 모든 방문자가 공유한다).
@@ -192,6 +193,7 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
+  const [showTodayView, setShowTodayView] = useState(true); // 오늘 보기(상단 밴드) 접이식 — 기본 펼침
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -657,6 +659,43 @@ export default function ChatCoach() {
     });
   };
 
+  // 오늘 보기(상단 밴드)에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
+  // draftChecklist가 단일 진실 원천으로 남아 디바운스 동기화 경로가 그대로 동작한다
+  // (사본 분기·동기화 경합 없음). 비활성 계획이면 savedPlans 스냅샷을 낙관적으로 갱신하고
+  // 전체 계획을 즉시 PUT한다(백엔드는 부분 갱신이 없음). 디바운스는 두지 않는다 —
+  // 단발 클릭이고, 매 호출이 최신 낙관 상태를 읽으므로 연속 토글도 누적 반영된다.
+  const toggleTodayTask = async (planId, taskId) => {
+    if (planId === activePlanId) {
+      toggleTask(todayStr(), taskId);
+      return;
+    }
+    const plan = savedPlans.find((p) => p.id === planId);
+    const today = todayStr();
+    const dayTasks = plan?.tasks?.[today];
+    if (!Array.isArray(dayTasks)) return;
+    const updated = {
+      ...plan,
+      tasks: {
+        ...plan.tasks,
+        [today]: dayTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
+      }
+    };
+    setSavedPlans((prev) => prev.map((p) => (p.id === planId ? updated : p)));
+    try {
+      // PlanResponse는 toPlanPayload가 뽑는 필드를 전부 가지므로 그대로 직렬화할 수 있다.
+      // status/confirmedAt이 통과되므로 고정(CONFIRMED) 계획도 고정 상태를 잃지 않는다.
+      await updatePlan(planId, toPlanPayload(updated));
+    } catch (err) {
+      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? plan : p))); // 실패 시 롤백
+      if (err.code === 'PLAN_NOT_FOUND') {
+        window.alert('이미 삭제된 계획입니다.');
+        refreshPlans();
+      } else {
+        window.alert('완료 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
+    }
+  };
+
   const handleCopyPlan = async () => {
     const text = formatChecklistAsText(draftChecklist);
     const ok = await copyTextToClipboard(text);
@@ -717,6 +756,11 @@ export default function ChatCoach() {
     if (draftChecklist && !window.confirm('현재 계획은 보관함에 남고, 새 계획을 처음부터 시작합니다. 계속할까요?')) return;
     // 떠나기 전에 대기 중 변경(완료 토글 등)을 마저 저장한다 — 보관함에 남길 것이므로 유실 금지.
     await syncActivePlan({ recreateIfMissing: false });
+    // 떠나는 계획의 스냅샷도 라이브 상태로 최신화(오늘 보기가 낡은 값을 보이지 않게).
+    if (activePlanId != null && draftChecklist) {
+      const leavingId = activePlanId;
+      setSavedPlans((prev) => prev.map((p) => (p.id === leavingId ? { ...p, ...toPlanPayload(draftChecklist) } : p)));
+    }
     setActivePlanId(null);
     clearLastViewedPlanId();
     setShowPlanList(false);
@@ -740,9 +784,17 @@ export default function ChatCoach() {
     }
     // 전환 전에 현재 계획의 대기 중 변경을 마저 저장한다(디바운스가 취소돼 유실되지 않게).
     await syncActivePlan({ recreateIfMissing: false });
+    // 떠나는 계획의 savedPlans 스냅샷을 라이브 상태로 최신화한다 — 활성일 때는 오늘 보기가
+    // draftChecklist를 읽어 가려지지만, 비활성이 되는 순간 낡은 스냅샷이 드러나기 때문.
+    if (activePlanId != null && draftChecklist) {
+      const leavingId = activePlanId;
+      setSavedPlans((prev) => prev.map((p) => (p.id === leavingId ? { ...p, ...toPlanPayload(draftChecklist) } : p)));
+    }
     try {
       const plan = await fetchPlan(planId);
       restorePlan(plan, 'switched');
+      // 방금 서버에서 읽은 최신본으로 대상 행 스냅샷도 갱신(다른 방문자의 변경 반영).
+      setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
     } catch (err) {
       if (err.code === 'PLAN_NOT_FOUND') {
         window.alert('이미 삭제된 계획입니다.');
@@ -957,6 +1009,143 @@ export default function ChatCoach() {
 
   // 전체 진행률(완료/전체 개수) — 헤더 요약과 진행 바에 함께 쓴다.
   const { done: completedCount, total: totalCount } = getPlanProgress(draftChecklist?.tasks);
+
+  // === 오늘 보기 집계 — 모든 "보관된" 계획에서 오늘 날짜의 할 일만 모은다 ===
+  // tasks 맵 키가 실제 로컬 날짜(YYYY-MM-DD)라 todayStr()과 문자열 비교로 충분하다.
+  // 활성 계획은 라이브 상태(draftChecklist)에서 읽는다 — 서버 스냅샷은 600ms 디바운스
+  // 동기화 전이라 낡을 수 있고, 같은 계획이 두 번 보이는 것도 막는다. 미보관 초안
+  // (activePlanId가 null)은 스펙대로 제외한다(보관 계획만 대상).
+  const today = todayStr();
+  const todayGroups = useMemo(() => (
+    savedPlans
+      .map((plan) => {
+        const isCurrent = plan.id === activePlanId && !!draftChecklist;
+        const source = isCurrent ? draftChecklist : plan;
+        const dayTasks = source.tasks?.[today];
+        return {
+          planId: plan.id,
+          goalName: source.goalName || plan.goalName,
+          locked: (source.status || 'DRAFT') === 'CONFIRMED',
+          isCurrent,
+          tasks: Array.isArray(dayTasks) ? dayTasks : []
+        };
+      })
+      .filter((g) => g.tasks.length > 0)
+  ), [savedPlans, activePlanId, draftChecklist, today]);
+  const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
+  const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
+
+  // === 오늘 할 일 밴드 (화면 상단 전폭 · 접이식) ===
+  // 보관된 계획이 하나도 없으면 밴드 자체를 숨긴다(첫 방문 화면을 어지럽히지 않게 —
+  // planListBar와 같은 정책). 펼칠 때 refreshPlans()로 다른 기기/방문자의 변경을 반영한다.
+  const todayBar = savedPlans.length > 0 && (
+    <div style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !showTodayView;
+          setShowTodayView(next);
+          if (next) refreshPlans();
+        }}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '8px 16px',
+          fontSize: '13px',
+          fontWeight: 600,
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--text-main)',
+          cursor: 'pointer'
+        }}
+      >
+        <Sun size={13} style={{ color: 'var(--primary)' }} />
+        오늘 할 일
+        {todayTotal > 0 && (
+          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontWeight: 400 }}>
+            오늘 {todayDone}/{todayTotal} 완료
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto', display: 'flex' }}>
+          {showTodayView ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
+      </button>
+      {showTodayView && (
+        <div style={{ maxHeight: '220px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {todayGroups.length === 0 ? (
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>오늘 할 일이 없습니다</div>
+          ) : (
+            todayGroups.map((group) => (
+              <div
+                key={group.planId}
+                style={{
+                  background: 'var(--bg-panel)',
+                  borderRadius: '8px',
+                  padding: '8px 10px',
+                  border: `1px solid ${group.isCurrent ? 'var(--primary)' : 'var(--border)'}`
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '6px' }}>
+                  {group.locked && <Lock size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} />}
+                  <span style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {group.goalName}
+                  </span>
+                  {group.isCurrent && <span style={{ fontSize: '13px', color: 'var(--primary)', flexShrink: 0 }}>· 보는 중</span>}
+                  <button
+                    type="button"
+                    onClick={() => handleLoadPlan(group.planId)}
+                    disabled={isTyping}
+                    style={{
+                      marginLeft: 'auto',
+                      flexShrink: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                      fontSize: '12px',
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--primary)',
+                      cursor: 'pointer',
+                      padding: '2px 4px'
+                    }}
+                  >
+                    계획 보기
+                    <ArrowRight size={12} />
+                  </button>
+                </div>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '4px', margin: 0, padding: 0 }}>
+                  {group.tasks.map((task) => (
+                    // 우측 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
+                    // 텍스트 클릭 토글 + Tab 포커스/Space 토글이 네이티브로 동작한다.
+                    <li key={task.id} style={{ fontSize: '13px' }}>
+                      <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer', userSelect: 'none' }}>
+                        <input
+                          type="checkbox"
+                          checked={!!task.completed}
+                          onChange={() => toggleTodayTask(group.planId, task.id)}
+                          style={{ marginTop: '2px', flexShrink: 0, width: '14px', height: '14px', accentColor: 'var(--primary)', cursor: 'pointer' }}
+                        />
+                        <span
+                          style={{
+                            textDecoration: task.completed ? 'line-through' : 'none',
+                            color: task.completed ? 'var(--text-muted)' : 'var(--text-main)'
+                          }}
+                        >
+                          {task.content}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   // === 보관된 계획 목록 (우측 패널 헤더 아래 접이식 바) ===
   // 서버 공유 보관함이라 폴링 없이 "열 때마다 refetch"로 다른 방문자의 변경을 반영한다.
@@ -1241,11 +1430,13 @@ export default function ChatCoach() {
   );
 
   return (
-    <div className="split-layout">
-      <div className="split-pane split-pane--left">{chatPanel}</div>
-      <div className="split-pane split-pane--right">{checklistPanel}</div>
+    <>
+      {todayBar}
+      <div className="split-layout">
+        <div className="split-pane split-pane--left">{chatPanel}</div>
+        <div className="split-pane split-pane--right">{checklistPanel}</div>
 
-      <style>{`
+        <style>{`
         .split-layout {
           flex: 1;
           min-height: 0;
@@ -1269,7 +1460,8 @@ export default function ChatCoach() {
             border-bottom: 1px solid var(--border);
           }
         }
-      `}</style>
-    </div>
+        `}</style>
+      </div>
+    </>
   );
 }
