@@ -90,7 +90,7 @@ function fromPlanResponse(plan) {
   return { slots, draftChecklist };
 }
 
-// 완료 진행률(완료/전체 개수) — 우측 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
+// 완료 진행률(완료/전체 개수) — 체크리스트 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
 // tasks가 비정상이어도 화면이 죽지 않게 방어적으로 계산한다.
 function getPlanProgress(tasks) {
   const all = Object.values(tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []));
@@ -193,7 +193,7 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
-  const [showTodayView, setShowTodayView] = useState(true); // 오늘 보기(상단 밴드) 접이식 — 기본 펼침
+  const [showTodayView, setShowTodayView] = useState(true); // 오늘 보기(가운데 밴드) 접이식 — 기본 펼침
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -305,8 +305,8 @@ export default function ChatCoach() {
         sender: 'bot',
         text: kind === 'restored'
           ? (locked
-            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요.`
-            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
+            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 아래 체크리스트에서 완료 체크를 이어가세요.`
+            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 아래 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
           : (locked
             ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
             : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
@@ -360,7 +360,7 @@ export default function ChatCoach() {
           {
             id: generateUniqueId('bot'),
             sender: 'bot',
-            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 아래 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
           }
         ]);
       } else {
@@ -594,14 +594,14 @@ export default function ChatCoach() {
 
       startThinking();
 
-      // 초안을 Day별로 스트리밍 — 하루가 도착할 때마다 우측 체크리스트를 한 칸씩 채운다.
+      // 초안을 Day별로 스트리밍 — 하루가 도착할 때마다 체크리스트를 한 칸씩 채운다.
       let hasStartedStreaming = false;
       const checklist = await streamChecklistDraft(updatedSlots, (partialDraft, dayCount) => {
         if (!hasStartedStreaming) {
           hasStartedStreaming = true;
           stopThinking();
         }
-        // 도착한 Day까지의 부분 계획을 즉시 반영(우측 패널이 Day1부터 순차적으로 나타남).
+        // 도착한 Day까지의 부분 계획을 즉시 반영(체크리스트가 Day1부터 순차적으로 나타남).
         setDraftChecklist(partialDraft);
         setMessages((prev) =>
           prev.map(msg =>
@@ -616,7 +616,7 @@ export default function ChatCoach() {
       setDraftChecklist(checklist);
       // 완성된 초안을 서버 보관함에 자동 등록(부분 스트리밍 중에는 등록하지 않는다).
       archiveNewPlan(checklist);
-      const replyText = "계획 초안을 완성했습니다. 오른쪽 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
+      const replyText = "계획 초안을 완성했습니다. 아래 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
       setMessages((prev) =>
         prev.map(msg =>
           msg.id === botMsgId
@@ -659,7 +659,7 @@ export default function ChatCoach() {
     });
   };
 
-  // 오늘 보기(상단 밴드)에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
+  // 오늘 보기 밴드에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
   // draftChecklist가 단일 진실 원천으로 남아 디바운스 동기화 경로가 그대로 동작한다
   // (사본 분기·동기화 경합 없음). 비활성 계획이면 savedPlans 스냅샷을 낙관적으로 갱신하고
   // 전체 계획을 즉시 PUT한다(백엔드는 부분 갱신이 없음). 디바운스는 두지 않는다 —
@@ -708,7 +708,7 @@ export default function ChatCoach() {
         {
           id: generateUniqueId('bot'),
           sender: 'bot',
-          text: '⚠️ 이 환경에서는 자동 복사가 제한돼요(HTTPS가 아닌 배포에서 브라우저가 클립보드를 막는 경우). 오른쪽 위 "다운로드" 버튼으로 .txt 파일로 저장하거나, 계획 텍스트를 직접 선택해 복사해 주세요.'
+          text: '⚠️ 이 환경에서는 자동 복사가 제한돼요(HTTPS가 아닌 배포에서 브라우저가 클립보드를 막는 경우). 체크리스트의 "다운로드" 버튼으로 .txt 파일로 저장하거나, 계획 텍스트를 직접 선택해 복사해 주세요.'
         }
       ]);
     }
@@ -742,7 +742,7 @@ export default function ChatCoach() {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
+        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 아래 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
       }
     ]);
   };
@@ -846,7 +846,7 @@ export default function ChatCoach() {
     currentSlot === REQUIRED_SLOTS.CURRENT_LEVEL ? LEVEL_PRESETS :
     [];
 
-  // === 왼쪽: 대화 패널 ===
+  // === 상단: 대화 패널 ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
@@ -1035,7 +1035,7 @@ export default function ChatCoach() {
   const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
   const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
 
-  // === 오늘 할 일 밴드 (화면 상단 전폭 · 접이식) ===
+  // === 오늘 할 일 밴드 (대화와 체크리스트 사이 · 접이식) ===
   // 보관된 계획이 하나도 없으면 밴드 자체를 숨긴다(첫 방문 화면을 어지럽히지 않게 —
   // planListBar와 같은 정책). 펼칠 때 refreshPlans()로 다른 기기/방문자의 변경을 반영한다.
   const todayBar = savedPlans.length > 0 && (
@@ -1117,7 +1117,7 @@ export default function ChatCoach() {
                 </div>
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '4px', margin: 0, padding: 0 }}>
                   {group.tasks.map((task) => (
-                    // 우측 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
+                    // 본문 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
                     // 텍스트 클릭 토글 + Tab 포커스/Space 토글이 네이티브로 동작한다.
                     <li key={task.id} style={{ fontSize: '13px' }}>
                       <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer', userSelect: 'none' }}>
@@ -1147,7 +1147,7 @@ export default function ChatCoach() {
     </div>
   );
 
-  // === 보관된 계획 목록 (우측 패널 헤더 아래 접이식 바) ===
+  // === 보관된 계획 목록 (체크리스트 패널 헤더 아래 접이식 바) ===
   // 서버 공유 보관함이라 폴링 없이 "열 때마다 refetch"로 다른 방문자의 변경을 반영한다.
   const planListBar = (savedPlans.length > 0 || plansStatus === 'error') && (
     <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
@@ -1255,7 +1255,7 @@ export default function ChatCoach() {
     </div>
   );
 
-  // === 오른쪽: 체크리스트 패널 ===
+  // === 하단: 체크리스트 패널 ===
   const checklistPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-panel)' }}>
       <div style={{
@@ -1318,7 +1318,7 @@ export default function ChatCoach() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
         {!draftChecklist ? (
           <div style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', marginTop: '40px', lineHeight: 1.6 }}>
-            왼쪽 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
+            위 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
             입력하면 이곳에 계획표가 생성됩니다.
           </div>
         ) : (
@@ -1417,7 +1417,7 @@ export default function ChatCoach() {
                 </>
               ) : (
                 <>
-                  수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
+                  수정하려면 위 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
                   할 일을 클릭하면 완료 표시가 됩니다. "계획 저장"을 누르면 계획이 고정되어 수정할 수 없게 됩니다.<br />
                   계획은 서버 보관함에 자동 보관되어, 위 "보관된 계획" 목록에서 여러 개를 오가며 쓸 수 있습니다.
                 </>
@@ -1429,39 +1429,31 @@ export default function ChatCoach() {
     </div>
   );
 
+  // 세로 3단 스택 — 위=대화, 가운데=오늘 할 일 밴드, 아래=체크리스트. 모든 폭에서 동일한
+  // 구성이라 모바일 분기(미디어쿼리)가 필요 없다. 밴드는 내용 높이만 차지하고(flexShrink 0,
+  // 내부 스크롤), 대화/체크리스트가 남은 높이를 반씩 나눈다.
   return (
-    <>
+    <div className="split-layout">
+      <div className="split-pane split-pane--chat">{chatPanel}</div>
       {todayBar}
-      <div className="split-layout">
-        <div className="split-pane split-pane--left">{chatPanel}</div>
-        <div className="split-pane split-pane--right">{checklistPanel}</div>
+      <div className="split-pane split-pane--checklist">{checklistPanel}</div>
 
-        <style>{`
+      <style>{`
         .split-layout {
           flex: 1;
           min-height: 0;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
+          display: flex;
+          flex-direction: column;
         }
         .split-pane {
+          flex: 1;
           min-height: 0;
           overflow: hidden;
         }
-        .split-pane--left {
-          border-right: 1px solid var(--border);
+        .split-pane--chat {
+          border-bottom: 1px solid var(--border);
         }
-        @media (max-width: 760px) {
-          .split-layout {
-            grid-template-columns: 1fr;
-            grid-template-rows: 1fr 1fr;
-          }
-          .split-pane--left {
-            border-right: none;
-            border-bottom: 1px solid var(--border);
-          }
-        }
-        `}</style>
-      </div>
-    </>
+      `}</style>
+    </div>
   );
 }

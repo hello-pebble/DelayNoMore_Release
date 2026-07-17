@@ -9,6 +9,19 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.5.1] - 2026-07-17
+
+레이아웃 개선 릴리스. v0.5.0의 "오늘 할 일" 밴드가 화면 최상단에 따로 떠 있어 대화·체크리스트와
+분리되어 보이던 불편을, **화면 전체를 세로 3단 스택으로 재구성**해 해결했다. 기능 변경 없음.
+
+### Changed
+- **화면 구성: 좌우 분할 → 세로 3단 스택** — 위=대화, 가운데=오늘 할 일 밴드, 아래=체크리스트.
+  오늘 할 일이 대화와 체크리스트 사이에 자연스럽게 끼어들어 흐름이 이어지고, 모든 화면 폭에서
+  같은 구성이라 모바일 전용 분기(760px 미디어쿼리)가 사라졌다. 대화/체크리스트는 남은 높이를
+  반씩 나누고, 밴드는 내용 높이만 차지한다(내부 스크롤 유지).
+- 화면 안내 문구의 방향 표현을 새 구성에 맞게 갱신 — "왼쪽 대화" → "위 대화",
+  "오른쪽 체크리스트" → "아래 체크리스트" 등(mock 폴백 응답 포함).
+
 ## [0.5.0] - 2026-07-17
 
 "오늘 할 일" 릴리스. 여러 계획을 보관하게 되면서(v0.4.0) 오늘 실행할 일이 계획별로 흩어져
@@ -259,7 +272,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.3.0...v0.4.0
