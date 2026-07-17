@@ -6,11 +6,12 @@ const API_BASE = '/api/v1';
 
 // 공통 JSON 요청 — 백엔드의 ApiResponse({ success, data, error })를 언래핑해 data만 돌려준다.
 // 실패 시(HTTP 오류 또는 success=false) error.message로 예외를 던진다(필드 오류가 있으면 첫 사유 우선).
-const requestJson = async (path, payload) => {
+// 던지는 Error에 error.code(예: PLAN_NOT_FOUND)를 붙여 호출부가 오류 종류를 분기할 수 있게 한다.
+const requestJson = async (path, payload, method = 'POST') => {
   const response = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: payload == null ? undefined : JSON.stringify(payload),
   });
 
   const text = await response.text();
@@ -27,7 +28,10 @@ const requestJson = async (path, payload) => {
     const fieldErrors = body?.error?.fieldErrors;
     const firstFieldError = fieldErrors && Object.values(fieldErrors)[0];
     const message = firstFieldError || body?.error?.message || `HTTP ${response.status}`;
-    throw new Error(message);
+    const err = new Error(message);
+    err.code = body?.error?.code;
+    err.status = response.status;
+    throw err;
   }
 
   return body.data;
@@ -90,6 +94,14 @@ export const streamAiChat = (payload, onEvent) => consumeSse('/ai/chats/stream',
 // 초안 생성 스트리밍(SSE) — /api/v1/ai/drafts/stream. 하루(=한 줄)가 완성될 때마다 day 이벤트가 온다.
 // 이벤트: {type:'day',date,tasks:[...]} / {type:'done'} / {type:'error',m}
 export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/drafts/stream', payload, onEvent);
+
+// 계획 보관함 CRUD — 서버 인메모리 공유 저장소(휘발성: 재시작 시 초기화, 모든 방문자 공용).
+// 로그인/DB 도입 전의 원격 데모용이며, 응답/요청 형태는 PlanController(/api/v1/plans) 계약을 따른다.
+export const createPlan = (payload) => requestJson('/plans', payload);
+export const updatePlan = (id, payload) => requestJson(`/plans/${id}`, payload, 'PUT');
+export const fetchPlans = () => requestJson('/plans', null, 'GET');
+export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
+export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
 // 백엔드 data({connected, reason})를 기존 화면 계약({success, reason})으로 되돌려 준다.

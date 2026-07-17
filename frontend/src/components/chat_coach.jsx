@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus } from 'lucide-react';
+import {
+  Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
+  FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw
+} from 'lucide-react';
 import {
   REQUIRED_SLOTS,
   getNextEmptySlot,
@@ -10,9 +13,14 @@ import {
   formatChecklistAsText,
   INITIAL_SLOTS
 } from '../ai_engine';
+import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan } from '../db_service';
 
-// 계획 저장(로컬 세션 유지용 — 서버 저장 없음)에 쓰는 localStorage 키.
-const SAVED_PLAN_KEY = 'delaynomore:savedPlan';
+// "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
+// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 모든 방문자가 공유한다).
+const LAST_VIEWED_PLAN_KEY = 'delaynomore:lastViewedPlanId';
+
+// 서버 자동 동기화 디바운스 — 완료 토글 연타나 스트리밍 수정이 요청 폭주로 이어지지 않게 한다.
+const SYNC_DEBOUNCE_MILLIS = 600;
 
 // 슬롯필링 질문에 제공하는 빠른 선택지. 자유 입력도 계속 가능하다.
 // 라벨 텍스트를 그대로 전송한다(기간/시간은 파서가 숫자만 추출).
@@ -20,62 +28,82 @@ const DURATION_PRESETS = ['3일', '5일', '7일'];
 const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
-// 계획 영속화 — 서버/DB 없이 브라우저 localStorage에만 보관한다(이 브라우저에서만 유지).
-// 계획이 생기거나 바뀔 때마다(생성·수정·완료 체크·고정) 자동 호출된다. 별도의 "계획 저장"
-// 버튼은 보관용이 아니라 계획을 CONFIRMED로 "고정"하는 용도다(아래 handleSavePlan 참고).
-// 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 모두 try/catch로 감싼다.
-function saveSavedPlan(slots, draftChecklist) {
+// 포인터 read/write — 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 try/catch.
+function readLastViewedPlanId() {
   try {
-    localStorage.setItem(SAVED_PLAN_KEY, JSON.stringify({ slots, draftChecklist, savedAt: Date.now() }));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function loadSavedPlan() {
-  try {
-    const raw = localStorage.getItem(SAVED_PLAN_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed?.slots || !parsed?.draftChecklist) return null;
-    return parsed;
+    return localStorage.getItem(LAST_VIEWED_PLAN_KEY);
   } catch {
     return null;
   }
 }
 
-function clearSavedPlan() {
+function writeLastViewedPlanId(id) {
   try {
-    localStorage.removeItem(SAVED_PLAN_KEY);
+    localStorage.setItem(LAST_VIEWED_PLAN_KEY, String(id));
   } catch {
-    // 무시 — 저장이 애초에 안 된 환경이면 지울 것도 없다.
+    // 무시 — 포인터가 없으면 새로고침 복원만 안 될 뿐이다.
   }
 }
 
-// 마운트 시 최초 상태를 계산한다 — 저장된 계획이 있으면 복원, 없으면 첫 질문으로 시작.
-// useState의 지연 초기화 함수로 써서(컴포넌트 몸체가 아니라) "effect 안에서 setState"를
-// 피하고, StrictMode가 두 번 호출해도 순수 함수라 안전하다.
-function buildInitialState() {
-  const saved = loadSavedPlan();
-  if (saved) {
-    const goalName = saved.draftChecklist?.goalName || '계획';
-    const locked = saved.draftChecklist?.status === 'CONFIRMED';
-    return {
-      slots: saved.slots,
-      draftChecklist: saved.draftChecklist,
-      currentSlot: null,
-      messages: [
-        {
-          id: 'bot-restored',
-          sender: 'bot',
-          text: locked
-            ? `저장(고정)된 "${goalName}" 계획을 완료 기록까지 그대로 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요. 새로 시작하려면 "처음부터 다시 만들기"를 눌러주세요.`
-            : `이전에 만든 "${goalName}"을 완료 기록까지 그대로 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정하거나, 아래 "처음부터 다시 만들기"로 새 계획을 시작할 수 있어요.`
-        }
-      ]
-    };
+function clearLastViewedPlanId() {
+  try {
+    localStorage.removeItem(LAST_VIEWED_PLAN_KEY);
+  } catch {
+    // 무시
   }
+}
+
+// 현재 화면 상태 → 서버 보관 요청 본문. slots는 draftChecklist의 4개 필드와 완전 중복이라
+// 별도로 보내지 않는다(복원 시 응답에서 재구성).
+function toPlanPayload(draftChecklist) {
+  const {
+    goalName, duration, dailyHours, currentLevel, tasks,
+    status, confirmedAt, startDate, endDate, createdAt
+  } = draftChecklist;
+  return { goalName, duration, dailyHours, currentLevel, tasks, status, confirmedAt, startDate, endDate, createdAt };
+}
+
+// 서버 보관함 응답 → 화면 상태(slots + draftChecklist). 클라이언트 id는 서버 발급 숫자와
+// 구분되게 chk-srv- 프리픽스를 붙인다(고정 상태 status/confirmedAt도 그대로 복원).
+function fromPlanResponse(plan) {
+  const draftChecklist = {
+    id: `chk-srv-${plan.id}`,
+    goalName: plan.goalName,
+    duration: plan.duration,
+    dailyHours: plan.dailyHours,
+    currentLevel: plan.currentLevel,
+    tasks: plan.tasks || {},
+    status: plan.status || 'DRAFT',
+    confirmedAt: plan.confirmedAt || undefined,
+    startDate: plan.startDate,
+    endDate: plan.endDate,
+    createdAt: plan.createdAt
+  };
+  const slots = {
+    goalName: plan.goalName,
+    duration: plan.duration,
+    dailyHours: plan.dailyHours,
+    currentLevel: plan.currentLevel
+  };
+  return { slots, draftChecklist };
+}
+
+// 완료 진행률(완료/전체 개수) — 우측 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
+// tasks가 비정상이어도 화면이 죽지 않게 방어적으로 계산한다.
+function getPlanProgress(tasks) {
+  const all = Object.values(tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []));
+  return { done: all.filter((t) => t.completed).length, total: all.length };
+}
+
+// 보관함 목록 행의 저장 시각 표기(M/D 저장). 비정상 값이면 빈 문자열.
+function formatSavedAt(ts) {
+  const d = new Date(ts);
+  return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}/${d.getDate()} 저장` : '';
+}
+
+// 마운트 시 최초 상태 — 항상 슬롯필링 첫 질문으로 시작한다. 계획은 서버 보관함에 있으므로
+// "마지막으로 보던 계획" 복원은 마운트 후 목록 fetch가 끝난 시점에 비동기로 수행된다.
+function buildInitialState() {
   const nextSlot = getNextEmptySlot(INITIAL_SLOTS);
   return {
     slots: { ...INITIAL_SLOTS },
@@ -158,9 +186,20 @@ export default function ChatCoach() {
   const [thinkingStatus, setThinkingStatus] = useState('');
   const [copyFeedback, setCopyFeedback] = useState(null); // null | 'ok' | 'error'
 
+  // 서버 보관함 상태 — 계획은 서버 인메모리(휘발성)에 보관되고 모든 방문자가 목록을 공유한다.
+  const [activePlanId, setActivePlanId] = useState(null); // 현재 화면 계획의 서버 ID (null = 미보관)
+  const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
+  const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
+  const [showPlanList, setShowPlanList] = useState(false);
+
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
   const statusTimerRef = useRef(null);
+  const hasInteractedRef = useRef(false); // 비동기 자동 복원이 사용자의 새 입력을 덮어쓰지 않게
+  const syncTimerRef = useRef(null); // 서버 자동 동기화 디바운스 타이머
+  const dirtyRef = useRef(null); // 아직 서버에 반영 안 된 최신 변경 { id, payload }
+  const lastSyncedRef = useRef(null); // 서버에 있는 것으로 아는 payload의 JSON — 불필요한 재전송(no-op PUT) 억제
+  const archivePendingRef = useRef(false); // 초안이 아직 보관되지 못해(서버 미가용) 재시도가 필요한 상태
 
   // 계획 고정 여부 — "계획 저장"을 누르면 CONFIRMED가 되어, 이후에는 대화로 계획을
   // 수정할 수 없다(강제성 부여: 확정한 계획은 실행만, 재협상 없음). 완료 체크는 계속 가능.
@@ -183,12 +222,189 @@ export default function ChatCoach() {
     };
   }, []);
 
-  // 자동 저장 — 계획이 생성/수정되거나 항목 완료를 토글할 때마다 localStorage에 반영해,
-  // 새로고침해도 마지막 상태(항목별 완료 여부 포함)가 그대로 복원되게 한다.
-  // 계획이 없을 때(초기화 직후 등)는 handleResetPlan이 이미 지웠으므로 건드리지 않는다.
+  // 보관함 목록 갱신 — 실패해도 앱은 계속 동작한다(목록만 error 표시, 생성/대화는 mock 폴백).
+  const refreshPlans = async () => {
+    setPlansStatus('loading');
+    try {
+      setSavedPlans(await fetchPlans());
+      setPlansStatus('ready');
+    } catch {
+      setPlansStatus('error');
+    }
+  };
+
+  // 대기 중인 자동 동기화(디바운스 타이머·미반영 변경·재보관 대기)를 모두 취소한다.
+  // 활성 계획을 삭제할 때 호출해, 방금 지운 계획이 뒤늦은 PUT의 404→재생성으로 되살아나지 않게 한다.
+  const cancelPendingSync = () => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    dirtyRef.current = null;
+    archivePendingRef.current = false;
+  };
+
+  // 대기 중인 변경을 즉시 서버에 반영한다(디바운스를 기다리지 않고). 계획 전환·리셋 직전에
+  // 호출해, 아직 PUT되지 않은 완료 토글/수정이 유실되지 않게 한다.
+  // recreateIfMissing=false: 떠나는 계획이 이미 삭제됐어도 새로 만들지 않는다(orphan 방지).
+  const syncActivePlan = async ({ recreateIfMissing }) => {
+    if (syncTimerRef.current) {
+      clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
+    }
+    const pending = dirtyRef.current;
+    if (!pending) return;
+    dirtyRef.current = null;
+    try {
+      await updatePlan(pending.id, pending.payload);
+      lastSyncedRef.current = JSON.stringify(pending.payload);
+    } catch (err) {
+      if (err.code !== 'PLAN_NOT_FOUND') {
+        console.warn('계획 동기화 실패 — 다음 변경 때 다시 시도합니다:', err);
+        dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도
+        return;
+      }
+      if (!recreateIfMissing) return;
+      // 백그라운드 동기화 중 대상이 사라짐(다른 방문자 삭제·서버 재시작) — 작업을 잃지 않게 새로 보관.
+      try {
+        const saved = await createPlan(pending.payload);
+        lastSyncedRef.current = JSON.stringify(pending.payload);
+        setActivePlanId(saved.id);
+        writeLastViewedPlanId(saved.id);
+      } catch {
+        setActivePlanId(null);
+        clearLastViewedPlanId();
+      }
+    }
+  };
+
+  // 보관함의 계획을 화면 상태로 복원한다 — 새로고침 복원(restored)과 목록 전환(switched) 공용.
+  // messages를 안내 말풍선 하나로 교체하는 이유: 이전 계획에 대한 대화 이력이 LLM history
+  // (최근 6턴)에 섞여 새 계획 수정을 오염시키는 것을 차단하기 위해서다.
+  const restorePlan = (plan, kind) => {
+    const { slots: restoredSlots, draftChecklist: restoredDraft } = fromPlanResponse(plan);
+    const goalName = plan.goalName || '계획';
+    const locked = restoredDraft.status === 'CONFIRMED';
+    // 방금 서버에서 읽은 상태이므로 "이미 동기화됨"으로 기록 — 복원 직후 no-op PUT을 막는다.
+    lastSyncedRef.current = JSON.stringify(toPlanPayload(restoredDraft));
+    dirtyRef.current = null;
+    archivePendingRef.current = false;
+    setSlots(restoredSlots);
+    setDraftChecklist(restoredDraft);
+    setCurrentSlot(null);
+    setInputValue('');
+    setActivePlanId(plan.id);
+    writeLastViewedPlanId(plan.id);
+    setShowPlanList(false);
+    setMessages([
+      {
+        id: generateUniqueId(kind === 'restored' ? 'bot-restored' : 'bot-switched'),
+        sender: 'bot',
+        text: kind === 'restored'
+          ? (locked
+            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요.`
+            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
+          : (locked
+            ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
+            : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
+      }
+    ]);
+  };
+
+  // 마운트 시 1회 — 보관함 목록을 불러오고, "마지막으로 보던 계획" 포인터가 유효하면 복원한다.
+  // 서버가 죽어 있어도 새 계획 생성·대화는 mock 폴백으로 계속 가능해야 하므로 실패는 삼킨다.
+  // StrictMode 이중 실행에도 멱등(같은 목록/같은 복원)이고, cancelled 플래그로 늦은 응답을 무시한다.
   useEffect(() => {
-    if (draftChecklist) saveSavedPlan(slots, draftChecklist);
-  }, [slots, draftChecklist]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const plans = await fetchPlans();
+        if (cancelled) return;
+        setSavedPlans(plans);
+        setPlansStatus('ready');
+        const lastId = readLastViewedPlanId();
+        const found = lastId != null && plans.find((p) => String(p.id) === lastId);
+        if (found && !hasInteractedRef.current) {
+          restorePlan(found, 'restored');
+        } else if (lastId != null && !found) {
+          clearLastViewedPlanId(); // 다른 방문자가 지웠거나 서버가 재시작된 경우
+        }
+      } catch {
+        if (!cancelled) setPlansStatus('error');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 초안이 완성되면(또는 서버 미가용으로 실패했던 보관을 재시도할 때) 서버 보관함에 등록한다.
+  // 성공하면 활성 계획이 되고, 서버가 죽어 있으면 재시도 대기 상태로, 한도 초과면 안내만 한다.
+  const archiveNewPlan = async (checklist) => {
+    const payload = toPlanPayload(checklist);
+    try {
+      const saved = await createPlan(payload);
+      archivePendingRef.current = false;
+      lastSyncedRef.current = JSON.stringify(payload); // 방금 보관 → no-op PUT 억제
+      setActivePlanId(saved.id);
+      writeLastViewedPlanId(saved.id);
+      refreshPlans();
+    } catch (err) {
+      if (err.code === 'PLAN_LIMIT_EXCEEDED') {
+        archivePendingRef.current = false; // 한도 초과는 재시도해도 소용없으니 포기하고 안내만
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateUniqueId('bot'),
+            sender: 'bot',
+            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+          }
+        ]);
+      } else {
+        // 서버 미가용 등 일시 오류 — 재시도 대기로 표시해, 서버 복구 후 다음 변경 때 다시 보관한다.
+        archivePendingRef.current = true;
+        console.warn('계획 보관 실패(서버 미가용?) — 다음 변경 때 재시도합니다:', err);
+      }
+    }
+  };
+
+  // 자동 동기화 — 계획 변경(대화 수정·완료 토글·고정)을 600ms 디바운스로 서버에 반영한다.
+  // 다른 브라우저에서 목록을 열면 진행률·고정 상태가 갱신되어 보인다(원격 시연 핵심).
+  // 이미 서버에 있는 내용과 같으면(복원/보관 직후) 아무것도 보내지 않는다(no-op PUT 억제).
+  // cleanup에서 타이머를 지우지 않는 이유: dep 변경(전환 등)에 취소되면 대기 중 변경이 유실되기
+  // 때문. 전환/리셋은 syncActivePlan으로 먼저 flush하고, 삭제는 cancelPendingSync로 취소한다.
+  useEffect(() => {
+    if (!draftChecklist) return;
+    const payloadStr = JSON.stringify(toPlanPayload(draftChecklist));
+    if (payloadStr === lastSyncedRef.current) {
+      // 현재 상태가 서버와 동일(복원/보관 직후, 또는 토글을 되돌림) — 대기 중이던 이전 변경도
+      // 무의미하니 함께 취소한다(낡은 상태가 뒤늦게 PUT되는 것을 막는다).
+      if (syncTimerRef.current) {
+        clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
+      dirtyRef.current = null;
+      return;
+    }
+
+    if (activePlanId != null) {
+      dirtyRef.current = { id: activePlanId, payload: JSON.parse(payloadStr) };
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = setTimeout(() => {
+        syncTimerRef.current = null;
+        syncActivePlan({ recreateIfMissing: true });
+      }, SYNC_DEBOUNCE_MILLIS);
+    } else if (archivePendingRef.current) {
+      // 미보관 초안(이전 보관 실패) — 변경이 생기면 서버가 살아났는지 다시 시도한다.
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+      const snapshot = draftChecklist;
+      syncTimerRef.current = setTimeout(() => {
+        syncTimerRef.current = null;
+        archiveNewPlan(snapshot);
+      }, SYNC_DEBOUNCE_MILLIS);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftChecklist, activePlanId]);
 
   const startThinking = () => {
     setIsThinking(true);
@@ -234,6 +450,9 @@ export default function ChatCoach() {
   const sendMessage = async (rawText) => {
     const userText = (rawText || '').trim();
     if (!userText) return;
+
+    // 사용자가 이미 대화를 시작했으면, 뒤늦게 도착한 자동 복원이 입력을 덮어쓰지 않게 한다.
+    hasInteractedRef.current = true;
 
     const userMsgId = generateUniqueId('user');
 
@@ -377,6 +596,8 @@ export default function ChatCoach() {
 
       stopThinking();
       setDraftChecklist(checklist);
+      // 완성된 초안을 서버 보관함에 자동 등록(부분 스트리밍 중에는 등록하지 않는다).
+      archiveNewPlan(checklist);
       const replyText = "계획 초안을 완성했습니다. 오른쪽 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
       setMessages((prev) =>
         prev.map(msg =>
@@ -443,7 +664,8 @@ export default function ChatCoach() {
 
   // 계획 저장 = 고정(CONFIRMED) — 이후 대화로는 계획을 수정할 수 없게 된다.
   // 단순 보관이 아니라 "이 계획대로 실행하겠다"는 확정 행위라, 실수 방지 확인 창을 띄운다.
-  // (영속화 자체는 자동 저장 effect가 담당하므로 여기서는 상태 전환만 한다.)
+  // (영속화는 서버 자동 동기화 effect가 담당하므로 여기서는 상태 전환만 한다 — 고정 상태도
+  //  서버 보관함에 반영되어 다른 방문자 목록에 🔒로 표시된다.)
   const handleSavePlan = () => {
     if (!draftChecklist || isLocked || isTyping) return;
     if (!window.confirm('계획을 저장하면 고정되어 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
@@ -458,14 +680,18 @@ export default function ChatCoach() {
     ]);
   };
 
-  // 처음부터 다시 만들기(전체 초기화) — 저장된 계획·완료 기록까지 함께 지워 다음 방문 시
-  // 되살아나지 않게 한다. 자동 저장이라 되돌릴 수 없으므로 실수 방지용 확인 창을 띄운다.
-  // 고정된 계획을 바꾸고 싶을 때의 유일한 탈출구이기도 하다.
+  // 처음부터 다시 만들기 — 새 계획의 슬롯필링을 시작한다. 현재 계획은 서버 보관함에 그대로
+  // 남으므로(활성 포인터만 해제) 언제든 목록에서 다시 불러올 수 있다. 고정된 계획을 바꾸고
+  // 싶을 때의 탈출구이기도 하다: 새 계획을 만들고, 필요하면 목록에서 이전 계획을 삭제한다.
   // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
-  const handleResetPlan = () => {
+  const handleResetPlan = async () => {
     if (isTyping) return;
-    if (draftChecklist && !window.confirm('계획과 완료 기록을 모두 지우고 처음부터 다시 시작할까요?')) return;
-    clearSavedPlan();
+    if (draftChecklist && !window.confirm('현재 계획은 보관함에 남고, 새 계획을 처음부터 시작합니다. 계속할까요?')) return;
+    // 떠나기 전에 대기 중 변경(완료 토글 등)을 마저 저장한다 — 보관함에 남길 것이므로 유실 금지.
+    await syncActivePlan({ recreateIfMissing: false });
+    setActivePlanId(null);
+    clearLastViewedPlanId();
+    setShowPlanList(false);
     setSlots({ ...INITIAL_SLOTS });
     setDraftChecklist(null);
     setInputValue('');
@@ -474,6 +700,53 @@ export default function ChatCoach() {
     setMessages([
       { id: generateUniqueId('bot-reset'), sender: 'bot', text: getNextQuestion(nextSlot) }
     ]);
+  };
+
+  // 보관함 목록에서 계획 선택 — 전환 시점의 최신본을 서버에서 다시 읽는다(다른 방문자의
+  // 수정·진행이 반영되도록). 현재 계획은 자동 동기화로 이미 서버에 있으니 확인 창은 불필요.
+  const handleLoadPlan = async (planId) => {
+    if (isTyping) return;
+    if (planId === activePlanId) {
+      setShowPlanList(false);
+      return;
+    }
+    // 전환 전에 현재 계획의 대기 중 변경을 마저 저장한다(디바운스가 취소돼 유실되지 않게).
+    await syncActivePlan({ recreateIfMissing: false });
+    try {
+      const plan = await fetchPlan(planId);
+      restorePlan(plan, 'switched');
+    } catch (err) {
+      if (err.code === 'PLAN_NOT_FOUND') {
+        window.alert('이미 삭제된 계획입니다.');
+        refreshPlans();
+      } else {
+        window.alert('계획을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
+    }
+  };
+
+  // 보관함에서 계획 삭제 — 공유 저장소라 모든 방문자의 목록에서 사라진다.
+  // 이미 지워진 경우(404)는 성공으로 취급하고 목록만 갱신한다.
+  const handleDeletePlan = async (planId) => {
+    const entry = savedPlans.find((p) => p.id === planId);
+    const goalName = entry?.goalName || '계획';
+    if (!window.confirm(`"${goalName}" 계획을 보관함에서 삭제할까요? 모든 방문자의 목록에서 사라집니다.`)) return;
+    if (planId === activePlanId) {
+      // 대기 중 자동 동기화를 먼저 취소한다 — 그러지 않으면 뒤늦은 PUT이 404→재생성으로
+      // 방금 지운 계획을 새 id로 되살릴 수 있다. 화면 계획은 그대로 두되 미보관 상태로 전환.
+      cancelPendingSync();
+      setActivePlanId(null);
+      clearLastViewedPlanId();
+    }
+    try {
+      await deletePlan(planId);
+    } catch (err) {
+      if (err.code !== 'PLAN_NOT_FOUND') {
+        window.alert('계획을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+    }
+    refreshPlans();
   };
 
   // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
@@ -655,11 +928,112 @@ export default function ChatCoach() {
   );
 
   // 전체 진행률(완료/전체 개수) — 헤더 요약과 진행 바에 함께 쓴다.
-  const allTasks = draftChecklist
-    ? Object.values(draftChecklist.tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []))
-    : [];
-  const completedCount = allTasks.filter((t) => t.completed).length;
-  const totalCount = allTasks.length;
+  const { done: completedCount, total: totalCount } = getPlanProgress(draftChecklist?.tasks);
+
+  // === 보관된 계획 목록 (우측 패널 헤더 아래 접이식 바) ===
+  // 서버 공유 보관함이라 폴링 없이 "열 때마다 refetch"로 다른 방문자의 변경을 반영한다.
+  const planListBar = (savedPlans.length > 0 || plansStatus === 'error') && (
+    <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => {
+          const next = !showPlanList;
+          setShowPlanList(next);
+          if (next) refreshPlans();
+        }}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '8px 16px',
+          fontSize: '13px',
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--text-main)',
+          cursor: 'pointer'
+        }}
+      >
+        <FolderOpen size={13} />
+        보관된 계획{plansStatus === 'error' ? '' : ` ${savedPlans.length}개`}
+        <span style={{ marginLeft: 'auto', display: 'flex' }}>
+          {showPlanList ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
+      </button>
+      {showPlanList && (
+        <div style={{ maxHeight: '240px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {plansStatus === 'error' && (
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              목록을 불러오지 못했습니다.
+              <button type="button" onClick={refreshPlans} style={quickReplyButtonStyle}>
+                <RefreshCw size={12} />
+                다시 시도
+              </button>
+            </div>
+          )}
+          {savedPlans.map((plan) => {
+            const { done, total } = getPlanProgress(plan.tasks);
+            const isCurrent = plan.id === activePlanId;
+            const isPlanConfirmed = plan.status === 'CONFIRMED';
+            return (
+              <div
+                key={plan.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: 'var(--bg-card)',
+                  borderRadius: '8px',
+                  padding: '8px 10px',
+                  border: `1px solid ${isCurrent ? 'var(--primary)' : 'var(--border)'}`
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleLoadPlan(plan.id)}
+                  disabled={isTyping}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: 'left',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-main)',
+                    padding: 0
+                  }}
+                >
+                  <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {isPlanConfirmed && <Lock size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} />}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{plan.goalName}</span>
+                    {isCurrent && <span style={{ color: 'var(--primary)', fontWeight: 400, flexShrink: 0 }}>· 보는 중</span>}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                    기간 {plan.duration}일 · 하루 {plan.dailyHours}시간 · {done}/{total} 완료 · {formatSavedAt(plan.savedAt)}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeletePlan(plan.id)}
+                  title="계획 삭제"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            );
+          })}
+          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>
+            <Plus size={12} />
+            새 계획 만들기
+          </button>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+            모든 방문자가 함께 보는 데모 보관함입니다 · 서버 재시작 시 초기화됩니다
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   // === 오른쪽: 체크리스트 패널 ===
   const checklistPanel = (
@@ -718,6 +1092,8 @@ export default function ChatCoach() {
           </div>
         )}
       </div>
+
+      {planListBar}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
         {!draftChecklist ? (
@@ -805,12 +1181,13 @@ export default function ChatCoach() {
               {isLocked ? (
                 <>
                   계획이 저장(고정)되어 대화로는 수정할 수 없습니다. 할 일 클릭으로 완료 체크를 이어가세요.<br />
-                  계획과 완료 기록은 이 브라우저에 자동 저장됩니다.
+                  계획과 완료 기록은 서버 보관함에 자동 저장됩니다(모든 방문자 공용 · 서버 재시작 시 초기화).
                 </>
               ) : (
                 <>
                   수정하려면 왼쪽 대화에 요청을 입력하세요. (예: "주말은 빼줘", "일정을 늘려줘")<br />
-                  할 일을 클릭하면 완료 표시가 됩니다. "계획 저장"을 누르면 계획이 고정되어 수정할 수 없게 됩니다.
+                  할 일을 클릭하면 완료 표시가 됩니다. "계획 저장"을 누르면 계획이 고정되어 수정할 수 없게 됩니다.<br />
+                  계획은 서버 보관함에 자동 보관되어, 위 "보관된 계획" 목록에서 여러 개를 오가며 쓸 수 있습니다.
                 </>
               )}
             </div>
