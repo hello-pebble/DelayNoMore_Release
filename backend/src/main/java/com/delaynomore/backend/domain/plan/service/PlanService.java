@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ public class PlanService {
     private static final int MAX_PLANS = 50;
 
     private final PlanRepository planRepository;
+    private final ReflectionRepository reflectionRepository;
 
     // synchronized: 한도 검사(count)와 저장(save)을 원자적으로 묶는다. 공유 데모 저장소라
     // 여러 방문자가 동시에 생성하면 각자 검사를 통과한 뒤 저장해 상한 50건을 넘길 수 있는데
@@ -55,5 +57,7 @@ public class PlanService {
         if (!planRepository.deleteById(id)) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
+        // 캐스케이드 — 계획이 사라지면 회고도 조회 경로가 없어지므로 함께 지운다(고아 방지).
+        reflectionRepository.deleteAllByPlanId(id);
     }
 }

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
-  FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight
+  FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
+  CheckCircle2
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -14,7 +15,7 @@ import {
   isPlanModificationRequest,
   INITIAL_SLOTS
 } from '../ai_engine';
-import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan } from '../db_service';
+import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, putReflection, fetchReflection } from '../db_service';
 import { todayStr } from '../date_utils';
 
 // "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
@@ -29,6 +30,26 @@ const SYNC_DEBOUNCE_MILLIS = 600;
 const DURATION_PRESETS = ['3일', '5일', '7일'];
 const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
+
+// 오늘 마무리(회고) 선택지 — 자유 입력 메모는 두지 않는다(모든 방문자가 공유하는 데모
+// 저장소라 개인 텍스트가 남지 않게). 코드는 서버 검증 enum과 1:1로 맞춘다.
+const DIFFICULTY_OPTIONS = [
+  { code: 'EASY', label: '여유로웠어요' },
+  { code: 'NORMAL', label: '적당했어요' },
+  { code: 'HARD', label: '벅찼어요' }
+];
+const REASON_OPTIONS = [
+  { code: 'AS_PLANNED', label: '계획대로 진행됐어요' },
+  { code: 'NOT_ENOUGH_TIME', label: '시간이 부족했어요' },
+  { code: 'TOO_MUCH_WORK', label: '분량이 많았어요' },
+  { code: 'HARD_TO_FOCUS', label: '집중이 잘 안 됐어요' },
+  { code: 'HARDER_THAN_EXPECTED', label: '생각보다 어려웠어요' }
+];
+
+// 저장된 회고의 enum 코드 → 화면 라벨. 알 수 없는 코드는 그대로 노출(화면이 죽지 않게).
+function reflectionLabel(options, code) {
+  return options.find((o) => o.code === code)?.label || code;
+}
 
 // 포인터 read/write — 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 try/catch.
 function readLastViewedPlanId() {
@@ -193,6 +214,15 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
+
+  // 오늘 마무리(회고) 상태 — 회고는 계획별·오늘 날짜 1건(서버 업서트, 계획 보관함과 같은
+  // 휘발성 공유 저장소). reflections는 {planId: 회고|null} — null은 "오늘 회고 없음"이 서버로
+  // 확인된 상태, 키 자체가 없으면 아직 안 불러온 상태다. reflectionErrors는 불러오기 실패한
+  // planId 표시(재시도 행), reflectionDrafts는 작성/수정 중 선택({difficulty, reason, editing, saving}).
+  const [showReflection, setShowReflection] = useState(false);
+  const [reflections, setReflections] = useState({});
+  const [reflectionErrors, setReflectionErrors] = useState({});
+  const [reflectionDrafts, setReflectionDrafts] = useState({});
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -1034,6 +1064,70 @@ export default function ChatCoach() {
   const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
   const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
 
+  // === 오늘 마무리(회고) 핸들러 ===
+
+  // 오늘 회고를 계획별로 불러온다 — 섹션을 펼칠 때마다 호출해 다른 방문자의 회고가 반영된다
+  // (보관된 계획 목록의 "펼칠 때 refetch" 패턴과 동일). REFLECTION_NOT_FOUND는 "아직 없음"이
+  // 확인된 정상 상태(null 저장)이고, 그 외 오류는 재시도 행을 띄운다.
+  const loadReflections = async () => {
+    await Promise.all(todayGroups.map(async (group) => {
+      try {
+        const data = await fetchReflection(group.planId, todayStr());
+        setReflections((prev) => ({ ...prev, [group.planId]: data }));
+        setReflectionErrors((prev) => ({ ...prev, [group.planId]: false }));
+      } catch (err) {
+        if (err.code === 'REFLECTION_NOT_FOUND') {
+          setReflections((prev) => ({ ...prev, [group.planId]: null }));
+          setReflectionErrors((prev) => ({ ...prev, [group.planId]: false }));
+        } else {
+          setReflectionErrors((prev) => ({ ...prev, [group.planId]: true }));
+        }
+      }
+    }));
+  };
+
+  // 작성/수정 중 선택 상태 갱신(난이도·이유 공용).
+  const setReflectionDraftField = (planId, field, value) => {
+    setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], [field]: value } }));
+  };
+
+  // 저장된 회고의 "수정" — 저장값으로 선택을 프리필한 채 폼 뷰로 전환한다.
+  const startReflectionEdit = (planId) => {
+    const saved = reflections[planId];
+    setReflectionDrafts((prev) => ({
+      ...prev,
+      [planId]: { difficulty: saved?.difficulty || null, reason: saved?.reason || null, editing: true }
+    }));
+  };
+
+  // 회고 저장(업서트) — 완료 개수는 보내지 않는다(서버가 계획의 오늘 할 일에서 재계산).
+  // 성공 응답을 reflections에 반영하면 저장 뷰가 서버 계산 수치로 갱신된다.
+  const saveReflection = async (planId) => {
+    const draft = reflectionDrafts[planId];
+    if (!draft?.difficulty || !draft?.reason || draft.saving) return;
+    setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], saving: true } }));
+    try {
+      const saved = await putReflection(planId, todayStr(), {
+        difficulty: draft.difficulty,
+        reason: draft.reason
+      });
+      setReflections((prev) => ({ ...prev, [planId]: saved }));
+      setReflectionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[planId]; // 저장 완료 → 폼 종료(저장 뷰로 전환)
+        return next;
+      });
+    } catch (err) {
+      setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], saving: false } }));
+      if (err.code === 'PLAN_NOT_FOUND') {
+        window.alert('이미 삭제된 계획입니다.');
+        refreshPlans();
+      } else {
+        window.alert(err.message);
+      }
+    }
+  };
+
   // === 오늘 할 일 패널 (가운데 칸 · 항상 표시) ===
   // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
   // 다른 기기/방문자의 변경을 반영한다(자동 갱신은 마운트 fetch + 각 조작 경로가 담당).
@@ -1141,6 +1235,168 @@ export default function ChatCoach() {
             ))
           )}
       </div>
+
+      {/* === 오늘 마무리(회고) — 오늘 할 일 패널 하단 접이식 푸터 === */}
+      {todayGroups.length > 0 && (
+        <div style={{ borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !showReflection;
+              setShowReflection(next);
+              if (next) loadReflections(); // 펼칠 때마다 refetch — 다른 방문자의 회고 반영
+            }}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 16px',
+              fontSize: '13px',
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-main)',
+              cursor: 'pointer'
+            }}
+          >
+            <CheckCircle2 size={13} style={{ color: 'var(--primary)' }} />
+            오늘 마무리
+            <span style={{ marginLeft: 'auto', display: 'flex' }}>
+              {showReflection ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+            </span>
+          </button>
+          {showReflection && (
+            <div style={{ maxHeight: '280px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {todayGroups.map((group) => {
+                const done = group.tasks.filter((t) => t.completed).length;
+                const total = group.tasks.length;
+                const rate = total > 0 ? Math.round((done / total) * 100) : 0;
+                const loadFailed = reflectionErrors[group.planId] === true;
+                const loaded = reflections[group.planId] !== undefined;
+                const saved = reflections[group.planId];
+                const draft = reflectionDrafts[group.planId] || {};
+                const isFormView = loaded && (saved == null || draft.editing === true);
+                // 저장 후 완료 체크가 더 바뀌었으면 안내한다(재저장하면 서버가 새 수치로 재계산).
+                const countsChanged = saved != null && (saved.completedCount !== done || saved.totalCount !== total);
+                return (
+                  <div
+                    key={group.planId}
+                    style={{
+                      background: 'var(--bg-panel)',
+                      borderRadius: '8px',
+                      padding: '8px 10px',
+                      border: `1px solid ${group.isCurrent ? 'var(--primary)' : 'var(--border)'}`
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '4px' }}>
+                      {group.locked && <Lock size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} />}
+                      <span style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {group.goalName}
+                      </span>
+                    </div>
+                    {/* 자동 계산된 오늘 결과 — todayGroups(라이브 상태)에서 파생되어 완료 체크에 즉시 반영 */}
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                      오늘 {total}개 중 {done}개 완료 · 완료율 {rate}%
+                    </div>
+                    {loadFailed ? (
+                      <button type="button" onClick={loadReflections} style={quickReplyButtonStyle}>
+                        <RefreshCw size={12} />
+                        회고를 불러오지 못했습니다 · 다시 시도
+                      </button>
+                    ) : !loaded ? (
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>회고를 불러오는 중...</div>
+                    ) : isFormView ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>오늘 하루 어땠나요?</div>
+                        <div role="radiogroup" aria-label="체감 난이도" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {DIFFICULTY_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.code}
+                              type="button"
+                              role="radio"
+                              aria-checked={draft.difficulty === opt.code}
+                              onClick={() => setReflectionDraftField(group.planId, 'difficulty', opt.code)}
+                              style={{
+                                ...quickReplyButtonStyle,
+                                ...(draft.difficulty === opt.code
+                                  ? { border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600 }
+                                  : {})
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <div role="radiogroup" aria-label="이유" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {REASON_OPTIONS.map((opt) => (
+                            <button
+                              key={opt.code}
+                              type="button"
+                              role="radio"
+                              aria-checked={draft.reason === opt.code}
+                              onClick={() => setReflectionDraftField(group.planId, 'reason', opt.code)}
+                              style={{
+                                ...quickReplyButtonStyle,
+                                ...(draft.reason === opt.code
+                                  ? { border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600 }
+                                  : {})
+                              }}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => saveReflection(group.planId)}
+                          disabled={!draft.difficulty || !draft.reason || draft.saving}
+                          style={{
+                            ...quickReplyButtonStyle,
+                            alignSelf: 'flex-start',
+                            ...(!draft.difficulty || !draft.reason || draft.saving
+                              ? { color: 'var(--text-muted)', cursor: 'not-allowed' }
+                              : { background: 'var(--primary)', border: '1px solid var(--primary)', color: '#ffffff' })
+                          }}
+                        >
+                          <Save size={12} />
+                          {draft.saving ? '저장 중...' : '회고 저장'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Check size={12} style={{ flexShrink: 0, color: 'var(--primary)' }} />
+                          오늘 회고를 저장했습니다.
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          {saved.completedCount}/{saved.totalCount} 완료
+                          {' · '}{reflectionLabel(DIFFICULTY_OPTIONS, saved.difficulty)}
+                          {' · '}{reflectionLabel(REASON_OPTIONS, saved.reason)}
+                        </div>
+                        {countsChanged && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                            완료 상태가 바뀌었어요 · 다시 저장하면 {done}/{total}로 갱신됩니다
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => startReflectionEdit(group.planId)}
+                          style={{ ...quickReplyButtonStyle, alignSelf: 'flex-start' }}
+                        >
+                          수정
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
+                모든 방문자가 함께 보는 데모 회고입니다 · 다른 방문자가 회고를 수정할 수 있어요 · 서버 재시작 시 초기화됩니다
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

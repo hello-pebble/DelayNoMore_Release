@@ -9,6 +9,40 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.6.0] - 2026-07-17
+
+"오늘 마무리" 일일 회고 릴리스. 오늘 할 일을 체크하는 것에서 그치지 않고, 하루를 닫으며
+**자동 계산된 완료 결과 + 체감 난이도 + 이유**를 남길 수 있다. 자유 입력 메모는 의도적으로
+제외했다(모든 방문자가 공유하는 데모 저장소라 개인 텍스트가 남지 않게). 저장소는 기존
+휘발성 인메모리 정책을 유지한다 — 서버 재시작 시 소실은 정상.
+
+### Added
+- **회고 API** — `PUT/GET /api/v1/plans/{planId}/reflections/{date}`, `GET .../reflections`
+  (목록·날짜 내림차순). 새 도메인 파일: `Reflection`(record) · `ReflectionRepository` ·
+  `ReflectionSaveRequest/Response` · `ReflectionService` · `ReflectionController` +
+  `ReflectionServiceTest`. PUT 본문은 `{difficulty, reason}`뿐이고 **완료/전체 개수는 서버가
+  `plan.tasks`의 오늘 항목에서 재계산**한다(클라이언트가 보낸 수치를 믿지 않음).
+  - 난이도는 `EASY|NORMAL|HARD`, 이유는 `AS_PLANNED|NOT_ENOUGH_TIME|TOO_MUCH_WORK|`
+    `HARD_TO_FOCUS|HARDER_THAN_EXPECTED`(Bean Validation, 위반 시 400 `INVALID_INPUT`).
+  - 오류 코드 추가: `REFLECTION_NOT_FOUND`(404) · `REFLECTION_DATE_INVALID`(400) ·
+    `REFLECTION_DATE_NOT_TODAY`(400).
+- **KST 날짜 규칙** — 회고 저장은 서버의 `Asia/Seoul` 기준 **오늘 날짜만 허용**한다
+  (불일치 시 400 `REFLECTION_DATE_NOT_TODAY`). 컨테이너 JVM(UTC)의 로컬 날짜를 쓰면 한국
+  사용자의 자정~오전 9시 회고가 어제로 거부되므로, 시간대를 서버 코드에 명시했다.
+- **업서트(1일 1건)** — 회고는 `(planId, date)`당 1건만 유지된다. `ConcurrentHashMap.compute`로
+  원자적으로 처리해 동시 저장에도 중복이 생기지 않고, 재저장 시 `createdAt`은 보존되고
+  `updatedAt`만 갱신된다.
+- **삭제 캐스케이드** — 계획을 삭제하면 그 계획의 회고도 함께 삭제된다(고아 방지).
+- **"오늘 마무리" UI** — 오늘 할 일 패널 하단의 접이식 푸터 섹션. 오늘 항목이 있는 계획마다
+  카드 1장씩: 라이브 완료 카운트로 "오늘 N개 중 M개 완료 · 완료율 %"를 자동 표시하고,
+  체감 난이도(여유로웠어요/적당했어요/벅찼어요)와 이유(5택1)를 필 버튼(`radiogroup`)으로
+  골라 "회고 저장"한다(둘 다 선택해야 활성).
+  - 저장 후에는 저장 뷰("오늘 회고를 저장했습니다." + 수치·선택 요약)와 **수정** 버튼(저장값
+    프리필). 저장 이후 완료 체크가 더 바뀌면 "다시 저장하면 갱신됩니다" 안내가 뜬다.
+  - 섹션을 펼칠 때마다 회고를 다시 불러와 다른 방문자의 회고가 반영된다(보관함 목록의
+    "펼칠 때 refetch" 패턴). 불러오기 실패 시 재시도 행, 계획이 이미 삭제됐으면 안내 후
+    목록 갱신. 고정(CONFIRMED) 계획도 회고를 저장할 수 있다(완료 체크와 같은 취급).
+
 ## [0.5.1] - 2026-07-17
 
 레이아웃 개선 릴리스. v0.5.0의 "오늘 할 일" 밴드가 화면 최상단에 따로 떠 있어 대화·체크리스트와
@@ -273,7 +307,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.0...v0.4.1
