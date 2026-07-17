@@ -11,6 +11,7 @@ import {
   streamChecklistDraft,
   streamChatWithCoach,
   formatChecklistAsText,
+  isPlanModificationRequest,
   INITIAL_SLOTS
 } from '../ai_engine';
 import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan } from '../db_service';
@@ -465,6 +466,21 @@ export default function ChatCoach() {
       // 초안 생성 이후에는 자유 대화 모드 — LLM이 의도(수정/질문/불명확)를 직접 판단한다.
       // 무조건 재생성하고 "반영했습니다"라고 답하던 이전 방식을 대체한다.
       if (draftChecklist) {
+        // 고정(CONFIRMED) 계획의 수정 요청은 AI를 호출하기 전에 막는다 — 예전엔 AI를 먼저
+        // 부르고 답변을 스트리밍한 뒤에야 🔒 안내를 띄워 호출이 낭비되고 답변과 안내가
+        // 뒤섞였다. 확실한 수정 요청("주말은 빼줘" 등)만 차단하고, 질문은 그대로 통과시킨다.
+        if (isLocked && isPlanModificationRequest(userText)) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: generateUniqueId('bot'),
+              sender: 'bot',
+              text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+            }
+          ]);
+          return;
+        }
+
         startThinking();
 
         // 최근 대화 이력(방금 보낸 메시지 제외)을 role/content 형태로 전달해
@@ -645,6 +661,18 @@ export default function ChatCoach() {
     const text = formatChecklistAsText(draftChecklist);
     const ok = await copyTextToClipboard(text);
     setCopyFeedback(ok ? 'ok' : 'error');
+    // 폴백(execCommand)까지 실패하면 버튼의 "복사 실패" 표시만으로는 다음 행동을 알 수 없다.
+    // HTTP(비보안) 배포에서 브라우저가 복사를 막는 경우이므로, 대안을 봇 메시지로 명확히 안내한다.
+    if (!ok) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUniqueId('bot'),
+          sender: 'bot',
+          text: '⚠️ 이 환경에서는 자동 복사가 제한돼요(HTTPS가 아닌 배포에서 브라우저가 클립보드를 막는 경우). 오른쪽 위 "다운로드" 버튼으로 .txt 파일로 저장하거나, 계획 텍스트를 직접 선택해 복사해 주세요.'
+        }
+      ]);
+    }
     setTimeout(() => setCopyFeedback(null), 1800);
   };
 
@@ -972,8 +1000,11 @@ export default function ChatCoach() {
             </div>
           )}
           {savedPlans.map((plan) => {
-            const { done, total } = getPlanProgress(plan.tasks);
             const isCurrent = plan.id === activePlanId;
+            // 현재 보고 있는 계획은 라이브 상태(draftChecklist)에서 진행률을 읽는다 — 서버
+            // 스냅샷(plan.tasks)은 600ms 디바운스 동기화 전이라, 목록을 펼친 채 체크하면
+            // 옛 수치로 남기 때문. 다른(비활성) 계획은 종전대로 서버 스냅샷을 쓴다.
+            const { done, total } = getPlanProgress(isCurrent ? draftChecklist?.tasks : plan.tasks);
             const isPlanConfirmed = plan.status === 'CONFIRMED';
             return (
               <div
@@ -1146,31 +1177,43 @@ export default function ChatCoach() {
                 <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--primary)', marginBottom: '8px' }}>
                   Day {idx + 1} · {date}
                 </div>
-                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px', margin: 0, padding: 0 }}>
                   {(Array.isArray(taskList) ? taskList : []).map((task) => (
-                    <li
-                      key={task.id}
-                      onClick={() => toggleTask(date, task.id)}
-                      style={{
-                        fontSize: '14px',
-                        display: 'flex',
-                        gap: '8px',
-                        alignItems: 'flex-start',
-                        cursor: 'pointer',
-                        userSelect: 'none'
-                      }}
-                    >
-                      <span style={{ color: task.completed ? 'var(--primary)' : 'var(--text-muted)', flexShrink: 0 }}>
-                        {task.completed ? '☑' : '☐'}
-                      </span>
-                      <span
+                    // 실제 <input type="checkbox">를 <label>로 감싼다 — 이렇게 하면 텍스트
+                    // 클릭도 토글되고, Tab 포커스 + Space 토글이 네이티브로 동작하며(별도
+                    // onKeyDown/role 불필요), 스크린리더도 체크박스로 인식한다.
+                    <li key={task.id} style={{ fontSize: '14px' }}>
+                      <label
                         style={{
-                          textDecoration: task.completed ? 'line-through' : 'none',
-                          color: task.completed ? 'var(--text-muted)' : 'var(--text-main)'
+                          display: 'flex',
+                          gap: '8px',
+                          alignItems: 'flex-start',
+                          cursor: 'pointer',
+                          userSelect: 'none'
                         }}
                       >
-                        {task.content}
-                      </span>
+                        <input
+                          type="checkbox"
+                          checked={!!task.completed}
+                          onChange={() => toggleTask(date, task.id)}
+                          style={{
+                            marginTop: '2px',
+                            flexShrink: 0,
+                            width: '15px',
+                            height: '15px',
+                            accentColor: 'var(--primary)',
+                            cursor: 'pointer'
+                          }}
+                        />
+                        <span
+                          style={{
+                            textDecoration: task.completed ? 'line-through' : 'none',
+                            color: task.completed ? 'var(--text-muted)' : 'var(--text-main)'
+                          }}
+                        >
+                          {task.content}
+                        </span>
+                      </label>
                     </li>
                   ))}
                 </ul>

@@ -443,6 +443,20 @@ export async function chatWithCoach(slots, draft, history, message) {
   }
 }
 
+// 입력이 "계획 수정" 요청으로 보이는지 가벼운 키워드 휴리스틱으로 판별한다.
+// 고정(CONFIRMED) 계획에서 AI를 호출하기 전에 수정 요청을 차단하는 데 쓴다 —
+// 질문(수정 키워드 없음)은 통과시켜 고정 계획에서도 대화로 물어볼 수 있게 한다.
+// 판별 기준은 mockChatWithCoach의 오프라인 폴백과 동일하게 맞춰, 확실한 수정 요청만 true.
+export function isPlanModificationRequest(message) {
+  const text = (message || '').trim();
+  if (!text) return false;
+  const extendDuration = text.includes('기간') && (text.includes('늘려') || text.includes('연장'));
+  const isReduced = text.includes('줄여') || text.includes('적게') || text.includes('힘들어') || text.includes('야근');
+  const isIncreased = text.includes('늘려') || text.includes('많이') || text.includes('부족');
+  const skipWeekend = text.includes('주말') && (text.includes('쉬') || text.includes('빼'));
+  return extendDuration || isReduced || isIncreased || skipWeekend;
+}
+
 // 대화 폴백 (백엔드/AI 미가용 시) — 아는 키워드면 mock 재생성으로 반영하고,
 // 모르는 요청이면 "반영했다"고 거짓말하는 대신 예시와 함께 되묻는다.
 export function mockChatWithCoach(slots, draft, message) {
