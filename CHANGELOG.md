@@ -36,6 +36,12 @@
   모두 미완료로 리셋됐다. 이제 같은 날짜에 내용이 그대로인 할 일은 완료 상태를 유지한다
   (내용이 바뀐 항목은 다른 할 일로 보고 미완료 리셋). LLM patch 병합과 mock 폴백 재생성
   모두에 적용.
+- **계획 자동 동기화의 경합·유실 보완** — 완료 토글 직후(600ms 디바운스 내) 계획을 전환·리셋하면
+  대기 중이던 동기화가 취소돼 변경이 유실되던 문제(전환/리셋 직전 즉시 flush), 활성 계획 삭제
+  시 뒤늦은 요청이 404→재생성 폴백을 타 지운 계획을 되살리던 문제(삭제 전 대기 동기화 취소),
+  서버 일시 미가용으로 초안 보관에 실패한 뒤 재시도되지 않던 문제(복구 후 다음 변경 시 재보관)를
+  수정. 보관 한도 검사 동시성(TOCTOU, `create`를 `synchronized`로)과 서버 상태와 동일한 payload를
+  다시 보내던 불필요한 요청도 함께 정리.
 
 ### Changed
 - **"계획 저장" 버튼의 의미가 보관 → 고정(확정)으로 변경** — 영속화는 자동 보관/동기화가 맡고,
@@ -46,10 +52,6 @@
 - **"처음부터 다시 만들기"가 보관된 계획을 삭제하지 않음** — 현재 계획을 보관함에 남긴 채
   새 계획의 슬롯필링을 시작한다(확인 창 문구도 그에 맞게 변경). 고정된 계획을 바꾸고 싶으면
   새 계획을 만들고, 필요할 때 목록에서 이전 계획을 삭제하면 된다.
-
-### Removed
-- **(호환성) localStorage 계획 저장 제거** — 기존 단일 저장 키(`delaynomore:savedPlan`)를
-  더 이상 읽지 않으며, 이전 브라우저에 저장돼 있던 계획은 마이그레이션하지 않는다(데모 데이터).
 - **백엔드 코드 규칙(CONVENTIONS) 정렬 리팩토링** — 단일 `AiController`(약 1,000줄)에 몰려 있던
   로직을 레이어로 분리: `domain/ai/{controller,service,client,dto}` + `global/{response,error,config}`.
   - Controller는 `@Valid` 검증·Service 호출만, 비즈니스 로직(프롬프트 조립·응답 정제·SSE 릴레이)은
@@ -61,12 +63,16 @@
   - springdoc(Swagger) 도입 — 컨트롤러에 `@Tag`/`@Operation`, `/swagger-ui.html` 제공.
   - Service 단위 테스트 추가(`AiServiceTest`, `AiResponseParserTest`).
 - **(호환성 깨짐) REST API 계약 변경** — URL 버저닝과 공통 응답 래퍼 도입. 프론트 호출부(`db_service.js`),
-  `render.yaml` 헬스체크 경로, 배포 스크립트/문서도 함께 갱신.
+  배포 스크립트/문서도 함께 갱신.
   - 경로: `/api/ai/{health,draft,draft/stream,chat,chat/stream}` →
     `/api/v1/ai/{health,drafts,drafts/stream,chats,chats/stream}` (리소스 복수형).
   - JSON 응답을 `{ success, data, error }`(ApiResponse)로 래핑. 검증 실패는
     `error.fieldErrors`(필드 → 사유), 오류 분기는 `error.code`(ErrorCode)로 판별.
     SSE 스트림 이벤트 계약(`day`/`token`/`plan`/`done`/`error`)은 그대로 유지.
+
+### Removed
+- **(호환성) localStorage 계획 저장 제거** — 기존 단일 저장 키(`delaynomore:savedPlan`)를
+  더 이상 읽지 않으며, 이전 브라우저에 저장돼 있던 계획은 마이그레이션하지 않는다(데모 데이터).
 
 ## [0.3.0] - 2026-07-16
 
