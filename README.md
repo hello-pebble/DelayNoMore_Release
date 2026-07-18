@@ -1,5 +1,8 @@
 # DelayNoMore — 대화형 투두리스트 생성 데모
 
+**🔗 라이브 데모: <http://delaynomoreapp.duckdns.org/>**
+(현재 HTTP로 서비스 중이며, DB·로그인 연동 마무리 후 HTTPS를 적용할 예정입니다.)
+
 > [DelayNoMore](https://github.com/hello-pebble/DelayNoMore)의 **"대화를 통해 투두리스트(하루 단위 실행 계획)를 생성하는"** 핵심 흐름만 떼어낸 최소 배포판입니다.
 
 원본 서비스의 인증 · 목표 저장 · 팀 공유 · 알림 · 지연 리포트 등은 제거하고,
