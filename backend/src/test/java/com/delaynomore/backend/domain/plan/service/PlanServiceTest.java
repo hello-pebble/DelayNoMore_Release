@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -20,7 +21,8 @@ class PlanServiceTest {
     private static final int MAX_PLANS = 50;
     private static final long MISSING_ID = 999L;
 
-    private final PlanService planService = new PlanService(new PlanRepository(), new ReflectionRepository());
+    private final PlanService planService = new PlanService(new PlanRepository(), new ReflectionRepository(),
+            new AuditEventService(new AuditEventRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(
@@ -35,7 +37,7 @@ class PlanServiceTest {
         PlanSaveRequest request = request("토익 900");
 
         // when
-        PlanResponse saved = planService.create(request);
+        PlanResponse saved = planService.create(request, null);
 
         // then
         assertThat(saved.id()).isPositive();
@@ -48,12 +50,12 @@ class PlanServiceTest {
     void create_보관한도초과_PLAN_LIMIT_EXCEEDED예외() {
         // given
         for (int i = 0; i < MAX_PLANS; i++) {
-            planService.create(request("목표 " + i));
+            planService.create(request("목표 " + i), null);
         }
 
         // when
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.create(request("한도 초과")));
+                BusinessException.class, () -> planService.create(request("한도 초과"), null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LIMIT_EXCEEDED);
@@ -62,13 +64,13 @@ class PlanServiceTest {
     @Test
     void getPlans_여러건저장_최근저장순정렬() throws InterruptedException {
         // given
-        PlanResponse first = planService.create(request("첫 번째"));
-        PlanResponse second = planService.create(request("두 번째"));
+        PlanResponse first = planService.create(request("첫 번째"), null);
+        PlanResponse second = planService.create(request("두 번째"), null);
 
         // when — 첫 번째를 다시 수정하면 savedAt이 갱신되어 목록 선두로 온다
         // (연속 호출은 같은 밀리초에 몰릴 수 있어, savedAt이 확실히 커지도록 잠깐 기다린다)
         Thread.sleep(5);
-        planService.update(first.id(), request("첫 번째(수정)"));
+        planService.update(first.id(), request("첫 번째(수정)"), null);
         List<PlanResponse> plans = planService.getPlans();
 
         // then
@@ -80,7 +82,7 @@ class PlanServiceTest {
     @Test
     void getPlan_존재하는ID_해당계획반환() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"));
+        PlanResponse saved = planService.create(request("토익 900"), null);
 
         // when
         PlanResponse found = planService.getPlan(saved.id());
@@ -104,13 +106,13 @@ class PlanServiceTest {
     @Test
     void update_존재하는계획_내용과savedAt갱신() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"));
+        PlanResponse saved = planService.create(request("토익 900"), null);
         PlanSaveRequest updateRequest = new PlanSaveRequest("토익 950", 5, 3, "실전 경험 있음",
                 saved.tasks(), "CONFIRMED", "2026-07-16T12:00:00Z",
                 saved.startDate(), saved.endDate(), saved.createdAt());
 
         // when
-        PlanResponse updated = planService.update(saved.id(), updateRequest);
+        PlanResponse updated = planService.update(saved.id(), updateRequest, null);
 
         // then
         assertThat(updated.id()).isEqualTo(saved.id());
@@ -127,7 +129,7 @@ class PlanServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.update(MISSING_ID, updateRequest));
+                BusinessException.class, () -> planService.update(MISSING_ID, updateRequest, null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
@@ -136,10 +138,10 @@ class PlanServiceTest {
     @Test
     void delete_존재하는계획_목록에서제거() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"));
+        PlanResponse saved = planService.create(request("토익 900"), null);
 
         // when
-        planService.delete(saved.id());
+        planService.delete(saved.id(), null);
 
         // then
         assertThat(planService.getPlans()).isEmpty();
@@ -151,7 +153,7 @@ class PlanServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.delete(MISSING_ID));
+                BusinessException.class, () -> planService.delete(MISSING_ID, null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);

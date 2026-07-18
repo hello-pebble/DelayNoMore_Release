@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -38,9 +39,10 @@ public class ReflectionController {
     @PutMapping("/{date}")
     public ApiResponse<ReflectionResponse> save(@PathVariable long planId,
                                                 @PathVariable String date,
-                                                @Valid @RequestBody ReflectionSaveRequest request) {
+                                                @Valid @RequestBody ReflectionSaveRequest request,
+                                                @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to save reflection for plan {} on {}", planId, date);
-        return ApiResponse.ok(reflectionService.save(planId, date, request));
+        return ApiResponse.ok(reflectionService.save(planId, date, request, sessionId));
     }
 
     @Operation(summary = "특정 날짜의 회고 조회")

@@ -2,15 +2,22 @@
 // 이 데모는 "대화 → 투두리스트 생성" 흐름만 다루므로 AI 프록시 엔드포인트만 노출한다.
 // 인증·목표 저장·팀·알림 등은 제거되었다.
 
+import { getSessionId } from './session_id';
+
 const API_BASE = '/api/v1';
 
 // 공통 JSON 요청 — 백엔드의 ApiResponse({ success, data, error })를 언래핑해 data만 돌려준다.
 // 실패 시(HTTP 오류 또는 success=false) error.message로 예외를 던진다(필드 오류가 있으면 첫 사유 우선).
 // 던지는 Error에 error.code(예: PLAN_NOT_FOUND)를 붙여 호출부가 오류 종류를 분기할 수 있게 한다.
 const requestJson = async (path, payload, method = 'POST') => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (method !== 'GET') {
+    // 변경 이력의 세션 귀속용 — 서버는 변이 요청에서만 이 헤더를 읽고, 읽기는 기록하지 않는다.
+    headers['X-Session-Id'] = getSessionId();
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: payload == null ? undefined : JSON.stringify(payload),
   });
 
@@ -107,6 +114,10 @@ export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 // plan.tasks에서 재계산). 저장은 서버 기준 오늘(Asia/Seoul) 날짜만 허용된다.
 // 호출부는 err.code(REFLECTION_NOT_FOUND / PLAN_NOT_FOUND 등)로 분기한다.
 export const putReflection = (planId, date, payload) => requestJson(`/plans/${planId}/reflections/${date}`, payload, 'PUT');
+
+// 계획 변경 이력(최신순) — 이벤트는 서버가 변경 서비스 안에서 직접 발행하므로 읽기만 있다.
+// 삭제된 계획 id도 404가 아니라 과거 이력(또는 빈 목록)으로 응답한다.
+export const fetchAuditEvents = (planId) => requestJson(`/plans/${planId}/audit-events`, null, 'GET');
 export const fetchReflection = (planId, date) => requestJson(`/plans/${planId}/reflections/${date}`, null, 'GET');
 export const fetchReflections = (planId) => requestJson(`/plans/${planId}/reflections`, null, 'GET');
 
