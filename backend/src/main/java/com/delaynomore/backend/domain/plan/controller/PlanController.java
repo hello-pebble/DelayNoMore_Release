@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -35,11 +36,15 @@ public class PlanController {
 
     private final PlanService planService;
 
+    // X-Session-Id: 변경 이력의 "다른 세션에서 발생한 변경인가?" 귀속용 선택 헤더 —
+    // 브라우저가 만든 익명 식별자일 뿐 인증이 아니다. 없으면(구형 클라이언트·curl) null로 기록된다.
+    // 읽기(GET)는 이력을 남기지 않으므로 변이 메서드에만 받는다.
     @Operation(summary = "계획 보관")
     @PostMapping
-    public ApiResponse<PlanResponse> create(@Valid @RequestBody PlanSaveRequest request) {
+    public ApiResponse<PlanResponse> create(@Valid @RequestBody PlanSaveRequest request,
+                                            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to create plan");
-        return ApiResponse.ok(planService.create(request));
+        return ApiResponse.ok(planService.create(request, sessionId));
     }
 
     @Operation(summary = "보관된 계획 목록 조회 (최근 저장순)")
@@ -57,15 +62,17 @@ public class PlanController {
     @Operation(summary = "보관된 계획 수정")
     @PutMapping("/{id}")
     public ApiResponse<PlanResponse> update(@PathVariable long id,
-                                            @Valid @RequestBody PlanSaveRequest request) {
-        return ApiResponse.ok(planService.update(id, request));
+                                            @Valid @RequestBody PlanSaveRequest request,
+                                            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        return ApiResponse.ok(planService.update(id, request, sessionId));
     }
 
     @Operation(summary = "보관된 계획 삭제")
     @DeleteMapping("/{id}")
-    public ApiResponse<Void> delete(@PathVariable long id) {
+    public ApiResponse<Void> delete(@PathVariable long id,
+                                    @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to delete plan {}", id);
-        planService.delete(id);
+        planService.delete(id, sessionId);
         return ApiResponse.ok(null);
     }
 }

@@ -21,15 +21,17 @@ public class PlanService {
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
+    private final AuditEventService auditEventService;
 
     // synchronized: 한도 검사(count)와 저장(save)을 원자적으로 묶는다. 공유 데모 저장소라
     // 여러 방문자가 동시에 생성하면 각자 검사를 통과한 뒤 저장해 상한 50건을 넘길 수 있는데
     // (TOCTOU), 생성 경로를 직렬화해 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
-    public synchronized PlanResponse create(PlanSaveRequest request) {
+    public synchronized PlanResponse create(PlanSaveRequest request, String sessionId) {
         if (planRepository.count() >= MAX_PLANS) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
         }
         Plan saved = planRepository.save(request.toPlan(null, System.currentTimeMillis()));
+        auditEventService.recordPlanCreated(saved, sessionId);
         return PlanResponse.from(saved);
     }
 
@@ -45,19 +47,27 @@ public class PlanService {
         return PlanResponse.from(plan);
     }
 
-    public PlanResponse update(long id, PlanSaveRequest request) {
+    public PlanResponse update(long id, PlanSaveRequest request, String sessionId) {
         Plan updated = request.toPlan(id, System.currentTimeMillis());
-        if (!planRepository.update(updated)) {
+        Plan previous = planRepository.update(updated);
+        if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
+        // 모든 변경(내용 수정·고정·완료 토글)이 이 PUT 하나로 들어오므로, 이전 상태와 diff해
+        // 이벤트 종류(PLAN_CONFIRMED/TASK_*/PLAN_UPDATED)를 서버가 판별·기록한다.
+        auditEventService.recordPlanUpdated(previous, updated, sessionId);
         return PlanResponse.from(updated);
     }
 
-    public void delete(long id) {
-        if (!planRepository.deleteById(id)) {
+    public void delete(long id, String sessionId) {
+        Plan deleted = planRepository.deleteById(id);
+        if (deleted == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
         // 캐스케이드 — 계획이 사라지면 회고도 조회 경로가 없어지므로 함께 지운다(고아 방지).
+        // 변경 이력은 지우지 않는다 — "언제 삭제됐는가"에 답해야 하므로 PLAN_DELETED와 함께
+        // 남기고, 메모리는 이력 저장소의 전역 상한이 관리한다.
         reflectionRepository.deleteAllByPlanId(id);
+        auditEventService.recordPlanDeleted(deleted, sessionId);
     }
 }

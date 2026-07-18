@@ -37,13 +37,21 @@ public class PlanRepository {
         return Optional.ofNullable(store.get(id));
     }
 
-    // 존재할 때만 통째로 교체(last-write-wins — 공유 데모 저장소라 동시 수정 경합은 허용).
-    public boolean update(Plan plan) {
-        return store.computeIfPresent(plan.id(), (id, current) -> plan) != null;
+    // 존재할 때만 통째로 교체(last-write-wins — 공유 데모 저장소라 동시 수정 경합은 허용)하고
+    // "교체 전 값"을 돌려준다(없으면 null) — 변경 이력이 이전 상태와 diff하는 데 쓴다.
+    // computeIfPresent는 키 단위로 원자 실행되므로 교체와 이전 값 캡처 사이에 다른 쓰기가 끼어들 수 없다.
+    public Plan update(Plan plan) {
+        Plan[] previous = new Plan[1];
+        Plan replaced = store.computeIfPresent(plan.id(), (id, current) -> {
+            previous[0] = current;
+            return plan;
+        });
+        return replaced == null ? null : previous[0];
     }
 
-    public boolean deleteById(long id) {
-        return store.remove(id) != null;
+    // 제거된 값을 돌려준다(없으면 null) — 변경 이력의 PLAN_DELETED detail(goalName)에 쓴다.
+    public Plan deleteById(long id) {
+        return store.remove(id);
     }
 
     public int count() {

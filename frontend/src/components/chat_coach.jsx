@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2
+  CheckCircle2, History
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -15,7 +15,8 @@ import {
   isPlanModificationRequest,
   INITIAL_SLOTS
 } from '../ai_engine';
-import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, putReflection, fetchReflection } from '../db_service';
+import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, putReflection, fetchReflection, fetchAuditEvents } from '../db_service';
+import { getSessionId } from '../session_id';
 import { todayStr } from '../date_utils';
 
 // "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
@@ -124,6 +125,62 @@ function formatSavedAt(ts) {
   return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}/${d.getDate()} 저장` : '';
 }
 
+// 미완료 이월 — fromDate의 미완료 항목을 toDate 배열 뒤에 붙인다. 항목 ID는 보존한다:
+// 생성 시점에 계획 전체에서 유일하고, ID가 유지되어야 서버 변경 이력이 "같은 할 일의 이동"으로
+// 인식한다. fromDate가 비면 키를 지우고, 새 키가 객체 끝에 붙어 Day 순서가 깨지지 않도록
+// 날짜 키 오름차순(YYYY-MM-DD라 사전순=날짜순)으로 재조립한다.
+function carryOverTasks(tasks, fromDate, toDate) {
+  const dayTasks = tasks?.[fromDate];
+  if (!Array.isArray(dayTasks)) return { tasks, movedCount: 0 };
+  const remaining = dayTasks.filter((t) => t.completed);
+  const moved = dayTasks.filter((t) => !t.completed);
+  if (moved.length === 0) return { tasks, movedCount: 0 };
+
+  const destination = Array.isArray(tasks[toDate]) ? tasks[toDate] : [];
+  // 목적지에 같은 ID가 이미 있으면(비정상 데이터) 접미사로 회피 — 렌더 key 충돌 방지.
+  const existingIds = new Set(destination.map((t) => t.id));
+  const movedSafe = moved.map((t) => (existingIds.has(t.id) ? { ...t, id: `${t.id}-m${Date.now()}` } : t));
+
+  const next = { ...tasks, [toDate]: [...destination, ...movedSafe] };
+  if (remaining.length > 0) next[fromDate] = remaining;
+  else delete next[fromDate];
+
+  const sorted = {};
+  Object.keys(next).sort().forEach((date) => { sorted[date] = next[date]; });
+  return { tasks: sorted, movedCount: moved.length };
+}
+
+// 변경 이력 이벤트 타입 → 화면 라벨. 알 수 없는 타입은 코드 그대로 노출(회고 라벨과 같은 방어).
+const AUDIT_EVENT_LABELS = {
+  PLAN_CREATED: '계획 생성',
+  PLAN_UPDATED: '계획 수정',
+  PLAN_CONFIRMED: '계획 고정',
+  TASK_COMPLETED: '할 일 완료',
+  TASK_REOPENED: '완료 해제',
+  REFLECTION_SAVED: '회고 저장',
+  PLAN_DELETED: '계획 삭제'
+};
+
+// 이력 행의 세션 배지 — 내 세션 ID와 비교해 "다른 세션에서 발생한 변경인가?"에 답한다.
+// sessionId가 없으면(구형 클라이언트·curl) "알 수 없음".
+function auditSessionBadge(sessionId) {
+  if (!sessionId) return '알 수 없음';
+  return sessionId === getSessionId() ? '이 브라우저' : '다른 세션';
+}
+
+// 이력 행의 발생 시각 — 가까운 과거는 상대 표기, 오래되면 절대 표기(M/D HH:mm).
+function formatEventTime(iso) {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 60 * 1000) return '방금 전';
+  if (diffMs < 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 1000))}분 전`;
+  if (diffMs < 24 * 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 60 * 1000))}시간 전`;
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`;
+}
+
 // 마운트 시 최초 상태 — 항상 슬롯필링 첫 질문으로 시작한다. 계획은 서버 보관함에 있으므로
 // "마지막으로 보던 계획" 복원은 마운트 후 목록 fetch가 끝난 시점에 비동기로 수행된다.
 function buildInitialState() {
@@ -214,6 +271,8 @@ export default function ChatCoach() {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
+  // 변경 이력 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', events }
+  const [auditView, setAuditView] = useState(null);
 
   // 오늘 마무리(회고) 상태 — 회고는 계획별·오늘 날짜 1건(서버 업서트, 계획 보관함과 같은
   // 휘발성 공유 저장소). reflections는 {planId: 회고|null} — null은 "오늘 회고 없음"이 서버로
@@ -725,6 +784,54 @@ export default function ChatCoach() {
     }
   };
 
+  // 미완료 항목 내일로 이동 — 오늘(실행) 단계의 행동이지만 계획 구조를 바꾸므로 DRAFT 계획
+  // 전용이다(고정 계획은 버튼 자체를 숨긴다 — 계획 저장/기간 +3일 버튼과 같은 잠금 관례).
+  // 동기화는 toggleTodayTask와 같은 이원화: 활성 계획은 draftChecklist만 갱신하고 기존 600ms
+  // 디바운스 PUT에 맡긴다(전환·삭제 시 flush/취소도 기존 경로가 처리). 비활성 계획은 savedPlans
+  // 낙관 갱신 + 즉시 PUT + 실패 시 롤백. 내일이 계획 기간을 넘으면 endDate/duration을 하루 늘린다.
+  const handleCarryOver = async (planId) => {
+    const isCurrent = planId === activePlanId && !!draftChecklist;
+    const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
+    if (!source || source.status === 'CONFIRMED') return;
+    const today = todayStr();
+    const tomorrow = todayStr(1);
+    const { tasks: movedTasks, movedCount } = carryOverTasks(source.tasks, today, tomorrow);
+    if (movedCount === 0) return;
+    if (!window.confirm(`미완료 ${movedCount}건을 내일(${tomorrow})로 옮길까요?`)) return;
+
+    const extendsRange = !!source.endDate && source.endDate < tomorrow; // YYYY-MM-DD라 문자열 비교로 충분
+    const changes = {
+      tasks: movedTasks,
+      ...(extendsRange && {
+        endDate: tomorrow,
+        duration: typeof source.duration === 'number' ? source.duration + 1 : source.duration
+      })
+    };
+
+    if (isCurrent) {
+      setDraftChecklist((prev) => (prev ? { ...prev, ...changes } : prev));
+      if (extendsRange) {
+        // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
+        setSlots((prev) => ({ ...prev, duration: changes.duration }));
+      }
+      return; // 서버 반영은 자동 동기화 effect가 담당
+    }
+
+    const updated = { ...source, ...changes };
+    setSavedPlans((prev) => prev.map((p) => (p.id === planId ? updated : p)));
+    try {
+      await updatePlan(planId, toPlanPayload(updated));
+    } catch (err) {
+      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? source : p))); // 실패 시 롤백
+      if (err.code === 'PLAN_NOT_FOUND') {
+        window.alert('이미 삭제된 계획입니다.');
+        refreshPlans();
+      } else {
+        window.alert('미완료 항목을 옮기지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
+    }
+  };
+
   const handleCopyPlan = async () => {
     const text = formatChecklistAsText(draftChecklist);
     const ok = await copyTextToClipboard(text);
@@ -855,7 +962,30 @@ export default function ChatCoach() {
         return;
       }
     }
+    // 삭제된 계획의 이력 패널이 열려 있었다면 함께 닫는다(행이 목록에서 사라지므로).
+    setAuditView((prev) => (prev?.planId === planId ? null : prev));
     refreshPlans();
+  };
+
+  // 변경 이력 열기/닫기 — 같은 행을 다시 누르면 접는다. 펼칠 때마다 refetch해 다른 세션의
+  // 변경이 반영된다(보관함 목록·회고의 "펼칠 때 refetch" 관례). 늦게 도착한 응답은 그 사이
+  // 다른 계획으로 전환/닫힘 상태면 무시한다(functional set으로 현재 planId 확인).
+  const loadAuditLog = async (planId) => {
+    setAuditView({ planId, status: 'loading', events: [] });
+    try {
+      const events = await fetchAuditEvents(planId);
+      setAuditView((prev) => (prev?.planId === planId ? { planId, status: 'ready', events } : prev));
+    } catch {
+      setAuditView((prev) => (prev?.planId === planId ? { planId, status: 'error', events: [] } : prev));
+    }
+  };
+
+  const toggleAuditLog = (planId) => {
+    if (auditView?.planId === planId) {
+      setAuditView(null);
+      return;
+    }
+    loadAuditLog(planId);
   };
 
   // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
@@ -1231,6 +1361,19 @@ export default function ChatCoach() {
                     </li>
                   ))}
                 </ul>
+                {/* 미완료 이월 — 계획 구조를 바꾸므로 DRAFT 계획에서만, 미완료가 있을 때만 노출.
+                    고정(locked) 계획은 숨긴다(잠금 시 수정 버튼을 숨기는 기존 관례). */}
+                {!group.locked && group.tasks.some((t) => !t.completed) && (
+                  <button
+                    type="button"
+                    onClick={() => handleCarryOver(group.planId)}
+                    disabled={isTyping}
+                    style={{ ...quickReplyButtonStyle, marginTop: '8px' }}
+                  >
+                    <CalendarPlus size={12} />
+                    미완료 {group.tasks.filter((t) => !t.completed).length}건 내일로
+                  </button>
+                )}
               </div>
             ))
           )}
@@ -1448,9 +1591,10 @@ export default function ChatCoach() {
             // 옛 수치로 남기 때문. 다른(비활성) 계획은 종전대로 서버 스냅샷을 쓴다.
             const { done, total } = getPlanProgress(isCurrent ? draftChecklist?.tasks : plan.tasks);
             const isPlanConfirmed = plan.status === 'CONFIRMED';
+            const isAuditOpen = auditView?.planId === plan.id;
             return (
+              <React.Fragment key={plan.id}>
               <div
-                key={plan.id}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -1487,6 +1631,14 @@ export default function ChatCoach() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => toggleAuditLog(plan.id)}
+                  title="변경 이력"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isAuditOpen ? 'var(--primary)' : 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
+                >
+                  <History size={14} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleDeletePlan(plan.id)}
                   title="계획 삭제"
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
@@ -1494,6 +1646,66 @@ export default function ChatCoach() {
                   <Trash2 size={14} />
                 </button>
               </div>
+              {/* 변경 이력 패널 — 행 바로 아래 확장. 펼칠 때마다 refetch(다른 세션 변경 반영). */}
+              {isAuditOpen && (
+                <div style={{ margin: '0 4px', padding: '6px 10px', borderRadius: '8px', background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                  {auditView.status === 'loading' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>이력을 불러오는 중...</div>
+                  )}
+                  {auditView.status === 'error' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      이력을 불러오지 못했습니다.
+                      <button type="button" onClick={() => loadAuditLog(plan.id)} style={quickReplyButtonStyle}>
+                        <RefreshCw size={12} />
+                        다시 시도
+                      </button>
+                    </div>
+                  )}
+                  {auditView.status === 'ready' && auditView.events.length === 0 && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                      기록이 없습니다 (서버 재시작 시 이력도 초기화됩니다)
+                    </div>
+                  )}
+                  {auditView.status === 'ready' && auditView.events.length > 0 && (
+                    <>
+                      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '5px', maxHeight: '160px', overflowY: 'auto' }}>
+                        {auditView.events.map((event) => (
+                          <li key={event.id} style={{ fontSize: '12px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
+                            <span style={{ fontWeight: 600, flexShrink: 0 }}>
+                              {AUDIT_EVENT_LABELS[event.type] || event.type}
+                            </span>
+                            {event.detail && (
+                              <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {event.detail}
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                marginLeft: 'auto',
+                                flexShrink: 0,
+                                fontSize: '11px',
+                                padding: '1px 6px',
+                                borderRadius: '999px',
+                                border: `1px solid ${auditSessionBadge(event.sessionId) === '이 브라우저' ? 'var(--primary)' : 'var(--border)'}`,
+                                color: auditSessionBadge(event.sessionId) === '이 브라우저' ? 'var(--primary)' : 'var(--text-muted)'
+                              }}
+                            >
+                              {auditSessionBadge(event.sessionId)}
+                            </span>
+                            <span style={{ flexShrink: 0, fontSize: '11px', color: 'var(--text-muted)' }}>
+                              {formatEventTime(event.createdAt)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
+                        모든 방문자가 함께 보는 데모 이력입니다 · 최근 1000건만 보관됩니다
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              </React.Fragment>
             );
           })}
           <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>

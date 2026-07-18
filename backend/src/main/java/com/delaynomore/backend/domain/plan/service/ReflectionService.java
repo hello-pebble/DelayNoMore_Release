@@ -28,11 +28,12 @@ public class ReflectionService {
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
+    private final AuditEventService auditEventService;
 
     // 저장(업서트) — 날짜 검증 → 계획 존재 확인 → 완료/전체 개수 서버 재계산 → 원자적 업서트.
     // 완료 개수를 클라이언트가 보내지 않는 이유: 공유 데모 저장소라 조작 가능하고, plan.tasks가
     // 이미 서버에 있으므로 서버 계산이 항상 일관된 값을 만든다.
-    public ReflectionResponse save(long planId, String date, ReflectionSaveRequest request) {
+    public ReflectionResponse save(long planId, String date, ReflectionSaveRequest request, String sessionId) {
         LocalDate parsed = parseDate(date);
         if (!parsed.equals(LocalDate.now(KST))) {
             throw new BusinessException(ErrorCode.REFLECTION_DATE_NOT_TODAY);
@@ -51,6 +52,7 @@ public class ReflectionService {
                 request.difficulty(), request.reason(),
                 existing == null ? now : existing.createdAt(), // 재저장 시 최초 저장 시각 보존
                 now));
+        auditEventService.recordReflectionSaved(planId, normalizedDate, counts[0], counts[1], sessionId);
         return ReflectionResponse.from(saved);
     }
 

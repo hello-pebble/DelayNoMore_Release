@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.ReflectionResponse;
 import com.delaynomore.backend.domain.plan.dto.ReflectionSaveRequest;
+import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -27,8 +28,9 @@ class ReflectionServiceTest {
 
     private final PlanRepository planRepository = new PlanRepository();
     private final ReflectionRepository reflectionRepository = new ReflectionRepository();
-    private final PlanService planService = new PlanService(planRepository, reflectionRepository);
-    private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository);
+    private final AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
+    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
+    private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
     // 오늘 5개 중 3개 완료된 계획을 보관한다(status 지정 가능 — CONFIRMED 회고 허용 검증용).
     private PlanResponse savePlan(String status) {
@@ -39,7 +41,7 @@ class ReflectionServiceTest {
                 Map.of("id", "t-4", "content", "독해 문제", "completed", false),
                 Map.of("id", "t-5", "content", "오답 노트", "completed", false)));
         return planService.create(new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
-                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"));
+                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"), null);
     }
 
     private ReflectionSaveRequest request() {
@@ -52,7 +54,7 @@ class ReflectionServiceTest {
         PlanResponse plan = savePlan(null);
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request());
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
 
         // then — 클라이언트는 개수를 보내지 않았지만 plan.tasks에서 3/5가 계산된다
         assertThat(saved.planId()).isEqualTo(plan.id());
@@ -68,12 +70,12 @@ class ReflectionServiceTest {
     void save_재저장_createdAt보존및중복없음() throws InterruptedException {
         // given
         PlanResponse plan = savePlan(null);
-        ReflectionResponse first = reflectionService.save(plan.id(), TODAY, request());
+        ReflectionResponse first = reflectionService.save(plan.id(), TODAY, request(), null);
 
         // when — 잠깐 기다려 updatedAt이 확실히 달라지게 한 뒤 다른 선택으로 재저장
         Thread.sleep(5);
         ReflectionResponse second = reflectionService.save(plan.id(), TODAY,
-                new ReflectionSaveRequest("NORMAL", "AS_PLANNED"));
+                new ReflectionSaveRequest("NORMAL", "AS_PLANNED"), null);
 
         // then — 업서트: 최초 저장 시각은 보존되고, 목록에 중복이 생기지 않는다
         assertThat(second.createdAt()).isEqualTo(first.createdAt());
@@ -88,10 +90,10 @@ class ReflectionServiceTest {
         Map<String, Object> tasks = Map.of("2000-01-01", List.of(
                 Map.of("id", "t-1", "content", "지난 할 일", "completed", false)));
         PlanResponse plan = planService.create(new PlanSaveRequest("옛 계획", 1, 1, "완전 초보", tasks,
-                null, null, null, null, null));
+                null, null, null, null, null), null);
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request());
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
 
         // then
         assertThat(saved.completedCount()).isZero();
@@ -105,7 +107,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(plan.id(), "2099-01-01", request()));
+                () -> reflectionService.save(plan.id(), "2099-01-01", request(), null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.REFLECTION_DATE_NOT_TODAY);
@@ -118,7 +120,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(plan.id(), "abc", request()));
+                () -> reflectionService.save(plan.id(), "abc", request(), null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.REFLECTION_DATE_INVALID);
@@ -130,7 +132,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(MISSING_ID, TODAY, request()));
+                () -> reflectionService.save(MISSING_ID, TODAY, request(), null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
@@ -142,7 +144,7 @@ class ReflectionServiceTest {
         PlanResponse plan = savePlan("CONFIRMED");
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request());
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
 
         // then
         assertThat(saved.completedCount()).isEqualTo(3);
@@ -165,7 +167,7 @@ class ReflectionServiceTest {
     void get_저장된회고_그대로반환() {
         // given
         PlanResponse plan = savePlan(null);
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request());
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
 
         // when
         ReflectionResponse found = reflectionService.get(plan.id(), TODAY);
@@ -188,10 +190,10 @@ class ReflectionServiceTest {
     void delete_계획삭제시_회고도캐스케이드삭제() {
         // given
         PlanResponse plan = savePlan(null);
-        reflectionService.save(plan.id(), TODAY, request());
+        reflectionService.save(plan.id(), TODAY, request(), null);
 
         // when
-        planService.delete(plan.id());
+        planService.delete(plan.id(), null);
 
         // then — 저장소에서 직접 확인(계획이 없어 서비스 조회는 PLAN_NOT_FOUND가 되므로)
         assertThat(reflectionRepository.findAllByPlanId(plan.id())).isEmpty();
