@@ -8,12 +8,12 @@ import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
+import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
@@ -21,10 +21,6 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class ReflectionService {
-
-    // "오늘" 판정 기준 시간대 — 컨테이너 JVM은 UTC라 서버 로컬 날짜를 쓰면 한국 사용자의
-    // 자정~오전 9시 회고가 어제 날짜로 거부된다. 회고는 한국 시간 기준 서비스로 명시한다.
-    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
@@ -35,7 +31,7 @@ public class ReflectionService {
     // 이미 서버에 있으므로 서버 계산이 항상 일관된 값을 만든다.
     public ReflectionResponse save(long planId, String date, ReflectionSaveRequest request, String sessionId) {
         LocalDate parsed = parseDate(date);
-        if (!parsed.equals(LocalDate.now(KST))) {
+        if (!parsed.equals(KstDates.today())) {
             throw new BusinessException(ErrorCode.REFLECTION_DATE_NOT_TODAY);
         }
         Plan plan = planRepository.findById(planId)

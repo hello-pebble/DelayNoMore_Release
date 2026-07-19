@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.ai.service;
 
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
+import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -188,9 +189,10 @@ public class AiPromptBuilder {
     // [Goal] 섹션 본문. withDateRange면 기간 옆에 시작~종료 날짜를 함께 적는다(초안 생성용).
     private String goalSection(String goalName, int duration, int dailyHours, String currentLevel,
                                boolean withDateRange) {
+        LocalDate today = KstDates.today();
         String durationLine = withDateRange
-                ? "- Duration: " + duration + " days (" + LocalDate.now() + " ~ "
-                + LocalDate.now().plusDays(duration - 1) + ")\n"
+                ? "- Duration: " + duration + " days (" + today + " ~ "
+                + today.plusDays(duration - 1) + ")\n"
                 : "- Duration: " + duration + " days\n";
         return "- Goal name: \"" + goalName + "\"\n"
                 + durationLine
@@ -237,10 +239,12 @@ public class AiPromptBuilder {
         userPrompt.append("\n");
     }
 
+    // 초안의 대상 날짜는 KST 오늘부터 — 컨테이너 JVM(UTC)의 오늘을 쓰면 하루 어긋난다.
     private List<String> targetDates(int duration) {
+        LocalDate today = KstDates.today();
         List<String> targetDates = new ArrayList<>();
         for (int i = 0; i < duration; i++) {
-            targetDates.add(LocalDate.now().plusDays(i).toString());
+            targetDates.add(today.plusDays(i).toString());
         }
         return targetDates;
     }
