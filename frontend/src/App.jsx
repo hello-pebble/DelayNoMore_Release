@@ -44,7 +44,14 @@ export default function App() {
           background: 'var(--bg-card)'
         }}
       >
-        <div style={{ fontSize: '17px', fontWeight: 700 }}>DelayNoMore</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', minWidth: 0 }}>
+          <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
+          {/* 데모 특성 안내 — 사용법은 UI가 직관적이라 생략하고, 방문자가 미리 알아야 할
+              데모 저장소 특성(모든 방문자 공유·서버 재시작 시 초기화)만 알린다. */}
+          <div className="header-guide" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            데모 페이지 — 계획은 모든 방문자와 공유되며, 서버 재시작 시 사라집니다
+          </div>
+        </div>
         <div
           title={ledLabel}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}

@@ -83,6 +83,13 @@ input {
   animation: fadeIn 0.25s ease forwards;
 }
 
+/* 헤더 안내 문구 — 좁은 화면에서는 상태 LED와 겹치므로 숨긴다. */
+@media (max-width: 760px) {
+  .header-guide {
+    display: none;
+  }
+}
+
 @keyframes blink {
   0%,
   100% {
