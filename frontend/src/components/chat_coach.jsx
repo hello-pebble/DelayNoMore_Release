@@ -350,6 +350,13 @@ export default function ChatCoach() {
       await updatePlan(pending.id, pending.payload);
       lastSyncedRef.current = JSON.stringify(pending.payload);
     } catch (err) {
+      if (err.code === 'PLAN_LOCKED') {
+        // 서버 가드 거부 — 다른 세션에서 먼저 고정(CONFIRMED)한 계획에 구조 변경 PUT이 겹친
+        // 경우다. 재시도해도 계속 409이므로 대기 변경을 버린다(서버가 진실 원천 — 계획을
+        // 다시 불러오면 고정 상태로 재동기화된다).
+        console.warn('고정된 계획이라 서버가 수정 반영을 거부했습니다 — 대기 중 변경을 폐기합니다.');
+        return;
+      }
       if (err.code !== 'PLAN_NOT_FOUND') {
         console.warn('계획 동기화 실패 — 다음 변경 때 다시 시도합니다:', err);
         dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도
@@ -825,6 +832,10 @@ export default function ChatCoach() {
       setSavedPlans((prev) => prev.map((p) => (p.id === planId ? source : p))); // 실패 시 롤백
       if (err.code === 'PLAN_NOT_FOUND') {
         window.alert('이미 삭제된 계획입니다.');
+        refreshPlans();
+      } else if (err.code === 'PLAN_LOCKED') {
+        // 서버 가드 거부 — 이 스냅샷은 DRAFT였지만 다른 세션에서 먼저 고정한 경우.
+        window.alert('다른 세션에서 고정된 계획이라 이월할 수 없습니다.');
         refreshPlans();
       } else {
         window.alert('미완료 항목을 옮기지 못했습니다. 잠시 후 다시 시도해 주세요.');

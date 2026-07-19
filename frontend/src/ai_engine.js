@@ -55,7 +55,8 @@ export function parseUserMessage(message, currentSlot) {
 
     case REQUIRED_SLOTS.DURATION: {
       const days = parseInt(trimmed.replace(/[^0-9]/g, ''), 10);
-      // 서버 검증(1~14일)과 동일한 상한 — 어긋나면 백엔드가 400을 주고 mock으로 새기 때문에 맞춘다.
+      // 규칙 소유는 서버(AiDraftRequest가 1~14일을 강제) — 여기는 같은 값을 쓰는 UX 힌트다.
+      // 어긋나면 백엔드가 400을 주고 mock으로 새기 때문에 값을 맞춰 둔다.
       if (isNaN(days) || days <= 0 || days > 14) {
         return { isValid: false, error: "1일에서 14일 사이의 숫자로 입력해 주세요." };
       }
@@ -172,10 +173,9 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
     });
     console.log("🟢 [Backend API] AI 계획 초안 수신 성공:", resultJson);
 
-    // 응답에서 화면에 그릴 수 있는 tasks를 뽑아 검증한다. 모델이 {tasks:{...}}가 아니라
-    // 날짜맵을 최상위로 주거나(=resultJson 자체), 빈 객체를 주는 경우까지 감안한다.
-    // 유효한 tasks가 없으면 화이트스크린 대신 mock 폴백으로 데모 흐름을 지킨다.
-    let tasks = normalizeTasks(resultJson?.tasks) || normalizeTasks(resultJson);
+    // 서버가 날짜맵({날짜: [문자열]})을 보장하므로(normalizeDraftPlan) 응답을 그대로 조립한다.
+    // 그래도 유효한 tasks가 없으면 화이트스크린 대신 mock 폴백으로 데모 흐름을 지킨다.
+    let tasks = normalizeTasks(resultJson);
     if (!tasks) {
       console.warn("AI 초안 응답에 유효한 tasks가 없어 mock 폴백으로 대체합니다:", resultJson);
       return generateMockChecklistDraft(slots, refinementPrompt, previousDraft);
@@ -209,54 +209,15 @@ export async function generateChecklistDraft(slots, refinementPrompt = '', onChu
   }
 }
 
-// LLM이 돌려준 다양한 형태를 "날짜 → 할 일 배열" 맵으로 강제 변환한다.
-// 모델마다 스키마가 달라서(예: {tasks:{날짜:[...]}}, {plan:[{date,tasks}]}, 최상위 배열 등)
-// 한 형태만 기대하면 화면이 안 그려진다. 여기서 흔한 변형을 모두 흡수한다.
-function coerceToDateMap(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-
-  let node = raw;
-
-  // 1) {plan|days|schedule|checklist|tasks: [ ... ]} 처럼 배열을 감싼 래퍼면 그 배열을 꺼낸다.
-  if (!Array.isArray(node)) {
-    const arrayKey = ['plan', 'days', 'schedule', 'checklist', 'tasks', 'items']
-      .find((k) => Array.isArray(node[k]));
-    if (arrayKey) {
-      node = node[arrayKey];
-    } else if (node.tasks && typeof node.tasks === 'object') {
-      // 2) {tasks: {날짜: [...]}} → 안쪽 맵 사용
-      node = node.tasks;
-    }
-  }
-
-  // 3) [{date, tasks}, ...] 형태의 배열 → 날짜맵으로 변환
-  if (Array.isArray(node)) {
-    const map = {};
-    node.forEach((item, i) => {
-      if (!item || typeof item !== 'object') return;
-      const date = item.date || item.day || item.name || `Day ${i + 1}`;
-      const list = item.tasks || item.items || item.todos || item.list || [];
-      map[String(date)] = list;
-    });
-    return Object.keys(map).length ? map : null;
-  }
-
-  // 4) 이미 {날짜: [...]} 맵 형태
-  if (typeof node === 'object') return node;
-  return null;
-}
-
-// 화면에 그릴 수 있는 (날짜 → [{id, content, completed}]) 맵으로 검증/정규화한다.
-// 유효한 항목이 하나도 없으면 null을 반환해 계획 갱신을 막는다.
-function normalizeTasks(rawTasks) {
-  const dateMap = coerceToDateMap(rawTasks);
+// 서버가 날짜 키를 보장한 초안 응답({날짜: [할 일 문자열]})을 화면 모델
+// (날짜 → [{id, content, completed}])로 변환한다. LLM 변형 스키마 흡수(래퍼 벗기기,
+// "Day N" 키 날짜 합성)는 백엔드 AiResponseParser.normalizeDraftPlan으로 이관됐다 —
+// 여기서는 화면 객체 조립만 하고, 유효한 항목이 하나도 없으면 null을 반환해 mock 폴백으로 넘긴다.
+function normalizeTasks(dateMap) {
   if (!dateMap || typeof dateMap !== 'object' || Array.isArray(dateMap)) return null;
-  const dates = Object.keys(dateMap);
-  if (dates.length === 0) return null;
 
   const normalized = {};
-  for (const date of dates) {
-    const list = dateMap[date];
+  for (const [date, list] of Object.entries(dateMap)) {
     if (!Array.isArray(list)) continue;
     const items = list
       .map((task, idx) => {
