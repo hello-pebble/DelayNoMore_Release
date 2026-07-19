@@ -11,11 +11,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.TreeMap;
 
 /**
  * 계획 변경 이력 발행기 — 계획을 바꾸는 서비스(PlanService·ReflectionService)가 변경 직후 호출한다.
@@ -55,24 +53,24 @@ public class AuditEventService {
             append(updated.id(), "PLAN_CONFIRMED", null, sessionId);
         }
 
-        Map<String, Map<String, TaskView>> prevTasks = parseTasks(previous.tasks());
-        Map<String, Map<String, TaskView>> nextTasks = parseTasks(updated.tasks());
+        Map<String, Map<String, PlanTaskDiff.TaskView>> prevTasks = PlanTaskDiff.parseTasks(previous.tasks());
+        Map<String, Map<String, PlanTaskDiff.TaskView>> nextTasks = PlanTaskDiff.parseTasks(updated.tasks());
 
         // 양쪽에 모두 존재하는 (날짜, 항목)의 completed 플립만 완료/해제로 센다 —
         // 항목의 추가·삭제·이동은 아래 구조 변경(PLAN_UPDATED)이 담당한다.
-        for (Map.Entry<String, Map<String, TaskView>> dayEntry : nextTasks.entrySet()) {
-            Map<String, TaskView> prevDay = prevTasks.get(dayEntry.getKey());
+        for (Map.Entry<String, Map<String, PlanTaskDiff.TaskView>> dayEntry : nextTasks.entrySet()) {
+            Map<String, PlanTaskDiff.TaskView> prevDay = prevTasks.get(dayEntry.getKey());
             if (prevDay == null) continue;
-            for (Map.Entry<String, TaskView> taskEntry : dayEntry.getValue().entrySet()) {
-                TaskView before = prevDay.get(taskEntry.getKey());
-                TaskView after = taskEntry.getValue();
+            for (Map.Entry<String, PlanTaskDiff.TaskView> taskEntry : dayEntry.getValue().entrySet()) {
+                PlanTaskDiff.TaskView before = prevDay.get(taskEntry.getKey());
+                PlanTaskDiff.TaskView after = taskEntry.getValue();
                 if (before == null || before.completed() == after.completed()) continue;
                 String type = after.completed() ? "TASK_COMPLETED" : "TASK_REOPENED";
                 append(updated.id(), type, "\"" + after.content() + "\" · " + dayEntry.getKey(), sessionId);
             }
         }
 
-        if (hasStructuralChange(previous, updated, prevTasks, nextTasks)) {
+        if (PlanTaskDiff.hasStructuralChange(previous, updated, prevTasks, nextTasks)) {
             String detail = detectCarryOver(previous, updated, prevTasks, nextTasks);
             append(updated.id(), "PLAN_UPDATED", detail != null ? detail : GENERIC_UPDATE_DETAIL, sessionId);
         }
@@ -97,65 +95,17 @@ public class AuditEventService {
     }
 
     // === diff 내부 표현 ===
-    // tasks는 프론트 원본 그대로(opaque Map)라 방어적으로 파싱한다(ReflectionService.countTodayTasks와
-    // 같은 instanceof 가드). 항목 키는 id를 우선 쓰고, id가 없으면 배열 위치(idx:n)로 대신한다.
-
-    private record TaskView(String content, boolean completed) {}
-
-    private static Map<String, Map<String, TaskView>> parseTasks(Map<String, Object> tasks) {
-        Map<String, Map<String, TaskView>> parsed = new TreeMap<>(); // 날짜 키 정렬 → 발행 순서 안정
-        if (tasks == null) return parsed;
-        for (Map.Entry<String, Object> dayEntry : tasks.entrySet()) {
-            if (!(dayEntry.getValue() instanceof List<?> list)) continue;
-            Map<String, TaskView> day = new LinkedHashMap<>();
-            int index = 0;
-            for (Object item : list) {
-                if (item instanceof Map<?, ?> task) {
-                    Object id = task.get("id");
-                    String key = id != null ? String.valueOf(id) : "idx:" + index;
-                    String content = task.get("content") != null ? String.valueOf(task.get("content")) : "";
-                    day.put(key, new TaskView(content, Boolean.TRUE.equals(task.get("completed"))));
-                }
-                index++;
-            }
-            parsed.put(dayEntry.getKey(), day);
-        }
-        return parsed;
-    }
-
-    // 구조 변경 여부 — completed(위에서 처리)·status/confirmedAt(고정에서 처리)·savedAt(매 PUT마다
-    // 변함)을 제외한 정규화 뷰가 다른가? 스칼라 + 날짜별 (항목키 → content) 맵을 비교한다.
-    private static boolean hasStructuralChange(Plan previous, Plan updated,
-                                               Map<String, Map<String, TaskView>> prevTasks,
-                                               Map<String, Map<String, TaskView>> nextTasks) {
-        if (!Objects.equals(previous.goalName(), updated.goalName())
-                || !Objects.equals(previous.duration(), updated.duration())
-                || !Objects.equals(previous.dailyHours(), updated.dailyHours())
-                || !Objects.equals(previous.currentLevel(), updated.currentLevel())
-                || !Objects.equals(previous.startDate(), updated.startDate())
-                || !Objects.equals(previous.endDate(), updated.endDate())) {
-            return true;
-        }
-        return !contentView(prevTasks).equals(contentView(nextTasks));
-    }
-
-    private static Map<String, Map<String, String>> contentView(Map<String, Map<String, TaskView>> tasks) {
-        Map<String, Map<String, String>> view = new HashMap<>();
-        for (Map.Entry<String, Map<String, TaskView>> dayEntry : tasks.entrySet()) {
-            Map<String, String> day = new HashMap<>();
-            dayEntry.getValue().forEach((key, task) -> day.put(key, task.content()));
-            view.put(dayEntry.getKey(), day);
-        }
-        return view;
-    }
+    // TaskView/parseTasks/contentView/hasStructuralChange는 PlanTaskDiff로 추출됨 —
+    // PlanService의 고정 계획 가드가 같은 "구조 변경" 판정 기준을 공유하기 위해서다.
+    // detectCarryOver는 감사 detail 전용이라 여기 남긴다.
 
     // 이월 패턴 감지 — 프론트의 "미완료 내일로 이동"은 항목 ID를 보존한 채 다음 날짜로 옮기므로
     // 결정적으로 알아볼 수 있다: 한 날짜(D)에서만 제거 + 제거된 항목 전원 미완료 + D+1에 동일
     // (항목키, content)로 추가 + 그 외 날짜는 동일(endDate/duration 연장은 허용). 일치하면
     // "미완료 N건을 <D+1>로 이동" detail을, 아니면 null(일반 detail로 폴백)을 돌려준다.
     private static String detectCarryOver(Plan previous, Plan updated,
-                                          Map<String, Map<String, TaskView>> prevTasks,
-                                          Map<String, Map<String, TaskView>> nextTasks) {
+                                          Map<String, Map<String, PlanTaskDiff.TaskView>> prevTasks,
+                                          Map<String, Map<String, PlanTaskDiff.TaskView>> nextTasks) {
         // 이월은 목표·시간·수준·시작일을 바꾸지 않는다(기간·종료일은 연장될 수 있어 비교에서 제외).
         if (!Objects.equals(previous.goalName(), updated.goalName())
                 || !Objects.equals(previous.dailyHours(), updated.dailyHours())
@@ -167,9 +117,9 @@ public class AuditEventService {
         String removalDate = null;
         Map<String, String> removed = new HashMap<>(); // 항목키 → content
         for (String date : prevTasks.keySet()) {
-            Map<String, TaskView> prevDay = prevTasks.get(date);
-            Map<String, TaskView> nextDay = nextTasks.getOrDefault(date, Map.of());
-            for (Map.Entry<String, TaskView> entry : prevDay.entrySet()) {
+            Map<String, PlanTaskDiff.TaskView> prevDay = prevTasks.get(date);
+            Map<String, PlanTaskDiff.TaskView> nextDay = nextTasks.getOrDefault(date, Map.of());
+            for (Map.Entry<String, PlanTaskDiff.TaskView> entry : prevDay.entrySet()) {
                 if (nextDay.containsKey(entry.getKey())) continue;
                 if (entry.getValue().completed()) return null; // 완료 항목이 사라짐 → 이월 아님
                 if (removalDate != null && !removalDate.equals(date)) return null; // 두 날짜 이상에서 제거
@@ -188,9 +138,9 @@ public class AuditEventService {
 
         Map<String, String> added = new HashMap<>();
         for (String date : nextTasks.keySet()) {
-            Map<String, TaskView> nextDay = nextTasks.get(date);
-            Map<String, TaskView> prevDay = prevTasks.getOrDefault(date, Map.of());
-            for (Map.Entry<String, TaskView> entry : nextDay.entrySet()) {
+            Map<String, PlanTaskDiff.TaskView> nextDay = nextTasks.get(date);
+            Map<String, PlanTaskDiff.TaskView> prevDay = prevTasks.getOrDefault(date, Map.of());
+            for (Map.Entry<String, PlanTaskDiff.TaskView> entry : nextDay.entrySet()) {
                 if (prevDay.containsKey(entry.getKey())) continue;
                 if (!targetDate.equals(date)) return null; // 목적지(D+1) 밖에 추가됨 → 이월 아님
                 added.put(entry.getKey(), entry.getValue().content());
@@ -199,8 +149,8 @@ public class AuditEventService {
         if (!removed.equals(added)) return null;
 
         // 이동분을 제외한 나머지 내용이 완전히 같아야 한다(다른 수정이 섞였으면 일반 수정으로).
-        Map<String, Map<String, String>> prevView = contentView(prevTasks);
-        Map<String, Map<String, String>> nextView = contentView(nextTasks);
+        Map<String, Map<String, String>> prevView = PlanTaskDiff.contentView(prevTasks);
+        Map<String, Map<String, String>> nextView = PlanTaskDiff.contentView(nextTasks);
         removed.keySet().forEach(prevView.getOrDefault(removalDate, Map.of())::remove);
         added.keySet().forEach(nextView.getOrDefault(targetDate, Map.of())::remove);
         prevView.values().removeIf(Map::isEmpty);

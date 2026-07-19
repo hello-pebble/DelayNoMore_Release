@@ -100,6 +100,24 @@ class AuditEventServiceTest {
     }
 
     @Test
+    void update_고정계획_완료토글_가드통과후TASK_COMPLETED기록() {
+        // given — 고정(CONFIRMED)된 계획 (서버 가드는 완료 토글만 허용)
+        PlanResponse saved = createBasePlan();
+        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), "session-a");
+        Map<String, Object> toggled = Map.of(
+                "2026-07-16", List.of(task("t-1", "단어 암기", true), task("t-2", "문법 정리", true)),
+                "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
+
+        // when — 토글만 있는 PUT은 가드를 통과하고 감사 흐름도 기존대로 동작해야 한다
+        planService.update(saved.id(), request("토익 900", toggled, "CONFIRMED"), "session-b");
+
+        // then
+        List<AuditEventResponse> events = events(saved.id());
+        assertThat(events.get(0).type()).isEqualTo("TASK_COMPLETED");
+        assertThat(events.get(0).detail()).isEqualTo("\"단어 암기\" · 2026-07-16");
+    }
+
+    @Test
     void update_한PUT에여러토글_뒤집힌개수만큼기록() {
         // given — 디바운스(600ms) 배칭으로 완료 1건 + 해제 1건이 한 PUT에 몰린 상황
         PlanResponse saved = createBasePlan();

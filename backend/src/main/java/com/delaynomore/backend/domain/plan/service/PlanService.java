@@ -11,6 +11,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
@@ -49,7 +50,10 @@ public class PlanService {
 
     public PlanResponse update(long id, PlanSaveRequest request, String sessionId) {
         Plan updated = request.toPlan(id, System.currentTimeMillis());
-        Plan previous = planRepository.update(updated);
+        // 고정 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
+        // 쓰기(예: 다른 브라우저의 고정)가 끼어들 수 없어 check-then-act 레이스가 없다.
+        Plan previous = planRepository.update(updated,
+                current -> assertUnlockedOrToggleOnly(current, updated));
         if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
@@ -57,6 +61,23 @@ public class PlanService {
         // 이벤트 종류(PLAN_CONFIRMED/TASK_*/PLAN_UPDATED)를 서버가 판별·기록한다.
         auditEventService.recordPlanUpdated(previous, updated, sessionId);
         return PlanResponse.from(updated);
+    }
+
+    // 고정(CONFIRMED)된 계획은 완료 체크(completed 토글)만 허용한다 — 예전엔 프론트만 지키던
+    // 규칙이라 curl 등 직접 호출로 우회할 수 있었다. 구조 변경 판정은 변경 이력과 같은 기준
+    // (PlanTaskDiff.hasStructuralChange: 스칼라 6종 + 날짜별 항목키→content 뷰, completed 제외)을
+    // 공유한다. createdAt은 표시용 메타라 가드 대상이 아니다. 삭제는 계속 허용한다(프론트 탈출구).
+    private static void assertUnlockedOrToggleOnly(Plan current, Plan incoming) {
+        if (!current.isConfirmed()) {
+            return; // DRAFT는 자유 수정 — DRAFT→CONFIRMED 고정(수정 동반 포함)도 이 분기로 허용된다.
+        }
+        boolean rolledBack = !incoming.isConfirmed();
+        boolean confirmedAtChanged = !Objects.equals(current.confirmedAt(), incoming.confirmedAt());
+        if (rolledBack || confirmedAtChanged || PlanTaskDiff.hasStructuralChange(
+                current, incoming,
+                PlanTaskDiff.parseTasks(current.tasks()), PlanTaskDiff.parseTasks(incoming.tasks()))) {
+            throw new BusinessException(ErrorCode.PLAN_LOCKED);
+        }
     }
 
     public void delete(long id, String sessionId) {

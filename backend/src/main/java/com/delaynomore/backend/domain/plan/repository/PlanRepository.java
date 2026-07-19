@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 // 계획 보관함 저장소 — 아직 DB가 없어 인메모리(휘발성)로 보관한다. 서버 재시작 시 초기화되고
 // 사용자 구분 없이 모든 방문자가 공용으로 쓴다(원격 기능 테스트용 데모 체제).
@@ -40,9 +41,14 @@ public class PlanRepository {
     // 존재할 때만 통째로 교체(last-write-wins — 공유 데모 저장소라 동시 수정 경합은 허용)하고
     // "교체 전 값"을 돌려준다(없으면 null) — 변경 이력이 이전 상태와 diff하는 데 쓴다.
     // computeIfPresent는 키 단위로 원자 실행되므로 교체와 이전 값 캡처 사이에 다른 쓰기가 끼어들 수 없다.
-    public Plan update(Plan plan) {
+    // currentStateGuard는 같은 원자 구간 안에서 "현재 상태 기준으로 이 교체가 허용되는가"를 검사한다
+    // (고정 계획 가드) — 람다가 예외를 던지면 ConcurrentHashMap 계약상 맵은 변경되지 않은 채
+    // 예외가 전파되므로 check-then-act 레이스가 없다. 가드는 순수 검사만 해야 한다(부수효과 금지).
+    // DB 전환 시 이 메서드는 "트랜잭션 + SELECT ... FOR UPDATE 후 검사"로 대체된다.
+    public Plan update(Plan plan, Consumer<Plan> currentStateGuard) {
         Plan[] previous = new Plan[1];
         Plan replaced = store.computeIfPresent(plan.id(), (id, current) -> {
+            currentStateGuard.accept(current);
             previous[0] = current;
             return plan;
         });

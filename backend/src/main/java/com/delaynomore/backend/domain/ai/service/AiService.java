@@ -13,6 +13,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,10 +53,12 @@ public class AiService {
     }
 
     // 계획 초안 생성(비스트리밍) — 날짜맵({날짜: [할 일]}) 형태의 계획을 돌려준다.
+    // 정규화(normalizeDraftPlan)로 응답의 날짜 키를 서버가 보장한다 — LLM이 계약을 어긴 출력
+    // (배열·"Day N" 키)을 줘도 프롬프트의 targetDates와 같은 기준(오늘부터)으로 날짜를 합성한다.
     public Object createDraft(AiDraftRequest request) {
         List<Map<String, Object>> messages = promptBuilder.draftMessages(request);
         String raw = openRouterClient.complete(messages, NO_TOKEN_LIMIT);
-        return responseParser.parsePlan(raw);
+        return responseParser.normalizeDraftPlan(responseParser.parsePlan(raw), LocalDate.now());
     }
 
     /**
