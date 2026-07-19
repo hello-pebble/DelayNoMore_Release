@@ -65,7 +65,7 @@ graph TD
 
 ## 버전 관리 정책
 
-- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.8.0**.
+- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.8.1**.
 - 버전 규칙은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따르며, 프론트엔드(`package.json`)와 백엔드(`build.gradle`)는 **하나의 제품 버전**으로 통일합니다.
 - 버전별 변경사항은 [`CHANGELOG.md`](../CHANGELOG.md)에 기록합니다.
 - 버전별 기능 점검은 [`QA_CHECKLIST.md`](QA_CHECKLIST.md)로 확인하고, 릴리스별 수행 결과는 `QA_RESULT_vX.Y.Z.md`로 기록합니다(최신: [`QA_RESULT_v0.5.1.md`](QA_RESULT_v0.5.1.md)).
