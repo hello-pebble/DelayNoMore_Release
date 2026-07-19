@@ -21,14 +21,36 @@ class PlanServiceTest {
     private static final int MAX_PLANS = 50;
     private static final long MISSING_ID = 999L;
 
+    private final AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
     private final PlanService planService = new PlanService(new PlanRepository(), new ReflectionRepository(),
-            new AuditEventService(new AuditEventRepository()));
+            auditEventService);
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(
                 "2026-07-16", List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", false)));
         return new PlanSaveRequest(goalName, 3, 2, "완전 초보", tasks,
                 null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
+    }
+
+    // 고정(CONFIRMED) 가드 테스트용 — 필드 하나만 바꾼 변형 요청을 쉽게 만들기 위한 헬퍼들.
+    private static final String CONFIRMED_AT = "2026-07-16T12:00:00Z";
+
+    private static Map<String, Object> tasksOf(boolean completed) {
+        return Map.of("2026-07-16", List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", completed)));
+    }
+
+    private static PlanSaveRequest confirmedRequest(String goalName, Map<String, Object> tasks,
+                                                    String status, String confirmedAt,
+                                                    Integer duration, String endDate) {
+        return new PlanSaveRequest(goalName, duration, 2, "완전 초보", tasks,
+                status, confirmedAt, "2026-07-16", endDate, "2026-07-16T00:00:00Z");
+    }
+
+    // 생성 → 고정 PUT을 거쳐 CONFIRMED 상태의 계획을 만든다(프론트의 "계획 저장(고정)" 경로 재현).
+    private PlanResponse createConfirmedPlan() {
+        PlanResponse saved = planService.create(request("토익 900"), null);
+        return planService.update(saved.id(),
+                confirmedRequest("토익 900", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), null);
     }
 
     @Test
@@ -133,6 +155,140 @@ class PlanServiceTest {
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+    }
+
+    // === 고정(CONFIRMED) 계획 수정 가드 — 예전엔 프론트만 지키던 규칙을 서버가 강제한다 ===
+
+    @Test
+    void update_고정계획_완료토글만_정상반영() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when — completed만 플립한 전체 PUT (프론트 완료 체크 경로)
+        PlanResponse updated = planService.update(confirmed.id(),
+                confirmedRequest("토익 900", tasksOf(true), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), null);
+
+        // then
+        assertThat(updated.status()).isEqualTo("CONFIRMED");
+        assertThat(updated.tasks()).isEqualTo(tasksOf(true));
+    }
+
+    @Test
+    void update_고정계획_동일페이로드_허용() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when — no-op PUT(완전 동일)은 구조 변경이 아니므로 통과해야 한다
+        PlanResponse updated = planService.update(confirmed.id(),
+                confirmedRequest("토익 900", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), null);
+
+        // then
+        assertThat(updated.goalName()).isEqualTo("토익 900");
+    }
+
+    @Test
+    void update_고정계획_목표변경_PLAN_LOCKED예외_저장소원상태유지() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+        int eventCountBefore = auditEventService.getEvents(confirmed.id()).size();
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        confirmedRequest("토익 990", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"),
+                        null));
+
+        // then — 거부되고, 저장소는 원상태이며, 감사 이벤트도 발행되지 않는다
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+        assertThat(planService.getPlan(confirmed.id()).goalName()).isEqualTo("토익 900");
+        assertThat(auditEventService.getEvents(confirmed.id())).hasSize(eventCountBefore);
+    }
+
+    @Test
+    void update_고정계획_기간연장_PLAN_LOCKED예외() {
+        // given — 이월이 만드는 duration/endDate +1 연장 흉내(고정 계획은 이월도 불가)
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        confirmedRequest("토익 900", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 4, "2026-07-19"),
+                        null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void update_고정계획_할일구조변경_PLAN_LOCKED예외() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+        Map<String, Object> rewritten = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-1", "content", "듣기 연습", "completed", false)));
+
+        // when — 내용(content)을 바꾼 PUT
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        confirmedRequest("토익 900", rewritten, "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"),
+                        null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void update_고정계획_DRAFT롤백_PLAN_LOCKED예외() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        confirmedRequest("토익 900", tasksOf(false), "DRAFT", null, 3, "2026-07-18"), null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void update_고정계획_confirmedAt변경_PLAN_LOCKED예외() {
+        // given
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        confirmedRequest("토익 900", tasksOf(false), "CONFIRMED", "2026-07-17T00:00:00Z",
+                                3, "2026-07-18"), null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void update_DRAFT계획_구조변경_허용() {
+        // given — 가드는 CONFIRMED에만 걸린다(회귀 확인)
+        PlanResponse saved = planService.create(request("토익 900"), null);
+
+        // when
+        PlanResponse updated = planService.update(saved.id(), request("토익 990"), null);
+
+        // then
+        assertThat(updated.goalName()).isEqualTo("토익 990");
+    }
+
+    @Test
+    void update_DRAFT에서_수정과고정이한PUT으로_허용() {
+        // given — 600ms 디바운스 안에 내용 수정 + "계획 저장(고정)"이 한 PUT으로 합쳐지는 실제 시나리오
+        PlanResponse saved = planService.create(request("토익 900"), null);
+
+        // when
+        PlanResponse updated = planService.update(saved.id(),
+                confirmedRequest("토익 990", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), null);
+
+        // then
+        assertThat(updated.goalName()).isEqualTo("토익 990");
+        assertThat(updated.status()).isEqualTo("CONFIRMED");
     }
 
     @Test

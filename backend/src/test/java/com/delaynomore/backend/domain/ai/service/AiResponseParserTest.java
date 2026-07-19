@@ -53,6 +53,96 @@ class AiResponseParserTest {
         assertThat(e.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID);
     }
 
+    // === 초안 날짜 키 정규화(normalizeDraftPlan) — LLM이 계약을 어긴 출력도 날짜 맵으로 강제 ===
+
+    private static final java.time.LocalDate START = java.time.LocalDate.of(2026, 7, 19);
+
+    @Test
+    void normalizeDraftPlan_정상날짜맵_그대로유지() {
+        // given
+        Map<String, Object> parsed = Map.of("2026-07-20", List.of("핵심 개념 정리하기"));
+
+        // when
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // then — 이미 계약을 지킨 응답은 변형하지 않는다(키 재배열 없음)
+        assertThat(plan).isEqualTo(Map.of("2026-07-20", List.of("핵심 개념 정리하기")));
+    }
+
+    @Test
+    void normalizeDraftPlan_plan래퍼와date필드배열_날짜맵으로변환() {
+        // given — {plan: [{date, tasks}]} 변형 스키마
+        Object parsed = Map.of("plan", List.of(
+                Map.of("date", "2026-07-19", "tasks", List.of("단어 암기")),
+                Map.of("date", "2026-07-20", "tasks", List.of("문법 정리"))));
+
+        // when
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // then
+        assertThat(plan).isEqualTo(Map.of(
+                "2026-07-19", List.of("단어 암기"),
+                "2026-07-20", List.of("문법 정리")));
+    }
+
+    @Test
+    void normalizeDraftPlan_날짜없는최상위배열_시작일부터위치기반합성() {
+        // given — 날짜 필드가 아예 없는 배열(예전엔 프론트가 "Day 1" 키를 만들던 저하 경로)
+        Object parsed = List.of(
+                Map.of("tasks", List.of("단어 암기")),
+                Map.of("tasks", List.of("문법 정리")));
+
+        // when
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // then
+        assertThat(plan).isEqualTo(Map.of(
+                "2026-07-19", List.of("단어 암기"),
+                "2026-07-20", List.of("문법 정리")));
+    }
+
+    @Test
+    void normalizeDraftPlan_Day키맵_전체를위치기반재키잉() {
+        // given — 비날짜 키가 하나라도 섞이면 결정적으로 전체 재배열
+        Map<String, Object> parsed = new java.util.LinkedHashMap<>();
+        parsed.put("Day 1", List.of("단어 암기"));
+        parsed.put("Day 2", List.of("문법 정리"));
+
+        // when
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // then
+        assertThat(plan).isEqualTo(Map.of(
+                "2026-07-19", List.of("단어 암기"),
+                "2026-07-20", List.of("문법 정리")));
+    }
+
+    @Test
+    void normalizeDraftPlan_content객체배열_문자열만추출() {
+        // given — 할 일이 {content: "..."} 객체로 온 변형
+        Map<String, Object> parsed = Map.of(
+                "2026-07-19", List.of(Map.of("content", "단어 암기"), Map.of("no-content", 1)));
+
+        // when
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // then
+        assertThat(plan).isEqualTo(Map.of("2026-07-19", List.of("단어 암기")));
+    }
+
+    @Test
+    void normalizeDraftPlan_유효한할일없음_AI_RESPONSE_INVALID예외() {
+        // given
+        Map<String, Object> parsed = Map.of("2026-07-19", "배열이 아님");
+
+        // when
+        BusinessException e = catchThrowableOfType(
+                BusinessException.class, () -> parser.normalizeDraftPlan(parsed, START));
+
+        // then — 프론트는 이 오류에서 mock 폴백으로 넘어간다(기존 경로)
+        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID);
+    }
+
     @Test
     void toChatResponse_구분자없는산문_계획미변경응답() {
         // given

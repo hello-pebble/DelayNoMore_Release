@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -50,6 +52,111 @@ public class AiResponseParser {
         } catch (Exception e) {
             log.warn("Failed to parse draft plan JSON from AI response");
             throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+        }
+    }
+
+    // 초안 계획의 날짜 키 보장 — parsePlan 결과를 {YYYY-MM-DD: [할 일 문자열]} 맵으로 강제한다.
+    // 예전엔 LLM이 키 구조를 어긴 응답(최상위 배열, "Day 1" 키, {plan:[...]} 래퍼)이 그대로
+    // 프론트에 넘어가 프론트 폴백이 "Day 1" 같은 비날짜 키를 합성했고, 그 계획의 보관
+    // (POST /plans)이 서버 tasks 형식 검증에 걸려 변경 때마다 실패를 반복했다. 이제 서버가
+    // 시작일부터 위치 기반으로 실제 날짜를 합성해 응답 계약을 보장한다(프롬프트의 targetDates와
+    // 같은 기준: 오늘 + i일). 유효한 할 일이 하나도 없으면 AI_RESPONSE_INVALID(프론트 mock 폴백).
+    public Map<String, Object> normalizeDraftPlan(Object parsed, LocalDate startDate) {
+        Object node = unwrapPlanNode(parsed);
+        Map<String, List<String>> byRawKey = new LinkedHashMap<>();
+        if (node instanceof List<?> list) {
+            // [{date|day|name, tasks|items|todos|list}, ...] 형태 — 날짜 필드가 없으면 위치로 대신한다.
+            int index = 0;
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> day) {
+                    Object date = firstValue(day, "date", "day", "name");
+                    List<String> tasks = taskStrings(firstList(day, "tasks", "items", "todos", "list"));
+                    if (!tasks.isEmpty()) {
+                        byRawKey.put(date != null ? String.valueOf(date) : "idx:" + index, tasks);
+                    }
+                }
+                index++;
+            }
+        } else if (node instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                List<String> tasks = taskStrings(entry.getValue() instanceof List<?> l ? l : null);
+                if (!tasks.isEmpty()) {
+                    byRawKey.put(String.valueOf(entry.getKey()), tasks);
+                }
+            }
+        }
+        if (byRawKey.isEmpty()) {
+            log.warn("Draft plan from AI has no usable tasks after normalization");
+            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+        }
+
+        // 모든 키가 유효한 날짜면 그대로(기존 정상 경로 무변경), 하나라도 아니면 전체를 위치
+        // 기반으로 재키잉한다 — 섞인 경우는 이미 계약을 어긴 출력이라 결정적 재배열이 안전하다.
+        boolean allDates = byRawKey.keySet().stream().allMatch(AiResponseParser::isIsoDate);
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        int offset = 0;
+        for (Map.Entry<String, List<String>> entry : byRawKey.entrySet()) {
+            String key = allDates ? entry.getKey() : startDate.plusDays(offset).toString();
+            normalized.put(key, entry.getValue());
+            offset++;
+        }
+        return normalized;
+    }
+
+    // {plan|days|schedule|checklist|tasks|items: [...]} 래퍼면 그 배열을, {tasks: {날짜: ...}}면
+    // 안쪽 맵을 꺼낸다(프론트 coerceToDateMap과 같은 흡수 규칙 — 이제 서버가 소유한다).
+    private static Object unwrapPlanNode(Object parsed) {
+        if (!(parsed instanceof Map<?, ?> map)) {
+            return parsed;
+        }
+        Object wrapped = firstList(map, "plan", "days", "schedule", "checklist", "tasks", "items");
+        if (wrapped != null) {
+            return wrapped;
+        }
+        Object tasks = map.get("tasks");
+        return tasks instanceof Map<?, ?> ? tasks : parsed;
+    }
+
+    private static Object firstValue(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            Object value = map.get(key);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private static List<?> firstList(Map<?, ?> map, String... keys) {
+        for (String key : keys) {
+            if (map.get(key) instanceof List<?> list) return list;
+        }
+        return null;
+    }
+
+    // 할 일 목록을 문자열 배열로 정리한다 — 문자열은 그대로, {content: "..."} 객체는 content만.
+    // (문자열 정제(CJK 제거)는 parsePlan의 cleanValue가 이미 끝냈다.)
+    private static List<String> taskStrings(List<?> list) {
+        List<String> tasks = new ArrayList<>();
+        if (list == null) return tasks;
+        for (Object item : list) {
+            String content = null;
+            if (item instanceof String s) {
+                content = s;
+            } else if (item instanceof Map<?, ?> m && m.get("content") instanceof String s) {
+                content = s;
+            }
+            if (content != null && !content.isBlank()) {
+                tasks.add(content.trim());
+            }
+        }
+        return tasks;
+    }
+
+    private static boolean isIsoDate(String key) {
+        try {
+            LocalDate.parse(key);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
         }
     }
 
