@@ -44,7 +44,13 @@ export default function App() {
           background: 'var(--bg-card)'
         }}
       >
-        <div style={{ fontSize: '17px', fontWeight: 700 }}>DelayNoMore</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', minWidth: 0 }}>
+          <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
+          {/* 데모 사용 안내 — 체크리스트 하단에 있던 문구를 간소화해 첫 시선이 닿는 제목 옆으로 올렸다. */}
+          <div className="header-guide" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            대화로 계획 생성·수정 · 할 일 클릭으로 완료 체크 · "계획 저장"을 누르면 고정
+          </div>
+        </div>
         <div
           title={ledLabel}
           style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: 'var(--text-muted)' }}
