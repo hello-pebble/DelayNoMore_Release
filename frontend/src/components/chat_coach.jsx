@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2, History
+  CheckCircle2, History, BarChart3
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -17,7 +17,8 @@ import {
 } from '../ai_engine';
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
-  fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes
+  fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
+  fetchWeeklySummary
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { todayStr } from '../date_utils';
@@ -133,6 +134,16 @@ function getPlanProgress(tasks) {
 function formatSavedAt(ts) {
   const d = new Date(ts);
   return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}/${d.getDate()} 저장` : '';
+}
+
+// 주간 요약 행의 날짜 범위 — 서버가 준 YYYY-MM-DD(startDate/endDate)를 M.D~M.D로 압축 표기한다.
+// 하루짜리 주(startDate==endDate)면 한쪽만 보여 준다. 비ISO는 방어적으로 원문 그대로.
+function formatWeekRange(startDate, endDate) {
+  const short = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    return m ? `${Number(m[2])}.${Number(m[3])}` : iso;
+  };
+  return startDate === endDate ? short(startDate) : `${short(startDate)}~${short(endDate)}`;
 }
 
 // 오늘의 미완료 개수 — 이월 확인창(UX)용 로컬 카운트. 이월 연산 자체는 서버 도메인 액션
@@ -268,6 +279,8 @@ export default function ChatCoach() {
   const [showPlanList, setShowPlanList] = useState(false);
   // 변경 이력 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', events }
   const [auditView, setAuditView] = useState(null);
+  // 주간 요약 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', summary }
+  const [weeklyView, setWeeklyView] = useState(null);
 
   // 메타(선택지·라벨) — 소스오브트루스는 서버 enum. 마운트 시 한 번 받아 교체하고,
   // 실패하면 폴백 사본(DEFAULT_*)을 그대로 쓴다(백엔드 미가용에도 회고/이력 화면 유지).
@@ -1007,8 +1020,9 @@ export default function ChatCoach() {
         return;
       }
     }
-    // 삭제된 계획의 이력 패널이 열려 있었다면 함께 닫는다(행이 목록에서 사라지므로).
+    // 삭제된 계획의 이력·주간 요약 패널이 열려 있었다면 함께 닫는다(행이 목록에서 사라지므로).
     setAuditView((prev) => (prev?.planId === planId ? null : prev));
+    setWeeklyView((prev) => (prev?.planId === planId ? null : prev));
     refreshPlans();
   };
 
@@ -1031,6 +1045,26 @@ export default function ChatCoach() {
       return;
     }
     loadAuditLog(planId);
+  };
+
+  // 주간 완료율 요약 열기/닫기 — 이력 뷰와 같은 패턴(한 번에 한 계획, 펼칠 때마다 refetch로 다른
+  // 세션의 완료 체크 반영). 완료율 계산은 서버 소유라 프론트는 서버가 내려준 weeks를 표시만 한다.
+  const loadWeeklySummary = async (planId) => {
+    setWeeklyView({ planId, status: 'loading', summary: null });
+    try {
+      const summary = await fetchWeeklySummary(planId);
+      setWeeklyView((prev) => (prev?.planId === planId ? { planId, status: 'ready', summary } : prev));
+    } catch {
+      setWeeklyView((prev) => (prev?.planId === planId ? { planId, status: 'error', summary: null } : prev));
+    }
+  };
+
+  const toggleWeeklySummary = (planId) => {
+    if (weeklyView?.planId === planId) {
+      setWeeklyView(null);
+      return;
+    }
+    loadWeeklySummary(planId);
   };
 
   // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
@@ -1712,6 +1746,7 @@ export default function ChatCoach() {
               : (plan.progress ?? getPlanProgress(plan.tasks));
             const isPlanConfirmed = plan.status === 'CONFIRMED';
             const isAuditOpen = auditView?.planId === plan.id;
+            const isWeeklyOpen = weeklyView?.planId === plan.id;
             return (
               <React.Fragment key={plan.id}>
               <div
@@ -1751,6 +1786,14 @@ export default function ChatCoach() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => toggleWeeklySummary(plan.id)}
+                  title="주간 완료율 요약"
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isWeeklyOpen ? 'var(--primary)' : 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
+                >
+                  <BarChart3 size={14} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => toggleAuditLog(plan.id)}
                   title="변경 이력"
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isAuditOpen ? 'var(--primary)' : 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
@@ -1766,6 +1809,53 @@ export default function ChatCoach() {
                   <Trash2 size={14} />
                 </button>
               </div>
+              {/* 주간 완료율 요약 패널 — 행 바로 아래 확장. 서버가 계획을 7일 버킷("N주차")으로
+                  묶어 내린 주별 완료율을 표시만 한다(완료율 계산 소유권은 서버). */}
+              {isWeeklyOpen && (
+                <div style={{ margin: '0 4px', padding: '6px 10px', borderRadius: '8px', background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                  {weeklyView.status === 'loading' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>주간 요약을 불러오는 중...</div>
+                  )}
+                  {weeklyView.status === 'error' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      주간 요약을 불러오지 못했습니다.
+                      <button type="button" onClick={() => loadWeeklySummary(plan.id)} style={quickReplyButtonStyle}>
+                        <RefreshCw size={12} />
+                        다시 시도
+                      </button>
+                    </div>
+                  )}
+                  {weeklyView.status === 'ready' && weeklyView.summary.weeks.length === 0 && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>요약할 일정이 없습니다.</div>
+                  )}
+                  {weeklyView.status === 'ready' && weeklyView.summary.weeks.length > 0 && (
+                    <>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                        전체 {weeklyView.summary.totalDone}/{weeklyView.summary.totalTotal} 완료
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
+                        {weeklyView.summary.weeks.map((week) => (
+                          <div key={week.index} style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <div style={{ fontSize: '12px', display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontWeight: 600, flexShrink: 0 }}>{week.index}주차</span>
+                              <span style={{ color: 'var(--text-muted)' }}>{formatWeekRange(week.startDate, week.endDate)}</span>
+                              <span style={{ marginLeft: 'auto', flexShrink: 0, color: 'var(--text-muted)' }}>
+                                {week.done}/{week.total} · {week.rate}%
+                              </span>
+                            </div>
+                            <div style={{ height: '6px', borderRadius: '999px', background: 'var(--border)', overflow: 'hidden' }}>
+                              <div style={{ width: `${week.rate}%`, height: '100%', background: 'var(--primary)' }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
+                        시작일 기준 7일 단위 · 완료율은 서버가 계산합니다
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               {/* 변경 이력 패널 — 행 바로 아래 확장. 펼칠 때마다 refetch(다른 세션 변경 반영). */}
               {isAuditOpen && (
                 <div style={{ margin: '0 4px', padding: '6px 10px', borderRadius: '8px', background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>

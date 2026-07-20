@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,6 +59,14 @@ public class PlanController {
     @GetMapping("/{id}")
     public ApiResponse<PlanResponse> getPlan(@PathVariable long id) {
         return ApiResponse.ok(planService.getPlan(id));
+    }
+
+    // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 읽기라
+    // 이력을 남기지 않으므로 X-Session-Id를 받지 않는다.
+    @Operation(summary = "주간 완료율 요약")
+    @GetMapping("/{id}/summary/weekly")
+    public ApiResponse<WeeklySummaryResponse> getWeeklySummary(@PathVariable long id) {
+        return ApiResponse.ok(planService.getWeeklySummary(id));
     }
 
     @Operation(summary = "보관된 계획 수정")

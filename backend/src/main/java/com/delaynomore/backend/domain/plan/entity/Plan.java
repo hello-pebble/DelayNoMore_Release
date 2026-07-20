@@ -53,6 +53,26 @@ public record Plan(
         return countList(tasks == null ? null : tasks.get(date));
     }
 
+    // 날짜 범위(from ≤ 키 ≤ to, 양끝 포함) 합산 완료/전체 개수 — 주간 요약이 주 버킷마다 호출한다.
+    // YYYY-MM-DD는 사전순=시간순이라 문자열 비교로 범위를 판정한다(PlanDates 관례와 동일).
+    public TaskCounts countTasksBetween(String fromInclusive, String toInclusive) {
+        if (tasks == null || fromInclusive == null || toInclusive == null) {
+            return new TaskCounts(0, 0);
+        }
+        int completed = 0;
+        int total = 0;
+        for (Map.Entry<String, Object> entry : tasks.entrySet()) {
+            String key = entry.getKey();
+            if (key.compareTo(fromInclusive) < 0 || key.compareTo(toInclusive) > 0) {
+                continue;
+            }
+            TaskCounts day = countList(entry.getValue());
+            completed += day.completed();
+            total += day.total();
+        }
+        return new TaskCounts(completed, total);
+    }
+
     // tasks 내부 구조는 프론트 원본 그대로라 방어적으로 센다: 날짜 값이 List가 아니면 빈 것으로
     // (0/0 허용 — 할 일 없는 날의 회고도 유효), 항목은 Map이면서 completed == Boolean.TRUE인
     // 것만 완료로 센다.
