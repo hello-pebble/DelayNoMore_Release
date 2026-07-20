@@ -73,22 +73,32 @@ public class AiService {
         return emitter;
     }
 
-    // 자유 대화(비스트리밍) — LLM이 의도(수정/질문/불명확)를 판단해 reply(+선택적 patch)를 돌려준다.
+    // 자유 대화(비스트리밍) — LLM이 의도(수정/질문/불명확)를 판단해 reply(+선택적 계획 변경)를
+    // 돌려준다. LLM은 변경된 날짜만 담은 patch를 내지만(출력 토큰 절약), 서버가 현재 계획
+    // (request.tasks)에 병합해 정규화된 전체 tasks를 응답에 담는다 — 병합 규칙의 소유권은 서버.
     public AiChatResponse chat(AiChatRequest request) {
         List<Map<String, Object>> messages = promptBuilder.chatMessages(request);
         String raw = openRouterClient.complete(messages, MAX_CHAT_TOKENS);
-        return responseParser.toChatResponse(raw);
+        AiResponseParser.ChatParse parsed = responseParser.parseChat(raw);
+        if (parsed.patch() == null || parsed.patch().isEmpty()) {
+            return AiChatResponse.replyOnly(parsed.reply());
+        }
+        Map<String, Object> merged = ChatPatchMerger.merge(request.tasks(), parsed.patch());
+        if (merged == null || merged.isEmpty()) {
+            return AiChatResponse.replyOnly(parsed.reply());
+        }
+        return AiChatResponse.withTasks(parsed.reply(), merged);
     }
 
     /**
      * 자유 대화 스트리밍(SSE). 산문 reply는 토큰이 도착하는 대로 흘려보내고,
-     * 계획 변경분(patch)은 스트림 끝에서 한 번에 파싱해 별도 이벤트로 보낸다.
-     * 이벤트: {"type":"token","t":"..."} / {"type":"plan","patch":{...}} / {"type":"done"} / {"type":"error","m":"..."}
+     * 계획 변경은 스트림 끝에서 patch를 파싱해 현재 계획에 병합한 뒤 전체 tasks로 보낸다.
+     * 이벤트: {"type":"token","t":"..."} / {"type":"plan","tasks":{...}} / {"type":"done"} / {"type":"error","m":"..."}
      */
     public SseEmitter streamChat(AiChatRequest request) {
         List<Map<String, Object>> messages = promptBuilder.chatMessages(request);
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
-        sseExecutor.submit(() -> relayChatStream(messages, emitter));
+        sseExecutor.submit(() -> relayChatStream(messages, request.tasks(), emitter));
         return emitter;
     }
 
@@ -142,7 +152,8 @@ public class AiService {
         boolean inJson = false;
     }
 
-    private void relayChatStream(List<Map<String, Object>> messages, SseEmitter emitter) {
+    private void relayChatStream(List<Map<String, Object>> messages, Map<String, Object> currentTasks,
+                                  SseEmitter emitter) {
         ChatStreamBuffer buffer = new ChatStreamBuffer();
         try {
             openRouterClient.streamCompletion(messages, MAX_CHAT_TOKENS, delta -> {
@@ -153,7 +164,7 @@ public class AiService {
                     feedDelta(cleaned, buffer, emitter);
                 }
             });
-            finishChatStream(buffer, emitter);
+            finishChatStream(buffer, currentTasks, emitter);
             emitter.complete();
         } catch (Exception e) {
             log.error("Error streaming from OpenRouter", e);
@@ -190,8 +201,10 @@ public class AiService {
         }
     }
 
-    // 스트림 종료: 남은 산문을 flush 하거나, 모은 patch를 파싱해 plan 이벤트로 보낸다.
-    private void finishChatStream(ChatStreamBuffer buf, SseEmitter emitter) throws IOException {
+    // 스트림 종료: 남은 산문을 flush 하거나, 모은 patch를 파싱해 현재 계획에 병합한 뒤 전체
+    // tasks를 plan 이벤트로 보낸다(병합 규칙은 ChatPatchMerger 소유 — 비스트리밍 chat과 동일).
+    private void finishChatStream(ChatStreamBuffer buf, Map<String, Object> currentTasks, SseEmitter emitter)
+            throws IOException {
         if (!buf.inJson) {
             if (buf.replyPending.length() > 0) {
                 sseSend(emitter, Map.of("type", "token", "t", buf.replyPending.toString()));
@@ -199,7 +212,10 @@ public class AiService {
         } else {
             Map<String, Object> patch = responseParser.parsePatch(buf.jsonBuf.toString());
             if (patch != null && !patch.isEmpty()) {
-                sseSend(emitter, Map.of("type", "plan", "patch", patch));
+                Map<String, Object> merged = ChatPatchMerger.merge(currentTasks, patch);
+                if (merged != null && !merged.isEmpty()) {
+                    sseSend(emitter, Map.of("type", "plan", "tasks", merged));
+                }
             }
         }
         sseSend(emitter, Map.of("type", "done"));

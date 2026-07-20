@@ -116,20 +116,65 @@ class AiServiceTest {
     }
 
     @Test
-    void chat_구분자포함응답_계획변경응답반환() {
-        // given
+    void chat_구분자포함응답_병합된전체tasks반환() {
+        // given — 병합 규칙의 소유권은 서버(ChatPatchMerger). patch는 변경 날짜만이지만 응답의
+        // tasks는 서버가 현재 계획(request.tasks)에 병합한 전체 계획 객체다.
         AiService aiService = serviceWithKey("sk-live-key");
         when(openRouterClient.complete(anyList(), anyInt()))
                 .thenReturn("1일차를 더 쉽게 바꿨어요.\n===PLAN===\n{\"2026-07-16\": [\"기초 단어 20개 암기\"]}");
+        Map<String, Object> currentTasks = Map.of(
+                "2026-07-17", List.of(Map.of("id", "t-1", "content", "듣기 연습", "completed", false)));
         AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
-                "1일차 너무 어려워요", Map.of(), List.of());
+                "1일차 너무 어려워요", currentTasks, List.of());
+
+        // when
+        AiChatResponse response = aiService.chat(request);
+
+        // then — 변경된 날짜(07-16)뿐 아니라 patch에 없던 기존 날짜(07-17)도 그대로 포함된 전체 계획
+        assertThat(response.planUpdated()).isTrue();
+        assertThat(response.reply()).isEqualTo("1일차를 더 쉽게 바꿨어요.");
+        assertThat(response.tasks()).containsKeys("2026-07-16", "2026-07-17");
+        assertThat(response.tasks().get("2026-07-16")).isEqualTo(
+                List.of(Map.of("id", "t-2026-07-16-0", "content", "기초 단어 20개 암기", "completed", false)));
+    }
+
+    @Test
+    void chat_변경날짜에완료항목재등장_완료체크보존() {
+        // given — patch가 다시 만든 날짜에서도 같은 내용의 할 일은 완료 체크가 보존된다(날짜+content 매칭)
+        AiService aiService = serviceWithKey("sk-live-key");
+        when(openRouterClient.complete(anyList(), anyInt()))
+                .thenReturn("계획을 다듬었어요.\n===PLAN===\n{\"2026-07-16\": [\"기초 단어 20개 암기\", \"새 항목\"]}");
+        Map<String, Object> currentTasks = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-old", "content", "기초 단어 20개 암기", "completed", true)));
+        AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
+                "정리해줘", currentTasks, List.of());
 
         // when
         AiChatResponse response = aiService.chat(request);
 
         // then
-        assertThat(response.planUpdated()).isTrue();
-        assertThat(response.reply()).isEqualTo("1일차를 더 쉽게 바꿨어요.");
-        assertThat(response.patch()).containsKey("2026-07-16");
+        List<?> day = (List<?>) response.tasks().get("2026-07-16");
+        assertThat(day)
+                .extracting(t -> ((Map<?, ?>) t).get("content"), t -> ((Map<?, ?>) t).get("completed"))
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("기초 단어 20개 암기", true),
+                        org.assertj.core.groups.Tuple.tuple("새 항목", false));
+    }
+
+    @Test
+    void chat_구분자없는산문_reply만tasks없음() {
+        // given
+        AiService aiService = serviceWithKey("sk-live-key");
+        when(openRouterClient.complete(anyList(), anyInt())).thenReturn("지금 계획대로 진행하시면 충분합니다.");
+        AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
+                "이대로 괜찮을까요", Map.of(), List.of());
+
+        // when
+        AiChatResponse response = aiService.chat(request);
+
+        // then
+        assertThat(response.planUpdated()).isFalse();
+        assertThat(response.reply()).isEqualTo("지금 계획대로 진행하시면 충분합니다.");
+        assertThat(response.tasks()).isNull();
     }
 }

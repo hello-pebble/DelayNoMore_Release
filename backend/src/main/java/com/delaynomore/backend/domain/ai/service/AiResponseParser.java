@@ -1,6 +1,5 @@
 package com.delaynomore.backend.domain.ai.service;
 
-import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -160,19 +159,21 @@ public class AiResponseParser {
         }
     }
 
-    // 자유 대화 응답 원문(산문 + 선택적 ===PLAN=== + patch)을 {reply, planUpdated, patch}로 가른다.
-    public AiChatResponse toChatResponse(String raw) {
+    // 자유 대화 응답 원문(산문 + 선택적 ===PLAN=== + patch)을 reply와 patch로 가른 순수 결과.
+    // 병합(현재 계획 + patch → 전체 tasks)은 현재 계획을 아는 AiService/ChatPatchMerger가
+    // 담당한다 — 파서는 LLM 출력 해석만 전담해 순수성을 지킨다.
+    public record ChatParse(String reply, Map<String, Object> patch) {
+    }
+
+    public ChatParse parseChat(String raw) {
         if (raw == null) raw = "";
         int idx = raw.indexOf(PLAN_SENTINEL);
         if (idx < 0) {
-            return AiChatResponse.replyOnly(cleanKoreanText(raw.trim()));
+            return new ChatParse(cleanKoreanText(raw.trim()), null);
         }
         String reply = cleanKoreanText(raw.substring(0, idx).trim());
         Map<String, Object> patch = parsePatch(raw.substring(idx + PLAN_SENTINEL.length()));
-        if (patch == null || patch.isEmpty()) {
-            return AiChatResponse.replyOnly(reply);
-        }
-        return AiChatResponse.withPatch(reply, patch);
+        return new ChatParse(reply, patch);
     }
 
     // patch JSON(문자열)을 Map으로 파싱한다. 앞뒤 설명이 섞여도 중괄호 균형으로 객체만 뽑는다.

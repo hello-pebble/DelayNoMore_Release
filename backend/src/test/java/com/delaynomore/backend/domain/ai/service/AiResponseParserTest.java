@@ -1,6 +1,5 @@
 package com.delaynomore.backend.domain.ai.service;
 
-import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -144,44 +143,41 @@ class AiResponseParserTest {
     }
 
     @Test
-    void toChatResponse_구분자없는산문_계획미변경응답() {
+    void parseChat_구분자없는산문_patch없음() {
         // given
         String raw = "지금 계획대로 진행하시면 충분합니다.";
 
         // when
-        AiChatResponse response = parser.toChatResponse(raw);
+        AiResponseParser.ChatParse parsed = parser.parseChat(raw);
 
         // then
-        assertThat(response.reply()).isEqualTo("지금 계획대로 진행하시면 충분합니다.");
-        assertThat(response.planUpdated()).isFalse();
-        assertThat(response.patch()).isNull();
+        assertThat(parsed.reply()).isEqualTo("지금 계획대로 진행하시면 충분합니다.");
+        assertThat(parsed.patch()).isNull();
     }
 
     @Test
-    void toChatResponse_구분자와patch포함_계획변경응답() {
+    void parseChat_구분자와patch포함_patch반환() {
         // given
         String raw = "3일차를 더 쉽게 바꿨어요.\n===PLAN===\n{\"2026-07-18\": [\"기초 문제 3개 풀기\"]}";
 
         // when
-        AiChatResponse response = parser.toChatResponse(raw);
+        AiResponseParser.ChatParse parsed = parser.parseChat(raw);
 
-        // then
-        assertThat(response.reply()).isEqualTo("3일차를 더 쉽게 바꿨어요.");
-        assertThat(response.planUpdated()).isTrue();
-        assertThat(response.patch()).containsEntry("2026-07-18", List.of("기초 문제 3개 풀기"));
+        // then — 병합(현재 계획 + patch → 전체 tasks)은 AiService/ChatPatchMerger가 담당(별도 테스트)
+        assertThat(parsed.reply()).isEqualTo("3일차를 더 쉽게 바꿨어요.");
+        assertThat(parsed.patch()).containsEntry("2026-07-18", List.of("기초 문제 3개 풀기"));
     }
 
     @Test
-    void toChatResponse_구분자뒤patch가깨진경우_계획미변경응답() {
+    void parseChat_구분자뒤patch가깨진경우_patch없음() {
         // given
         String raw = "계획을 수정했어요.\n===PLAN===\n이건 JSON이 아님";
 
         // when
-        AiChatResponse response = parser.toChatResponse(raw);
+        AiResponseParser.ChatParse parsed = parser.parseChat(raw);
 
         // then
-        assertThat(response.planUpdated()).isFalse();
-        assertThat(response.patch()).isNull();
+        assertThat(parsed.patch()).isNull();
     }
 
     @Test

@@ -9,6 +9,36 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.11.0]
+
+"LLM 채팅 patch 병합 서버 이관" 릴리스. 자유 대화(chat coach)로 계획을 수정할 때 LLM이 내는
+sparse patch(변경된 날짜만)를 프론트가 병합하던 것을 서버로 옮겼다. LLM은 여전히 변경분만
+내려보내 출력 토큰을 아끼지만, 병합 규칙(문자열→객체 변환·완료 체크 보존·날짜 재정렬)의
+소유권은 이제 서버가 갖는다. 저장소는 기존 휘발성 인메모리 정책을 유지한다 — 서버 재시작 시
+소실은 정상. (이관 현황: [BACKEND_MIGRATION.md](docs/BACKEND_MIGRATION.md))
+
+### Added
+- **`ChatPatchMerger` 신규(ai 도메인)** — LLM patch(`{날짜: [문자열|객체]}`, 값 `null`은 삭제)를
+  현재 계획(`AiChatRequest.tasks`)에 병합해 정규화된 전체 `tasks`(`{id, content, completed}`
+  객체, 날짜 오름차순)를 만든다. 완료 체크 보존은 **날짜+content 매칭**(예전 프론트
+  `carryOverCompleted`와 같은 semantics — 내용이 바뀐 항목은 미완료로 리셋). 비동기 요소(비List
+  값, 빈 문자열만 있는 날짜 등)는 예외 없이 방어적으로 처리한다.
+
+### Changed
+- **자유 대화 응답 계약: `patch` → `tasks`** — `AiChatResponse.patch`(변경분만)를
+  `tasks`(서버가 병합한 전체 계획)로 교체(clean cut — 단일 배포 데모라 프론트·백엔드가 항상
+  함께 배포되므로 dual-field 과도기 없이 바로 전환). SSE `/ai/chats/stream`의 `plan` 이벤트도
+  `{type:"plan","patch":{...}}` → `{type:"plan","tasks":{...}}`로 동일하게 바뀐다.
+- **`AiResponseParser` 파서 순수성 유지** — `toChatResponse(raw)`가 `AiChatResponse`를 직접
+  만들던 것을 `parseChat(raw)` → `ChatParse{reply, patch}`로 분리했다. 파서는 LLM 출력 해석만
+  전담하고, 현재 계획을 아는 `AiService`가 `ChatPatchMerger`로 병합해 최종 응답을 조립한다.
+- **프론트 `applyPlanPatch`/`draftWithPatch` 제거** — `ai_engine.js`에서 patch 병합 로직을
+  삭제하고, 서버가 반환한 전체 tasks를 채택해 draft의 duration/endDate만 재계산하는
+  `draftWithTasks`로 교체했다(`streamChatWithCoach`·`chatWithCoach` 사용처 갱신). 초안 생성·mock
+  폴백이 쓰는 `carryOverCompleted`는 그대로 유지(다른 용도로 계속 사용).
+- **BACKEND_MIGRATION 현황 갱신** — "LLM patch 병합"을 "이관 완료"로 옮기고 잔여 이관 예정
+  항목을 renumber(`docs/BACKEND_MIGRATION.md`).
+
 ## [0.10.0]
 
 "날짜 규칙 서버 이관 + 회고 기록 목록" 릴리스. 프론트(브라우저 로컬 날짜)가 계산해
@@ -508,7 +538,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.0...v0.8.1

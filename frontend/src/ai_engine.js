@@ -260,56 +260,22 @@ function carryOverCompleted(prevTasks, nextTasks) {
   return result;
 }
 
-// 계획 patch(변경된 날짜만: "날짜 → 문자열 배열", 값이 null이면 삭제)를 현재 계획에 병합한다.
-// 백엔드가 전체 계획을 재전송하지 않고 바뀐 부분만 보내므로(토큰 절약), 병합은 프론트에서 한다.
-// 문자열을 {id, content, completed} 객체로 복원하고 날짜순으로 다시 정렬한다.
-function applyPlanPatch(currentTasks, patch) {
-  if (!patch || typeof patch !== 'object') return null;
-  const next = { ...(currentTasks || {}) };
-
-  for (const [date, value] of Object.entries(patch)) {
-    if (value === null) {
-      // 기간 단축 등 — 해당 날짜 삭제
-      delete next[date];
-      continue;
-    }
-    if (!Array.isArray(value)) continue;
-    const items = value
-      .map((task, idx) => {
-        const content = typeof task === 'string' ? task : task?.content;
-        if (typeof content !== 'string' || !content.trim()) return null;
-        return { id: `t-${date}-${idx}`, content: content.trim(), completed: false };
-      })
-      .filter(Boolean);
-    if (items.length > 0) {
-      next[date] = items;
-    } else {
-      delete next[date];
-    }
-  }
-
-  // 날짜 키를 오름차순으로 다시 정렬해 Day 순서를 맞춘다.
-  const ordered = {};
-  Object.keys(next).sort().forEach((k) => { ordered[k] = next[k]; });
-  if (Object.keys(ordered).length === 0) return null;
-  // patch로 다시 만들어진 날짜에서도, 내용이 그대로인 할 일은 완료 체크를 보존한다.
-  return carryOverCompleted(currentTasks, ordered);
-}
-
-// patch를 draft에 적용해 갱신된 draft를 만든다(기간 연장/단축 시 duration/endDate 재계산).
-function draftWithPatch(draft, patch) {
-  const tasks = applyPlanPatch(draft?.tasks, patch);
-  if (!tasks) return null;
+// 서버가 병합한 전체 tasks({id, content, completed} 객체, 이미 완료 체크 보존·날짜순 정렬됨)를
+// draft에 반영해 duration/endDate를 재계산한다. 예전엔 LLM patch(변경분만)를 프론트가 병합했지만
+// (applyPlanPatch/carryOverCompleted), 이제 서버(ChatPatchMerger)가 병합해 전체 tasks를 내려주므로
+// 프론트는 채택만 한다.
+function draftWithTasks(draft, tasks) {
+  if (!tasks || Object.keys(tasks).length === 0) return null;
   const dates = Object.keys(tasks).sort();
   return { ...draft, tasks, duration: dates.length, endDate: dates[dates.length - 1] || draft.endDate };
 }
 
 // 초안 생성 이후의 자유 대화(스트리밍) — 산문 reply는 토큰이 오는 대로 onToken(누적 텍스트)으로
-// 흘려보내고, 계획 변경분(patch)은 스트림 끝에서 병합한다. 반환: { reply, updatedDraft }.
+// 흘려보내고, 계획 변경(서버가 병합한 전체 tasks)은 스트림 끝에서 채택한다. 반환: { reply, updatedDraft }.
 // 스트림이 아예 실패(토큰 0개)하면 비스트리밍 → mock 순으로 폴백한다.
 export async function streamChatWithCoach(slots, draft, history, message, onToken) {
   let replyText = '';
-  let patch = null;
+  let tasks = null;
   let streamError = null;
 
   try {
@@ -328,7 +294,7 @@ export async function streamChatWithCoach(slots, draft, history, message, onToke
           replyText += evt.t || '';
           if (onToken) onToken(replyText);
         } else if (evt.type === 'plan') {
-          patch = evt.patch || null;
+          tasks = evt.tasks || null;
         } else if (evt.type === 'error') {
           streamError = evt.m || 'stream error';
         }
@@ -336,12 +302,12 @@ export async function streamChatWithCoach(slots, draft, history, message, onToke
     );
 
     // 토큰을 하나도 못 받았는데 에러였다면 폴백으로 넘긴다.
-    if (streamError && !replyText.trim() && !patch) {
+    if (streamError && !replyText.trim() && !tasks) {
       throw new Error(streamError);
     }
 
-    if (patch) {
-      const updatedDraft = draftWithPatch(draft, patch);
+    if (tasks) {
+      const updatedDraft = draftWithTasks(draft, tasks);
       if (updatedDraft) {
         return {
           reply: replyText.trim() || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
@@ -358,7 +324,7 @@ export async function streamChatWithCoach(slots, draft, history, message, onToke
     console.error("Streaming chat failed, falling back to non-stream/mock:", error);
     // 이미 일부 산문을 보여준 상태에서 폴백하면 답이 중복 갱신되니, 받은 게 있으면 그걸로 마감한다.
     if (replyText.trim()) {
-      return { reply: replyText.trim(), updatedDraft: patch ? draftWithPatch(draft, patch) : null };
+      return { reply: replyText.trim(), updatedDraft: tasks ? draftWithTasks(draft, tasks) : null };
     }
     return chatWithCoach(slots, draft, history, message);
   }
@@ -384,14 +350,14 @@ export async function chatWithCoach(slots, draft, history, message) {
       : null;
 
     if (result?.planUpdated === true) {
-      const updatedDraft = draftWithPatch(draft, result.patch);
+      const updatedDraft = draftWithTasks(draft, result.tasks);
       if (updatedDraft) {
         return {
           reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
           updatedDraft
         };
       }
-      // planUpdated라고 했지만 patch가 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
+      // planUpdated라고 했지만 tasks가 비었거나 깨진 경우 — 기존 계획을 보존하고 재요청을 유도한다.
       return {
         reply: "계획을 수정하다가 형식 오류가 발생했어요. 같은 요청을 한 번만 다시 보내주시겠어요?",
         updatedDraft: null
