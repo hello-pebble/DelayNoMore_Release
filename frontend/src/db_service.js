@@ -49,7 +49,8 @@ const requestJson = async (path, payload, method = 'POST') => {
 export const postAiDraft = (payload) => requestJson('/ai/drafts', payload);
 
 // 초안 생성 이후의 자유 대화 — 백엔드(/api/v1/ai/chats)가 의도 판단(수정/질문/불명확)까지 LLM에 위임한다.
-// 응답 data: { reply, planUpdated, patch? }
+// tasks는 서버가 LLM patch를 현재 계획에 병합한 정규화된 전체 계획({id,content,completed} 객체).
+// 응답 data: { reply, planUpdated, tasks? }
 export const postAiChat = (payload) => requestJson('/ai/chats', payload);
 
 // SSE(fetch + ReadableStream) 공통 파서 — EventSource는 POST를 못 하므로 직접 파싱한다.
@@ -95,7 +96,7 @@ const consumeSse = async (path, payload, onEvent) => {
 };
 
 // 자유 대화 스트리밍(SSE) — /api/v1/ai/chats/stream.
-// 이벤트: {type:'token',t} / {type:'plan',patch} / {type:'done'} / {type:'error',m}
+// 이벤트: {type:'token',t} / {type:'plan',tasks} / {type:'done'} / {type:'error',m}
 export const streamAiChat = (payload, onEvent) => consumeSse('/ai/chats/stream', payload, onEvent);
 
 // 초안 생성 스트리밍(SSE) — /api/v1/ai/drafts/stream. 하루(=한 줄)가 완성될 때마다 day 이벤트가 온다.

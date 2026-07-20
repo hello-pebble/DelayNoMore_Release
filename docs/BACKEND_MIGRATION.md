@@ -5,6 +5,12 @@
 
 ## 이관 완료
 
+### LLM 채팅 patch 병합 (2026-07)
+
+| # | 항목 | 서버 구현 | 프론트에 남은 것 |
+|---|---|---|---|
+| 1 | **자유 대화 patch 병합** | `ChatPatchMerger`(신규, ai 도메인 stateless 유틸) — LLM이 여전히 변경된 날짜만 담은 sparse patch를 내면(출력 토큰 절약 유지), 서버가 현재 계획(`AiChatRequest.tasks`)에 병합해 정규화된 전체 tasks(`{id, content, completed}` 객체)를 응답에 담는다. `AiChatResponse.patch` → `tasks`로 계약 변경(clean cut — 단일 배포 데모라 프론트·백엔드 항상 함께 배포). SSE `plan` 이벤트도 `patch`→`tasks`. 완료 체크 보존은 **날짜+content 매칭**(예전 프론트 `carryOverCompleted`와 같은 semantics). `AiResponseParser`는 파싱만 담당(`toChatResponse`→`parseChat`으로 분리), 병합은 현재 계획을 아는 `AiService`가 소유 | 서버가 반환한 전체 tasks를 채택만 한다(`draftWithTasks`) — draft의 duration/endDate 로컬 재계산은 즉시 표시 UX로 유지 |
+
 ### startDate/endDate/duration 산출·검증 (2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
@@ -43,8 +49,7 @@
 | # | 항목 | 현재 위치 | 이관 방안 |
 |---|---|---|---|
 | 1 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
-| 2 | **LLM patch 병합** | `ai_engine.js` `applyPlanPatch`·`draftWithPatch` | 서버가 병합 후 정규화된 전체 계획 반환 — 토큰/페이로드 트레이드오프 검토 |
-| 3 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
+| 2 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
 
 ## 이관하지 않는 것 (프론트 소유가 자연스러움)
 

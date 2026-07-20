@@ -85,20 +85,25 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
   "tasks": { "2026-07-19": [ { "id": "t-2026-07-19-0", "content": "기출 1회분 풀기", "completed": false } ] },
   "history": [ { "role": "user", "content": "..." }, { "role": "assistant", "content": "..." } ] }
 
-// 응답 data — patch는 변경된 날짜만 담고, 값이 null인 날짜는 삭제를 뜻한다.
-// planUpdated=false(단순 답변)면 patch 필드 자체가 생략된다.
+// 응답 data — [v0.11.0] LLM은 변경된 날짜만 담은 patch를 내지만(출력 토큰 절약), 서버
+// (ChatPatchMerger)가 요청의 tasks에 병합해 tasks에는 정규화된 전체 계획({id,content,completed}
+// 객체, 변경 안 된 날짜 포함)이 담긴다. 완료 체크는 날짜+content가 같으면 보존된다.
+// planUpdated=false(단순 답변)면 tasks 필드 자체가 생략된다.
 { "reply": "기간을 3일 연장해 마지막에 복습일을 넣었어요.",
   "planUpdated": true,
-  "patch": { "2026-07-26": ["오답 복습"], "2026-07-27": ["모의시험"], "2026-07-19": null } }
+  "tasks": { "2026-07-19": [ { "id": "t-2026-07-19-0", "content": "기출 1회분 풀기", "completed": false } ],
+             "2026-07-26": [ { "id": "t-2026-07-26-0", "content": "오답 복습", "completed": false } ],
+             "2026-07-27": [ { "id": "t-2026-07-27-0", "content": "모의시험", "completed": false } ] } }
 ```
 
 ### 5. POST /ai/chats/stream — 자유 대화 (SSE)
 
-요청은 4와 동일. 산문은 token 이벤트로 흘러오고, 계획 변경분은 스트림 끝에 plan 이벤트 한 번.
+요청은 4와 동일. 산문은 token 이벤트로 흘러오고, 계획 변경(서버가 병합한 전체 tasks)은 스트림 끝에 plan 이벤트 한 번.
 
 ```json
 { "type": "token", "t": "기간을 3일 " }
-{ "type": "plan", "patch": { "2026-07-26": ["오답 복습"] } }
+{ "type": "plan", "tasks": { "2026-07-19": [ { "id": "t-2026-07-19-0", "content": "기출 1회분 풀기", "completed": false } ],
+                             "2026-07-26": [ { "id": "t-2026-07-26-0", "content": "오답 복습", "completed": false } ] } }
 { "type": "done" }
 { "type": "error", "m": "AI 응답 스트리밍 중 오류가 발생했습니다." }
 ```
