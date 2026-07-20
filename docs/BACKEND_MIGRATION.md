@@ -44,15 +44,15 @@
 - 회고 완료 개수 재계산(`Plan.countTasksOn` — 클라이언트 수치를 믿지 않음. 진행률 이관 때 `ReflectionService`의 private 메서드에서 엔티티 도메인 메서드로 추출됨)
 - 변경 이력 diff 발행(`AuditEventService` — PUT 전체 교체에서 이벤트 종류 복원. 이월 detail은 이관 후 carry-over 액션이 직접 발행)
 
-## 이관 예정 (우선순위순)
+## 이관 보류 (선결 과제 이후 재검토)
 
-| # | 항목 | 현재 위치 | 이관 방안 |
+| # | 항목 | 현재 위치 | 보류 사유 |
 |---|---|---|---|
-| 1 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
-| 2 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
+| 1 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans(`chat_coach.jsx` `archiveNewPlan`) | ① 초안 SSE(`/ai/drafts/stream`)의 종료 이벤트가 `{type:"done"}`뿐이라 서버가 저장해도 planId를 돌려줄 창구가 없다 — `{type:"saved","planId":...}` 신규 계약이 필요하고 비스트리밍 `/ai/drafts`도 저장 응답으로 바꿔야 일관. ② **mock 폴백 초안도 같은 `archiveNewPlan`으로 저장**되는데, 백엔드가 죽었을 때는 서버가 대신 저장할 수 없으므로 클라 저장을 없앨 수 없다 → 서버·클라 **이중 저장 경로**가 생긴다. ③ `archiveNewPlan`이 쥔 `PLAN_LIMIT_EXCEEDED` 안내·서버 복구 후 재시도(`archivePendingRef`)·no-op PUT 억제(`lastSyncedRef`) 조율도 함께 옮겨야 한다. "누가 저장했나"(소유권)가 자동 저장의 의미를 바꾸므로 아래 **선결 과제(인증·DB) 이후** 재검토한다 |
 
 ## 이관하지 않는 것 (프론트 소유가 자연스러움)
 
+- **mock 폴백 계획 생성기**(`ai_engine.js` `generateMockChecklistDraft`·`extendMockChecklistDays`·`mockChatWithCoach`) — `OPENROUTER_API_KEY` 미설정/백엔드 미가용 시에도 데모 흐름이 끊기지 않게 하는 **프론트 최후 폴백**(FEATURES.md #4가 보장). 백엔드 자체가 죽으면 서버가 대신 생성해줄 수 없으므로 프론트에 남는 것이 자연스럽다. "AI는 죽었지만 백엔드는 살아있는"(502·키 미설정) 경우만 떼어 서버 템플릿 생성(`AiPromptBuilder.tasksPerDayRange`/`targetDates`로 규칙 일원화)으로 옮길 수는 있으나, 그때도 백엔드 다운용 프론트 생성기는 그대로 필요해 템플릿 로직이 양쪽에 남는다 — 중복 대비 이득이 적어 현행 유지
 - 로컬 날짜 유틸(`date_utils.js`) — 사용자 타임존 의존 표시
 - 세션 식별자(`session_id.js`)·마지막 본 계획 포인터(localStorage)
 - 600ms 디바운스 동기화·낙관적 UI·실패 롤백(`chat_coach.jsx`)
