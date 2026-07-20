@@ -5,6 +5,13 @@
 
 ## 이관 완료
 
+### startDate/endDate/duration 산출·검증 (2026-07)
+
+| # | 항목 | 서버 구현 | 프론트에 남은 것 |
+|---|---|---|---|
+| 1 | **startDate/duration 산출** | `PlanService`가 `startDate`를 tasks의 **최초 날짜 키**로 산출(생성 시 1회 → 이후 불변, carry-over가 오늘 키를 지워도 보존)하고 `duration`을 `[startDate, endDate]` **span**으로 산출한다. 클라이언트가 보낸 startDate/duration은 무시. carry-over의 기존 `duration+1`도 같은 규칙으로 일원화. 공유 로직은 `PlanDates`(support) 유틸(`isIsoDate`/`minTaskKey`/`maxTaskKey`/`spanDays`) — tasks 키 검증의 ISO 파서도 여기로 통합 | 라이브 draft(`ai_engine.js`)의 startDate/endDate/duration 로컬 계산 — 서버 왕복 전 즉시 표시 UX. 보관 후 표시는 `fromPlanResponse`가 서버 산출값 채택 |
+| 2 | **endDate 검증** | `@ValidPlanDates`(record TYPE 레벨 교차필드 제약) — endDate가 ISO(YYYY-MM-DD)이고 tasks의 마지막 날짜 키 이상인지 검증, 위반은 400 + `fieldErrors.endDate`. endDate는 계획의 지평선이라 마지막 할 일 날짜보다 뒤여도 유효(상한 아닌 하한만 검증) — carry-over만 연장 | 배포 스큐 안전을 위해 `toPlanPayload`가 endDate를 계속 전송(신클라이언트→구서버 호환). 서버가 형식·범위를 강제 |
+
 ### 진행률·이월·enum 메타 (2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
@@ -35,10 +42,9 @@
 
 | # | 항목 | 현재 위치 | 이관 방안 |
 |---|---|---|---|
-| 1 | **startDate/endDate 산출·검증** | `ai_engine.js` `getFormattedDate` 기반 계산, 서버는 무검증 왕복 | 계획 생성/수정 시 서버가 산출·검증(duration과 tasks 날짜 개수 일관성 포함) |
-| 2 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
-| 3 | **LLM patch 병합** | `ai_engine.js` `applyPlanPatch`·`draftWithPatch` | 서버가 병합 후 정규화된 전체 계획 반환 — 토큰/페이로드 트레이드오프 검토 |
-| 4 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
+| 1 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
+| 2 | **LLM patch 병합** | `ai_engine.js` `applyPlanPatch`·`draftWithPatch` | 서버가 병합 후 정규화된 전체 계획 반환 — 토큰/페이로드 트레이드오프 검토 |
+| 3 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
 
 ## 이관하지 않는 것 (프론트 소유가 자연스러움)
 

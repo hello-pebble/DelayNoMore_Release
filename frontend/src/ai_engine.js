@@ -83,6 +83,10 @@ export function parseUserMessage(message, currentSlot) {
 }
 
 // 오늘(+offsetDays) 기준 YYYY-MM-DD — 로컬 날짜 유틸에 위임(단일 구현).
+// [소유권] startDate/endDate/duration의 소스오브트루스는 서버다(PlanService가 tasks 날짜 키에서
+// startDate·duration을 산출하고 endDate를 검증). 아래 draft 빌더들의 날짜 계산은 서버 왕복 전
+// 체크리스트를 즉시 그리기 위한 라이브 draft 전용 UX일 뿐이며, 보관 후에는 fromPlanResponse가
+// 서버 산출값을 채택한다(v0.9.0의 getPlanProgress와 같은 강등).
 export function getFormattedDate(offsetDays = 0) {
   return todayStr(offsetDays);
 }

@@ -115,6 +115,10 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 // 요청 — goalName·currentLevel: 공백 제외 2자 이상 / duration: 1~365 / dailyHours: 1~24
 // tasks(v0.8.0 형식 검증): 키는 YYYY-MM-DD, 값은 배열, 항목은 {id, content, completed?}
 // status: DRAFT|CONFIRMED만 허용, 생략(null) 시 DRAFT. POST로 CONFIRMED 직접 생성은 허용.
+// [날짜 규칙 — v0.10.0] startDate·duration은 서버가 tasks 날짜 키에서 산출한다(요청 값은
+//   무시): startDate = 최초 날짜 키, duration = [startDate, endDate] 기간(일수). endDate는
+//   요청 값을 유지하되 ISO(YYYY-MM-DD)이고 마지막 할 일 날짜 이상인지 검증(@ValidPlanDates,
+//   위반은 400 fieldErrors.endDate). 응답에는 서버 산출·검증된 값이 담긴다.
 { "goalName": "정보처리기사 실기 합격", "duration": 7, "dailyHours": 2,
   "currentLevel": "필기 합격, 실기는 처음",
   "tasks": { "2026-07-19": [ { "id": "t-2026-07-19-0", "content": "기출 1회분 풀기", "completed": false } ] },
@@ -150,7 +154,9 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 
 ### 9. PUT /plans/{id} — 계획 수정
 
-요청·응답 본문은 6과 동일(POST·PUT 공용 DTO). v0.8.0 서버 가드:
+요청·응답 본문은 6과 동일(POST·PUT 공용 DTO). 날짜 규칙(6 참고)도 동일하게 적용되며,
+`startDate`는 **생성 시 산출된 뒤 불변**이라 수정 요청의 startDate 값은 무시된다(duration은 매
+수정마다 `[startDate, endDate]`로 재산출). v0.8.0 서버 가드:
 
 - CONFIRMED 계획은 **completed 토글과 완전 동일(no-op) PUT만 허용**
 - 그 외 변경(goalName·duration·항목 내용/구조·DRAFT 롤백·confirmedAt 변경)은 409

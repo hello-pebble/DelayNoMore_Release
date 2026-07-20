@@ -9,6 +9,44 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.10.0]
+
+"날짜 규칙 서버 이관 + 회고 기록 목록" 릴리스. 프론트(브라우저 로컬 날짜)가 계산해
+무검증으로 저장하던 **startDate·endDate·duration**을 서버가 산출·검증하도록 옮기고(규칙 소유권은
+서버, 프론트는 표시 UX만), 서버에 이미 있던 **회고 목록 API**를 화면에 연결해 "지난 회고"를
+계획별로 볼 수 있게 했다. 저장소는 기존 휘발성 인메모리 정책을 유지한다 — 서버 재시작 시
+소실은 정상. (이관 현황: [BACKEND_MIGRATION.md](docs/BACKEND_MIGRATION.md))
+
+### Added
+- **지난 회고 기록 목록** — 오늘 마무리(회고) 패널의 각 계획 카드에 "지난 회고" 접이식
+  서브섹션을 추가했다. 펼치면 서버의 기존 `GET /api/v1/plans/{id}/reflections`(최신순 정렬)를
+  호출해 날짜별 완료 수·체감 난이도·이유 라벨을 보여준다(ROADMAP 다음 단계 #2). 백엔드
+  체인(엔드포인트·서비스·리포지토리)은 이미 있어 이번엔 프론트 렌더링만 추가했다 — 다른
+  방문자의 회고도 펼칠 때마다 refetch로 반영하고, 회고 저장 시 목록 캐시를 비운다.
+- **`endDate` 서버 검증(`@ValidPlanDates`)** — 계획 보관/수정 요청의 `endDate`가 ISO
+  (YYYY-MM-DD) 형식이고 tasks의 마지막 날짜 키 이상인지 검증한다. 위반은 다른 형식 검증과 같이
+  **400 + `fieldErrors.endDate`**. tasks 형식 제약(`@ValidPlanTasks`)이 FIELD 레벨인 것과 달리
+  endDate↔tasks를 함께 봐야 해 record(TYPE) 레벨 교차필드 제약이다.
+
+### Changed
+- **startDate·duration을 서버가 산출(클라이언트 값 무시)** — 예전엔 프론트(`getFormattedDate`/
+  브라우저 로컬 날짜)가 계산해 서버로 그대로 통과시켰다. 이제 `PlanService`가 `startDate`를
+  tasks의 **최초 날짜 키**로 산출하고(생성 시 1회 → 이후 불변), `duration`을 `[startDate, endDate]`
+  **기간(span)**으로 산출한다. carry-over의 기존 `duration+1` 계산도 같은 규칙으로 일원화해
+  생성·수정·이월이 모두 한 방식으로 duration을 낸다. 공유 로직은 `PlanDates`(support) 유틸에
+  모았다(`isIsoDate`/`minTaskKey`/`maxTaskKey`/`spanDays`) — tasks 키 검증의 ISO 파서도 여기로 통합.
+  - **startDate 불변 보존**: carry-over가 오늘 미완료를 전부 넘기면 오늘 키가 삭제돼 최소 날짜
+    키가 앞으로 이동하지만, `startDate`는 생성 시 값으로 보존한다("계획이 시작된 날" 유지 —
+    min-key를 추적하면 이월마다 앞으로 튀어 기존 동작과 모순). `update`는 원자 구간 밖에서
+    현재 `startDate`를 읽는데, 생성 후 불변이라 레이스가 없다(DB 이관 시에도 유지해야 할 불변식).
+- **프론트 날짜 계산은 라이브 draft 전용 UX로 강등** — `ai_engine.js`의 startDate/endDate/duration
+  계산과 `chat_coach.jsx`의 `toPlanPayload`는 그대로 두되(제거하지 않음), 소스오브트루스는
+  서버임을 주석으로 명시했다. 세 필드를 계속 보내는 이유는 배포 스큐 안전성 — 신클라이언트가
+  구서버(pass-through)로 요청해도 깨지지 않는다. 응답의 서버 산출값은 `fromPlanResponse`가
+  그대로 채택한다(v0.9.0의 `getPlanProgress` 강등과 같은 패턴).
+- **BACKEND_MIGRATION 현황 갱신** — startDate/endDate 산출·검증 1건을 "이관 완료"로 옮기고
+  잔여 이관 항목을 renumber(`docs/BACKEND_MIGRATION.md`).
+
 ## [0.9.0]
 
 "규칙의 소유권을 서버로 (2탄)" 릴리스. v0.8.0이 시작한 프론트→백엔드 규칙 이관을 이어,
@@ -470,7 +508,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.7.0...v0.8.0
