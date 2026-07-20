@@ -9,6 +9,58 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
+## [0.9.0]
+
+"규칙의 소유권을 서버로 (2탄)" 릴리스. v0.8.0이 시작한 프론트→백엔드 규칙 이관을 이어,
+프론트가 계산하던 **진행률·미완료 이월·회고/이력 선택지**를 서버로 옮겼다. 프론트는
+UX(빠른 피드백·폴백)만 담당하고 규칙과 연산은 서버가 소유한다. 저장소는 기존 휘발성
+인메모리 정책을 유지한다 — 서버 재시작 시 소실은 정상. (이관 현황: [BACKEND_MIGRATION.md](docs/BACKEND_MIGRATION.md))
+
+### Added
+- **진행률/완료율 서버 계산** — `PlanResponse`에 `progress {done, total}` 필드를 추가했다.
+  완료율 계산을 `Plan` 엔티티 도메인 메서드(`countAllTasks`/`countTasksOn` + 중첩 record
+  `TaskCounts`)로 두어 **회고 완료 개수 재계산과 같은 코드를 공유**한다. 프론트 보관함 목록
+  행은 이제 서버 progress를 쓰고(progress가 없는 구버전 응답만 로컬 계산으로 폴백), 라이브
+  draft만 600ms 디바운스 동기화 전의 즉시 표시용 로컬 계산을 유지한다.
+- **미완료 이월 도메인 액션** — `POST /api/v1/plans/{id}/carry-over`(본문 없음, `X-Session-Id`
+  선택 헤더). 오늘(KST) 미완료를 내일로 옮기고(항목 ID 보존), 내일이 계획 기간 밖이면
+  endDate·duration을 하루 연장한다. 이동 0건은 정상 no-op(계획 불변, 이력 없음). 고정
+  (CONFIRMED) 계획은 구조 변경이라 **409 `PLAN_LOCKED`**. 예전엔 프론트가 계산해 PUT으로
+  보내고 서버가 diff로 역감지했지만, 이제 날짜 규칙과 연산 모두 서버가 소유한다.
+- **회고/이력 선택지 메타 API** — `GET /api/v1/meta/reflection-options`(체감 난이도·이유),
+  `GET /api/v1/meta/audit-event-types`(이력 라벨). 코드+한글 라벨의 소스오브트루스를 서버
+  enum(`ReflectionDifficulty`·`ReflectionReason`·`AuditEventType`)으로 옮겼다. 프론트는 마운트
+  시 받아 쓰고, 서버 미가용 시 하드코딩 폴백(`DEFAULT_*`)으로 회고·이력 화면을 지킨다.
+- **API 데이터 레퍼런스 갱신** — carry-over(11번)·메타(16·17번) 섹션과 PlanResponse의
+  `progress` 필드 예시 추가(`docs/API_REFERENCE.md`).
+
+### Changed
+- **`Plan` 엔티티에 완료 개수 도메인 메서드 추출** — `ReflectionService`의 private
+  `countTodayTasks`를 `Plan.countTasksOn`/`countAllTasks`로 옮겨(`isConfirmed()` 선례를 따름)
+  회고와 진행률이 같은 방어적 계산을 공유한다.
+- **이월 이력을 도메인 액션이 직접 발행** — PUT diff에서 이월 패턴을 역감지하던
+  `AuditEventService.detectCarryOver`를 제거했다. 이월은 carry-over 액션이 수행 후
+  `PLAN_UPDATED`(detail `미완료 N건을 <날짜>로 이동`)를 직접 발행한다. 이제 PUT 경로의 구조
+  변경은 항상 일반 detail(`계획 내용 변경`) — 배포 스큐로 구형 클라이언트가 PUT으로 이월해도
+  기능은 정상이고 이력 detail만 일반화된다.
+- **`AuditEventService` 이벤트 타입을 enum으로** — 문자열 리터럴 7종을 `AuditEventType`으로
+  교체해 오타를 컴파일 타임에 막는다. 저장·응답의 `type`은 String을 유지한다(DB 행 1:1
+  관례·응답 형식 불변).
+- **`PlanRepository.mutate` 추가** — 현재 상태를 읽어 새 상태를 만드는 read-modify-write를
+  `computeIfPresent` 키 단위 원자 구간에서 실행한다(이월용). 기존 `update(Plan, Consumer)`가
+  완성된 새 상태를 받는 것과 달리 mutator가 현재 상태를 읽는다. DB 전환 시 "트랜잭션 +
+  SELECT FOR UPDATE"로 대체된다.
+- **프론트 이월을 서버 액션 호출로 교체** — 프론트 `carryOverTasks` 연산을 삭제하고
+  `handleCarryOver`가 `POST /carry-over`를 호출한다. 활성 계획은 호출 전 대기 중 변경을
+  flush하고, 응답 반영 시 `lastSyncedRef`를 먼저 갱신해 낡은 디바운스 PUT이 이월 결과를
+  덮어쓰는 경합을 구조적으로 막는다(`restorePlan`의 "방금 서버에서 읽은 상태" 처리와 동일 패턴).
+- **프론트 하드코딩 선택지를 폴백 사본으로** — `DIFFICULTY_OPTIONS`·`REASON_OPTIONS`·
+  `AUDIT_EVENT_LABELS`를 `DEFAULT_*`로 개명하고, 마운트 시 메타 API 수신값으로 교체한다
+  (`Promise.allSettled`로 성공분만 반영, 실패는 조용히 폴백 유지). `ReflectionSaveRequest`의
+  `@Pattern`은 유지하되 enum과의 일치는 드리프트 가드 테스트가 보장한다.
+- **BACKEND_MIGRATION 현황 갱신** — 진행률·이월·enum 3건을 "이관 완료"로 옮기고 잔여 이관
+  항목을 renumber(`docs/BACKEND_MIGRATION.md`).
+
 ## [0.8.1]
 
 v0.8.0 QA에서 발견된 날짜 결함을 수정한 패치. 서비스의 "오늘" 판정 기준을
@@ -418,7 +470,11 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.0...v0.8.1
+[0.8.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.4.1...v0.5.0
