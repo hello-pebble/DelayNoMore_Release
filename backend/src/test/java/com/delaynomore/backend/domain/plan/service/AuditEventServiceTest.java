@@ -148,44 +148,13 @@ class AuditEventServiceTest {
     }
 
     @Test
-    void update_이월패턴_PLAN_UPDATED에이동detail() {
-        // given
-        PlanResponse saved = createBasePlan();
-        // 2026-07-16의 미완료 t-1을 ID 보존한 채 2026-07-17 뒤에 붙인 이월 PUT(완료 t-2는 잔류)
-        Map<String, Object> carried = Map.of(
-                "2026-07-16", List.of(task("t-2", "문법 정리", true)),
-                "2026-07-17", List.of(task("t-3", "듣기 연습", false), task("t-1", "단어 암기", false)));
-
-        // when
-        planService.update(saved.id(), request("토익 900", carried, null), null);
-
-        // then
-        AuditEventResponse latest = events(saved.id()).get(0);
-        assertThat(latest.type()).isEqualTo("PLAN_UPDATED");
-        assertThat(latest.detail()).isEqualTo("미완료 1건을 2026-07-17로 이동");
-    }
-
-    @Test
-    void update_이월로마지막날넘김_기간연장허용() {
-        // given — 마지막 날(2026-07-18)의 미완료를 다음 날로 넘기면 endDate/duration이 함께 늘어난다
-        Map<String, Object> tasks = Map.of("2026-07-18", List.of(task("t-9", "총정리", false)));
-        PlanResponse saved = planService.create(request("막판 계획", tasks, null), null);
-        Map<String, Object> carried = Map.of("2026-07-19", List.of(task("t-9", "총정리", false)));
-
-        // when
-        planService.update(saved.id(), request("막판 계획", carried, null, 4, "2026-07-19"), null);
-
-        // then — endDate·duration 연장은 이월 감지를 깨지 않는다
-        assertThat(events(saved.id()).get(0).detail()).isEqualTo("미완료 1건을 2026-07-19로 이동");
-    }
-
-    @Test
-    void update_이월과유사하지만완료항목이동_generic_detail() {
-        // given — 완료된 t-2가 함께 이동하면 이월(미완료만)이 아니다
+    void update_항목이동PUT_generic_detail() {
+        // given — 항목을 다른 날짜로 옮긴 PUT. 이월은 도메인 액션(recordCarryOver)이 직접
+        // 발행하므로 PUT 경로의 구조 변경은 항상 일반 detail이다(이월 역감지 제거됨).
         PlanResponse saved = createBasePlan();
         Map<String, Object> moved = Map.of(
-                "2026-07-16", List.of(task("t-1", "단어 암기", false)),
-                "2026-07-17", List.of(task("t-3", "듣기 연습", false), task("t-2", "문법 정리", true)));
+                "2026-07-16", List.of(task("t-2", "문법 정리", true)),
+                "2026-07-17", List.of(task("t-3", "듣기 연습", false), task("t-1", "단어 암기", false)));
 
         // when
         planService.update(saved.id(), request("토익 900", moved, null), null);
@@ -194,6 +163,21 @@ class AuditEventServiceTest {
         AuditEventResponse latest = events(saved.id()).get(0);
         assertThat(latest.type()).isEqualTo("PLAN_UPDATED");
         assertThat(latest.detail()).isEqualTo("계획 내용 변경");
+    }
+
+    @Test
+    void recordCarryOver_PLAN_UPDATED에이동detail() {
+        // given
+        PlanResponse saved = createBasePlan();
+
+        // when — 이월 도메인 액션이 수행 직후 직접 발행하는 경로
+        auditEventService.recordCarryOver(saved.id(), 2, "2026-07-17", "session-a");
+
+        // then — detail 형식은 예전 역감지 시절과 동일(이력 화면 연속성)
+        AuditEventResponse latest = events(saved.id()).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_UPDATED");
+        assertThat(latest.detail()).isEqualTo("미완료 2건을 2026-07-17로 이동");
+        assertThat(latest.sessionId()).isEqualTo("session-a");
     }
 
     @Test

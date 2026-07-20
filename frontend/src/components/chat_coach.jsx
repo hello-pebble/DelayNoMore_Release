@@ -15,7 +15,10 @@ import {
   isPlanModificationRequest,
   INITIAL_SLOTS
 } from '../ai_engine';
-import { createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, putReflection, fetchReflection, fetchAuditEvents } from '../db_service';
+import {
+  createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
+  fetchReflection, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes
+} from '../db_service';
 import { getSessionId } from '../session_id';
 import { todayStr } from '../date_utils';
 
@@ -33,13 +36,14 @@ const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
 // 오늘 마무리(회고) 선택지 — 자유 입력 메모는 두지 않는다(모든 방문자가 공유하는 데모
-// 저장소라 개인 텍스트가 남지 않게). 코드는 서버 검증 enum과 1:1로 맞춘다.
-const DIFFICULTY_OPTIONS = [
+// 저장소라 개인 텍스트가 남지 않게). 소스오브트루스는 서버 enum(메타 API로 수신)이고,
+// 아래 상수는 백엔드 미가용 시 회고 화면을 지키는 폴백 사본이다.
+const DEFAULT_DIFFICULTY_OPTIONS = [
   { code: 'EASY', label: '여유로웠어요' },
   { code: 'NORMAL', label: '적당했어요' },
   { code: 'HARD', label: '벅찼어요' }
 ];
-const REASON_OPTIONS = [
+const DEFAULT_REASON_OPTIONS = [
   { code: 'AS_PLANNED', label: '계획대로 진행됐어요' },
   { code: 'NOT_ENOUGH_TIME', label: '시간이 부족했어요' },
   { code: 'TOO_MUCH_WORK', label: '분량이 많았어요' },
@@ -112,8 +116,9 @@ function fromPlanResponse(plan) {
   return { slots, draftChecklist };
 }
 
-// 완료 진행률(완료/전체 개수) — 체크리스트 헤더 진행 바와 보관함 목록 행에서 함께 쓴다.
-// tasks가 비정상이어도 화면이 죽지 않게 방어적으로 계산한다.
+// 완료 진행률(완료/전체 개수) — 라이브 draft 전용 UX 계산. 서버 스냅샷의 진행률은 서버가
+// 계산한 progress 필드가 소스이고, 이 함수는 600ms 디바운스 동기화 전의 라이브 상태
+// (draftChecklist)를 즉시 반영하기 위해서만 남아 있다. 방어적 계산(비정상 tasks 무시)은 유지.
 function getPlanProgress(tasks) {
   const all = Object.values(tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []));
   return { done: all.filter((t) => t.completed).length, total: all.length };
@@ -125,33 +130,18 @@ function formatSavedAt(ts) {
   return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}/${d.getDate()} 저장` : '';
 }
 
-// 미완료 이월 — fromDate의 미완료 항목을 toDate 배열 뒤에 붙인다. 항목 ID는 보존한다:
-// 생성 시점에 계획 전체에서 유일하고, ID가 유지되어야 서버 변경 이력이 "같은 할 일의 이동"으로
-// 인식한다. fromDate가 비면 키를 지우고, 새 키가 객체 끝에 붙어 Day 순서가 깨지지 않도록
-// 날짜 키 오름차순(YYYY-MM-DD라 사전순=날짜순)으로 재조립한다.
-function carryOverTasks(tasks, fromDate, toDate) {
-  const dayTasks = tasks?.[fromDate];
-  if (!Array.isArray(dayTasks)) return { tasks, movedCount: 0 };
-  const remaining = dayTasks.filter((t) => t.completed);
-  const moved = dayTasks.filter((t) => !t.completed);
-  if (moved.length === 0) return { tasks, movedCount: 0 };
-
-  const destination = Array.isArray(tasks[toDate]) ? tasks[toDate] : [];
-  // 목적지에 같은 ID가 이미 있으면(비정상 데이터) 접미사로 회피 — 렌더 key 충돌 방지.
-  const existingIds = new Set(destination.map((t) => t.id));
-  const movedSafe = moved.map((t) => (existingIds.has(t.id) ? { ...t, id: `${t.id}-m${Date.now()}` } : t));
-
-  const next = { ...tasks, [toDate]: [...destination, ...movedSafe] };
-  if (remaining.length > 0) next[fromDate] = remaining;
-  else delete next[fromDate];
-
-  const sorted = {};
-  Object.keys(next).sort().forEach((date) => { sorted[date] = next[date]; });
-  return { tasks: sorted, movedCount: moved.length };
+// 오늘의 미완료 개수 — 이월 확인창(UX)용 로컬 카운트. 이월 연산 자체는 서버 도메인 액션
+// (POST /plans/{id}/carry-over)이 수행하므로, 프론트는 "옮길 게 있는가"만 미리 세어
+// 불필요한 요청과 빈 확인창을 막는다.
+function countTodayIncomplete(tasks, date) {
+  const dayTasks = tasks?.[date];
+  if (!Array.isArray(dayTasks)) return 0;
+  return dayTasks.filter((t) => !t.completed).length;
 }
 
 // 변경 이력 이벤트 타입 → 화면 라벨. 알 수 없는 타입은 코드 그대로 노출(회고 라벨과 같은 방어).
-const AUDIT_EVENT_LABELS = {
+// 소스오브트루스는 서버 enum(메타 API로 수신)이고, 이 상수는 백엔드 미가용 시 폴백 사본이다.
+const DEFAULT_AUDIT_EVENT_LABELS = {
   PLAN_CREATED: '계획 생성',
   PLAN_UPDATED: '계획 수정',
   PLAN_CONFIRMED: '계획 고정',
@@ -273,6 +263,14 @@ export default function ChatCoach() {
   const [showPlanList, setShowPlanList] = useState(false);
   // 변경 이력 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', events }
   const [auditView, setAuditView] = useState(null);
+
+  // 메타(선택지·라벨) — 소스오브트루스는 서버 enum. 마운트 시 한 번 받아 교체하고,
+  // 실패하면 폴백 사본(DEFAULT_*)을 그대로 쓴다(백엔드 미가용에도 회고/이력 화면 유지).
+  const [metaOptions, setMetaOptions] = useState({
+    difficulties: DEFAULT_DIFFICULTY_OPTIONS,
+    reasons: DEFAULT_REASON_OPTIONS,
+    auditEventLabels: DEFAULT_AUDIT_EVENT_LABELS
+  });
 
   // 오늘 마무리(회고) 상태 — 회고는 계획별·오늘 날짜 1건(서버 업서트, 계획 보관함과 같은
   // 휘발성 공유 저장소). reflections는 {planId: 회고|null} — null은 "오늘 회고 없음"이 서버로
@@ -430,6 +428,33 @@ export default function ChatCoach() {
       } catch {
         if (!cancelled) setPlansStatus('error');
       }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 마운트 시 1회 — 메타(회고 선택지·이력 라벨)를 서버에서 받아 폴백 사본을 교체한다.
+  // 성공한 응답만 반영하고 실패는 조용히 폴백 유지(allSettled — 한쪽 실패가 다른 쪽을 막지 않게).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [reflection, auditTypes] = await Promise.allSettled([
+        fetchReflectionOptions(),
+        fetchAuditEventTypes()
+      ]);
+      if (cancelled) return;
+      setMetaOptions((prev) => ({
+        difficulties: reflection.status === 'fulfilled' && Array.isArray(reflection.value?.difficulties)
+          ? reflection.value.difficulties
+          : prev.difficulties,
+        reasons: reflection.status === 'fulfilled' && Array.isArray(reflection.value?.reasons)
+          ? reflection.value.reasons
+          : prev.reasons,
+        auditEventLabels: auditTypes.status === 'fulfilled' && Array.isArray(auditTypes.value)
+          ? Object.fromEntries(auditTypes.value.map((t) => [t.code, t.label]))
+          : prev.auditEventLabels
+      }));
     })();
     return () => {
       cancelled = true;
@@ -793,43 +818,42 @@ export default function ChatCoach() {
 
   // 미완료 항목 내일로 이동 — 오늘(실행) 단계의 행동이지만 계획 구조를 바꾸므로 DRAFT 계획
   // 전용이다(고정 계획은 버튼 자체를 숨긴다 — 계획 저장/기간 +3일 버튼과 같은 잠금 관례).
-  // 동기화는 toggleTodayTask와 같은 이원화: 활성 계획은 draftChecklist만 갱신하고 기존 600ms
-  // 디바운스 PUT에 맡긴다(전환·삭제 시 flush/취소도 기존 경로가 처리). 비활성 계획은 savedPlans
-  // 낙관 갱신 + 즉시 PUT + 실패 시 롤백. 내일이 계획 기간을 넘으면 endDate/duration을 하루 늘린다.
+  // 이월 연산(오늘 KST → 내일, 기간 연장 포함)은 서버 도메인 액션이 수행하고, 프론트는
+  // 확인창용 카운트와 응답 반영만 담당한다. 활성 계획은 POST 전에 대기 중 변경을 flush하고,
+  // 응답 반영 시 lastSyncedRef를 먼저 갱신해 낡은 디바운스 PUT이 이월 결과를 되돌리는 경합을
+  // 차단한다(restorePlan의 "방금 서버에서 읽은 상태" 처리와 같은 패턴).
   const handleCarryOver = async (planId) => {
     const isCurrent = planId === activePlanId && !!draftChecklist;
     const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
     if (!source || source.status === 'CONFIRMED') return;
-    const today = todayStr();
-    const tomorrow = todayStr(1);
-    const { tasks: movedTasks, movedCount } = carryOverTasks(source.tasks, today, tomorrow);
-    if (movedCount === 0) return;
-    if (!window.confirm(`미완료 ${movedCount}건을 내일(${tomorrow})로 옮길까요?`)) return;
+    const localCount = countTodayIncomplete(source.tasks, todayStr());
+    if (localCount === 0) return;
+    if (!window.confirm(`미완료 ${localCount}건을 내일(${todayStr(1)})로 옮길까요?`)) return;
 
-    const extendsRange = !!source.endDate && source.endDate < tomorrow; // YYYY-MM-DD라 문자열 비교로 충분
-    const changes = {
-      tasks: movedTasks,
-      ...(extendsRange && {
-        endDate: tomorrow,
-        duration: typeof source.duration === 'number' ? source.duration + 1 : source.duration
-      })
-    };
-
-    if (isCurrent) {
-      setDraftChecklist((prev) => (prev ? { ...prev, ...changes } : prev));
-      if (extendsRange) {
-        // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
-        setSlots((prev) => ({ ...prev, duration: changes.duration }));
-      }
-      return; // 서버 반영은 자동 동기화 effect가 담당
-    }
-
-    const updated = { ...source, ...changes };
-    setSavedPlans((prev) => prev.map((p) => (p.id === planId ? updated : p)));
     try {
-      await updatePlan(planId, toPlanPayload(updated));
+      if (isCurrent) {
+        // 대기 중 완료 토글을 먼저 서버에 반영 — 이월이 낡은 상태 위에서 계산되지 않게 한다.
+        await syncActivePlan({ recreateIfMissing: true });
+      }
+      const { movedCount, plan } = await carryOverPlan(planId);
+      if (movedCount === 0) {
+        // 로컬 계산과 어긋난 경우(서버 KST 기준 오늘엔 미완료 없음) — 계획은 불변이다.
+        window.alert('서버 기준 오늘 날짜에는 옮길 미완료 항목이 없습니다.');
+        return;
+      }
+      if (isCurrent) {
+        const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
+        // setState 전에 "이미 동기화됨"으로 기록 — 자동 동기화 effect가 이 상태를 서버와
+        // 동일로 판정해 대기 타이머까지 취소하므로, 디바운스 PUT이 이월 결과를 덮지 않는다.
+        lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
+        dirtyRef.current = null;
+        setDraftChecklist(nextDraft);
+        // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
+        setSlots(nextSlots);
+      }
+      // 목록에도 이월 결과 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
+      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? plan : p)));
     } catch (err) {
-      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? source : p))); // 실패 시 롤백
       if (err.code === 'PLAN_NOT_FOUND') {
         window.alert('이미 삭제된 계획입니다.');
         refreshPlans();
@@ -1463,7 +1487,7 @@ export default function ChatCoach() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>오늘 하루 어땠나요?</div>
                         <div role="radiogroup" aria-label="체감 난이도" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {DIFFICULTY_OPTIONS.map((opt) => (
+                          {metaOptions.difficulties.map((opt) => (
                             <button
                               key={opt.code}
                               type="button"
@@ -1482,7 +1506,7 @@ export default function ChatCoach() {
                           ))}
                         </div>
                         <div role="radiogroup" aria-label="이유" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {REASON_OPTIONS.map((opt) => (
+                          {metaOptions.reasons.map((opt) => (
                             <button
                               key={opt.code}
                               type="button"
@@ -1524,8 +1548,8 @@ export default function ChatCoach() {
                         </div>
                         <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
                           {saved.completedCount}/{saved.totalCount} 완료
-                          {' · '}{reflectionLabel(DIFFICULTY_OPTIONS, saved.difficulty)}
-                          {' · '}{reflectionLabel(REASON_OPTIONS, saved.reason)}
+                          {' · '}{reflectionLabel(metaOptions.difficulties, saved.difficulty)}
+                          {' · '}{reflectionLabel(metaOptions.reasons, saved.reason)}
                         </div>
                         {countsChanged && (
                           <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -1599,8 +1623,11 @@ export default function ChatCoach() {
             const isCurrent = plan.id === activePlanId;
             // 현재 보고 있는 계획은 라이브 상태(draftChecklist)에서 진행률을 읽는다 — 서버
             // 스냅샷(plan.tasks)은 600ms 디바운스 동기화 전이라, 목록을 펼친 채 체크하면
-            // 옛 수치로 남기 때문. 다른(비활성) 계획은 종전대로 서버 스냅샷을 쓴다.
-            const { done, total } = getPlanProgress(isCurrent ? draftChecklist?.tasks : plan.tasks);
+            // 옛 수치로 남기 때문. 비활성 계획은 서버가 계산한 progress를 쓴다(계산 소유권은
+            // 서버 — progress가 없는 구버전 응답만 로컬 계산으로 폴백).
+            const { done, total } = isCurrent
+              ? getPlanProgress(draftChecklist?.tasks)
+              : (plan.progress ?? getPlanProgress(plan.tasks));
             const isPlanConfirmed = plan.status === 'CONFIRMED';
             const isAuditOpen = auditView?.planId === plan.id;
             return (
@@ -1683,7 +1710,7 @@ export default function ChatCoach() {
                         {auditView.events.map((event) => (
                           <li key={event.id} style={{ fontSize: '12px', display: 'flex', alignItems: 'baseline', gap: '6px' }}>
                             <span style={{ fontWeight: 600, flexShrink: 0 }}>
-                              {AUDIT_EVENT_LABELS[event.type] || event.type}
+                              {metaOptions.auditEventLabels[event.type] || event.type}
                             </span>
                             {event.detail && (
                               <span style={{ color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

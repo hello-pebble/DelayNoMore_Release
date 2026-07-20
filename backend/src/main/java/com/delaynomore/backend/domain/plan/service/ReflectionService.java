@@ -16,7 +16,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -40,15 +39,15 @@ public class ReflectionService {
         // parsed.toString()으로 정규화된 날짜를 키로 쓴다 — "2026-7-1" 같은 비정규 표기가
         // 별도 키로 저장되는 것을 막는다(조회는 항상 YYYY-MM-DD로 온다).
         String normalizedDate = parsed.toString();
-        int[] counts = countTodayTasks(plan.tasks(), normalizedDate);
+        Plan.TaskCounts counts = plan.countTasksOn(normalizedDate);
         String now = Instant.now().toString();
 
         Reflection saved = reflectionRepository.upsert(planId, normalizedDate, existing -> new Reflection(
-                planId, normalizedDate, counts[0], counts[1],
+                planId, normalizedDate, counts.completed(), counts.total(),
                 request.difficulty(), request.reason(),
                 existing == null ? now : existing.createdAt(), // 재저장 시 최초 저장 시각 보존
                 now));
-        auditEventService.recordReflectionSaved(planId, normalizedDate, counts[0], counts[1], sessionId);
+        auditEventService.recordReflectionSaved(planId, normalizedDate, counts.completed(), counts.total(), sessionId);
         return ReflectionResponse.from(saved);
     }
 
@@ -78,22 +77,5 @@ public class ReflectionService {
         } catch (DateTimeParseException e) {
             throw new BusinessException(ErrorCode.REFLECTION_DATE_INVALID);
         }
-    }
-
-    // {완료, 전체} 개수 — tasks 내부 구조는 프론트 원본 그대로라 서버가 방어적으로 센다:
-    // 해당 날짜 값이 List가 아니면 빈 것으로(0/0 허용 — 오늘 할 일 없는 날의 회고도 유효),
-    // 항목은 Map이면서 completed == Boolean.TRUE인 것만 완료로 센다.
-    private int[] countTodayTasks(Map<String, Object> tasks, String date) {
-        Object dayTasks = tasks == null ? null : tasks.get(date);
-        if (!(dayTasks instanceof List<?> list)) {
-            return new int[]{0, 0};
-        }
-        int completed = 0;
-        for (Object item : list) {
-            if (item instanceof Map<?, ?> task && Boolean.TRUE.equals(task.get("completed"))) {
-                completed++;
-            }
-        }
-        return new int[]{completed, list.size()};
     }
 }

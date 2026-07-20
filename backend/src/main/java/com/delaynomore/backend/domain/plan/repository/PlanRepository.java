@@ -9,6 +9,7 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 
 // 계획 보관함 저장소 — 아직 DB가 없어 인메모리(휘발성)로 보관한다. 서버 재시작 시 초기화되고
 // 사용자 구분 없이 모든 방문자가 공용으로 쓴다(원격 기능 테스트용 데모 체제).
@@ -53,6 +54,15 @@ public class PlanRepository {
             return plan;
         });
         return replaced == null ? null : previous[0];
+    }
+
+    // read-modify-write(예: 이월)를 키 단위 원자 구간에서 실행한다 — update()가 "완성된 새 상태"를
+    // 받는 것과 달리, mutator가 현재 상태를 읽어 새 상태를 만든다. mutator가 예외를 던지면(가드)
+    // ConcurrentHashMap 계약상 맵은 변경되지 않은 채 예외가 전파되고, 현재 상태를 그대로 반환하면
+    // no-op이 된다. 갱신 후 상태를 돌려준다(키 부재 시 null).
+    // DB 전환 시 이 메서드는 "트랜잭션 + SELECT ... FOR UPDATE 후 갱신"으로 대체된다.
+    public Plan mutate(long id, UnaryOperator<Plan> mutator) {
+        return store.computeIfPresent(id, (key, current) -> mutator.apply(current));
     }
 
     // 제거된 값을 돌려준다(없으면 null) — 변경 이력의 PLAN_DELETED detail(goalName)에 쓴다.
