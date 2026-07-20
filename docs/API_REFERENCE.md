@@ -85,7 +85,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
   "tasks": { "2026-07-19": [ { "id": "t-2026-07-19-0", "content": "기출 1회분 풀기", "completed": false } ] },
   "history": [ { "role": "user", "content": "..." }, { "role": "assistant", "content": "..." } ] }
 
-// 응답 data — [v0.11.0] LLM은 변경된 날짜만 담은 patch를 내지만(출력 토큰 절약), 서버
+// 응답 data — [v0.9.2] LLM은 변경된 날짜만 담은 patch를 내지만(출력 토큰 절약), 서버
 // (ChatPatchMerger)가 요청의 tasks에 병합해 tasks에는 정규화된 전체 계획({id,content,completed}
 // 객체, 변경 안 된 날짜 포함)이 담긴다. 완료 체크는 날짜+content가 같으면 보존된다.
 // planUpdated=false(단순 답변)면 tasks 필드 자체가 생략된다.
@@ -120,7 +120,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 // 요청 — goalName·currentLevel: 공백 제외 2자 이상 / duration: 1~365 / dailyHours: 1~24
 // tasks(v0.8.0 형식 검증): 키는 YYYY-MM-DD, 값은 배열, 항목은 {id, content, completed?}
 // status: DRAFT|CONFIRMED만 허용, 생략(null) 시 DRAFT. POST로 CONFIRMED 직접 생성은 허용.
-// [날짜 규칙 — v0.10.0] startDate·duration은 서버가 tasks 날짜 키에서 산출한다(요청 값은
+// [날짜 규칙 — v0.9.1] startDate·duration은 서버가 tasks 날짜 키에서 산출한다(요청 값은
 //   무시): startDate = 최초 날짜 키, duration = [startDate, endDate] 기간(일수). endDate는
 //   요청 값을 유지하되 ISO(YYYY-MM-DD)이고 마지막 할 일 날짜 이상인지 검증(@ValidPlanDates,
 //   위반은 400 fieldErrors.endDate). 응답에는 서버 산출·검증된 값이 담긴다.
