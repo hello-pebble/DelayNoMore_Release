@@ -6,6 +6,7 @@ import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.support.PlanDates;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.time.KstDates;
@@ -33,7 +34,12 @@ public class PlanService {
         if (planRepository.count() >= MAX_PLANS) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
         }
-        Plan saved = planRepository.save(request.toPlan(null, System.currentTimeMillis()));
+        // 날짜 규칙은 서버 소유 — startDate는 tasks 최초 날짜 키로, duration은 [startDate, endDate]
+        // 범위로 산출한다(클라이언트가 보낸 startDate/duration은 무시). endDate는 @ValidPlanDates가 검증.
+        String startDate = PlanDates.minTaskKey(request.tasks());
+        int duration = PlanDates.spanDays(startDate, request.endDate());
+        Plan saved = planRepository.save(
+                request.toPlan(null, System.currentTimeMillis(), startDate, duration));
         auditEventService.recordPlanCreated(saved, sessionId);
         return PlanResponse.from(saved);
     }
@@ -51,11 +57,19 @@ public class PlanService {
     }
 
     public PlanResponse update(long id, PlanSaveRequest request, String sessionId) {
-        Plan updated = request.toPlan(id, System.currentTimeMillis());
+        // startDate는 생성 시 산출된 뒤 불변이라 원자 구간 밖에서 읽어도 레이스가 없다(어떤 동시
+        // 쓰기도 startDate를 바꾸지 못한다). 이 값을 보존하고 duration만 [startDate, endDate]로 재산출
+        // 한다 — 클라이언트가 보낸 startDate/duration은 무시(규칙 소유권은 서버). DB 이관 시에도 이
+        // 불변식(startDate 고정)을 유지해야 이 비원자 읽기가 안전하다.
+        Plan current = planRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
+        String startDate = current.startDate();
+        int duration = PlanDates.spanDays(startDate, request.endDate());
+        Plan updated = request.toPlan(id, System.currentTimeMillis(), startDate, duration);
         // 고정 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
         // 쓰기(예: 다른 브라우저의 고정)가 끼어들 수 없어 check-then-act 레이스가 없다.
         Plan previous = planRepository.update(updated,
-                current -> assertUnlockedOrToggleOnly(current, updated));
+                c -> assertUnlockedOrToggleOnly(c, updated));
         if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
@@ -99,13 +113,16 @@ public class PlanService {
             if (result.movedCount() == 0) {
                 return current; // 이월할 미완료 없음 — 계획 불변(savedAt 보존), 이력도 없다.
             }
-            // 내일이 기간 밖이면 종료일·기간을 하루 연장한다(프론트 기존 동작 그대로).
+            // 내일이 기간 밖이면 종료일을 내일로 연장한다(프론트 기존 동작 그대로). duration은
+            // create/update와 같은 규칙([startDate, endDate] span)으로 산출해 계산을 일원화한다.
             boolean extendsRange = current.endDate() != null && current.endDate().compareTo(toDate) < 0;
+            String newEndDate = extendsRange ? toDate : current.endDate();
+            int newDuration = PlanDates.spanDays(current.startDate(), newEndDate);
             return new Plan(current.id(), current.goalName(),
-                    extendsRange ? (current.duration() == null ? 1 : current.duration() + 1) : current.duration(),
+                    newDuration,
                     current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
                     current.confirmedAt(), current.startDate(),
-                    extendsRange ? toDate : current.endDate(), current.createdAt(),
+                    newEndDate, current.createdAt(),
                     System.currentTimeMillis());
         });
         if (updated == null) {

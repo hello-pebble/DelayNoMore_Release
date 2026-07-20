@@ -107,6 +107,83 @@ class PlanServiceTest {
         assertThat(saved.progress()).isEqualTo(new PlanResponse.Progress(1, 1));
     }
 
+    // === 날짜 규칙 서버 이관 — startDate(산출·불변)·duration(산출)은 서버가 소유한다 ===
+
+    @Test
+    void create_startDate를_최초날짜키로_산출_클라이언트값무시() {
+        // given — 여러 날에 걸친 tasks + 엉뚱한 클라이언트 startDate(2099-01-01)
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", false)),
+                "2026-07-17", List.of(Map.of("id", "t-2", "content", "듣기 연습", "completed", false)),
+                "2026-07-18", List.of(Map.of("id", "t-3", "content", "문법 정리", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 99, 2, "완전 초보", tasks,
+                null, null, "2099-01-01", "2026-07-18", "2026-07-16T00:00:00Z");
+
+        // when
+        PlanResponse saved = planService.create(request, null);
+
+        // then — 서버가 tasks 최초 날짜 키로 산출(클라이언트 startDate 무시)
+        assertThat(saved.startDate()).isEqualTo("2026-07-16");
+    }
+
+    @Test
+    void create_duration을_startDate와endDate범위로_산출_클라이언트값무시() {
+        // given — 범위와 어긋난 클라이언트 duration(99)
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 99, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
+
+        // when
+        PlanResponse saved = planService.create(request, null);
+
+        // then — span(07-16, 07-18) = 3
+        assertThat(saved.duration()).isEqualTo(3);
+    }
+
+    @Test
+    void create_단일일계획_duration1() {
+        // given — 시작=종료(하루짜리)
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-1", "content", "총정리", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 5, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-16", "2026-07-16T00:00:00Z");
+
+        // when
+        PlanResponse saved = planService.create(request, null);
+
+        // then
+        assertThat(saved.duration()).isEqualTo(1);
+    }
+
+    @Test
+    void update_startDate불변_클라이언트값무시() {
+        // given — 생성 시 startDate=2026-07-16, 이후 클라이언트가 다른 값을 보내도 보존
+        PlanResponse saved = planService.create(request("토익 900"), null);
+        PlanSaveRequest updateRequest = new PlanSaveRequest("토익 900", 3, 2, "완전 초보",
+                saved.tasks(), null, null, "2000-01-01", "2026-07-18", saved.createdAt());
+
+        // when
+        PlanResponse updated = planService.update(saved.id(), updateRequest, null);
+
+        // then
+        assertThat(updated.startDate()).isEqualTo("2026-07-16");
+    }
+
+    @Test
+    void update_duration재산출_클라이언트값무시() {
+        // given — endDate를 07-20으로 늘리고 어긋난 duration(99)을 보낸다
+        PlanResponse saved = planService.create(request("토익 900"), null);
+        PlanSaveRequest updateRequest = new PlanSaveRequest("토익 900", 99, 2, "완전 초보",
+                saved.tasks(), null, null, saved.startDate(), "2026-07-20", saved.createdAt());
+
+        // when
+        PlanResponse updated = planService.update(saved.id(), updateRequest, null);
+
+        // then — span(07-16, 07-20) = 5
+        assertThat(updated.duration()).isEqualTo(5);
+    }
+
     @Test
     void create_보관한도초과_PLAN_LIMIT_EXCEEDED예외() {
         // given
@@ -395,6 +472,21 @@ class PlanServiceTest {
         // then
         assertThat(result.plan().endDate()).isEqualTo(dayAfterTomorrow);
         assertThat(result.plan().duration()).isEqualTo(3);
+    }
+
+    @Test
+    void carryOver_startDate불변_오늘키삭제돼도유지() {
+        // given — 오늘 미완료 1건뿐 → 이월하면 오늘 키가 비어 삭제되고 최소 날짜 키가 내일로 이동한다
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "총정리", "completed", false)));
+        PlanResponse saved = createPlanWithTasks(tasks, 1, TODAY); // startDate=TODAY
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), null);
+
+        // then — 오늘 키는 사라졌지만 startDate는 생성 시 값(TODAY)으로 보존(min-key를 추적하지 않는다)
+        assertThat(result.plan().tasks()).doesNotContainKey(TODAY);
+        assertThat(result.plan().startDate()).isEqualTo(TODAY);
     }
 
     @Test

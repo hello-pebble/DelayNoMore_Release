@@ -141,7 +141,7 @@ class PlanSaveRequestValidationTest {
 
         // when / then — @Pattern은 null을 통과시키고, toPlan이 DRAFT 기본값을 준다
         assertThat(violations(request)).isEmpty();
-        assertThat(request.toPlan(1L, 0L).status()).isEqualTo("DRAFT");
+        assertThat(request.toPlan(1L, 0L, "2026-07-16", 1).status()).isEqualTo("DRAFT");
     }
 
     @Test
@@ -154,6 +154,64 @@ class PlanSaveRequestValidationTest {
             assertThat(violations).as("status: %s", badStatus).hasSize(1);
             assertThat(violations.iterator().next().getPropertyPath().toString()).isEqualTo("status");
         }
+    }
+
+    // === 날짜 규칙(@ValidPlanDates) — endDate 형식·범위 검증(startDate·duration은 서버 산출) ===
+
+    @Test
+    void endDate_마지막할일날짜보다앞_위반() {
+        // given — 마지막 할 일은 07-18인데 endDate가 07-17이면 포함 규칙 위반
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(task("t-1", "단어 암기", false)),
+                "2026-07-18", List.of(task("t-2", "총정리", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-17", "2026-07-16T00:00:00Z");
+
+        // when
+        Set<ConstraintViolation<PlanSaveRequest>> violations = violations(request);
+
+        // then
+        assertThat(violations).hasSize(1);
+        assertThat(violations.iterator().next().getPropertyPath().toString()).isEqualTo("endDate");
+    }
+
+    @Test
+    void endDate_비ISO형식_위반() {
+        // given — 비패딩 날짜(프론트는 항상 패딩된 형식만 생성)
+        Map<String, Object> tasks = Map.of("2026-07-16", List.of(task("t-1", "단어 암기", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-7-1", "2026-07-16T00:00:00Z");
+
+        // when
+        Set<ConstraintViolation<PlanSaveRequest>> violations = violations(request);
+
+        // then
+        assertThat(violations).hasSize(1);
+        assertThat(violations.iterator().next().getPropertyPath().toString()).isEqualTo("endDate");
+    }
+
+    @Test
+    void endDate_마지막할일날짜와같음_단일일_통과() {
+        // given — 하루짜리 계획(시작=종료=유일한 할 일 날짜)
+        Map<String, Object> tasks = Map.of("2026-07-16", List.of(task("t-1", "총정리", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-16", "2026-07-16T00:00:00Z");
+
+        // when / then
+        assertThat(violations(request)).isEmpty();
+    }
+
+    @Test
+    void endDate_날짜갭있지만마지막할일이내_통과() {
+        // given — 중간 날짜가 비어도(키 갭) endDate가 마지막 할 일 날짜 이상이면 유효(상한만 검증)
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(task("t-1", "단어 암기", false)),
+                "2026-07-19", List.of(task("t-2", "총정리", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 5, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-20", "2026-07-16T00:00:00Z");
+
+        // when / then
+        assertThat(violations(request)).isEmpty();
     }
 
     @Test

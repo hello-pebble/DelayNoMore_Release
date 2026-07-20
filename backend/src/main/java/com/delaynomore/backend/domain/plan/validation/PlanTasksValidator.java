@@ -1,10 +1,9 @@
 package com.delaynomore.backend.domain.plan.validation;
 
+import com.delaynomore.backend.domain.plan.support.PlanDates;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 
@@ -26,7 +25,7 @@ public class PlanTasksValidator implements ConstraintValidator<ValidPlanTasks, M
         }
         for (Map.Entry<String, Object> dayEntry : tasks.entrySet()) {
             String date = dayEntry.getKey();
-            if (!isIsoDate(date)) {
+            if (!PlanDates.isIsoDate(date)) {
                 return violation(context, "tasks의 날짜 키는 YYYY-MM-DD 형식이어야 합니다: '" + safe(date) + "'");
             }
             if (!(dayEntry.getValue() instanceof List<?> list)) {
@@ -40,16 +39,6 @@ public class PlanTasksValidator implements ConstraintValidator<ValidPlanTasks, M
             }
         }
         return true;
-    }
-
-    private static boolean isIsoDate(String key) {
-        if (key == null) return false;
-        try {
-            LocalDate.parse(key);
-            return true;
-        } catch (DateTimeParseException e) {
-            return false;
-        }
     }
 
     // 항목 하나의 형식 문제를 설명 문자열로 돌려준다(문제 없으면 null).

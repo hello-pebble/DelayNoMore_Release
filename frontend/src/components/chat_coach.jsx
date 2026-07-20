@@ -17,7 +17,7 @@ import {
 } from '../ai_engine';
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
-  fetchReflection, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes
+  fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { todayStr } from '../date_utils';
@@ -83,6 +83,10 @@ function clearLastViewedPlanId() {
 
 // 현재 화면 상태 → 서버 보관 요청 본문. slots는 draftChecklist의 4개 필드와 완전 중복이라
 // 별도로 보내지 않는다(복원 시 응답에서 재구성).
+// startDate/duration은 서버가 tasks 날짜 키로 산출하므로 여기서 보내도 무시된다. endDate는
+// 서버가 검증만 한다(형식·범위). 그래도 세 필드를 계속 보내는 이유는 배포 스큐 안전성이다 —
+// 신클라이언트가 구서버(pass-through)로 요청해도 동작이 깨지지 않게. 응답에는 서버 산출값이
+// 담겨 fromPlanResponse가 그대로 채택한다.
 function toPlanPayload(draftChecklist) {
   const {
     goalName, duration, dailyHours, currentLevel, tasks,
@@ -93,6 +97,7 @@ function toPlanPayload(draftChecklist) {
 
 // 서버 보관함 응답 → 화면 상태(slots + draftChecklist). 클라이언트 id는 서버 발급 숫자와
 // 구분되게 chk-srv- 프리픽스를 붙인다(고정 상태 status/confirmedAt도 그대로 복원).
+// startDate/endDate/duration은 서버 산출·검증값을 그대로 채택한다(규칙 소유권은 서버).
 function fromPlanResponse(plan) {
   const draftChecklist = {
     id: `chk-srv-${plan.id}`,
@@ -280,6 +285,11 @@ export default function ChatCoach() {
   const [reflections, setReflections] = useState({});
   const [reflectionErrors, setReflectionErrors] = useState({});
   const [reflectionDrafts, setReflectionDrafts] = useState({});
+  // 지난 회고 기록 목록 — 계획별 접이식. historyOpen는 {planId: 펼침여부},
+  // reflectionHistory는 {planId: 회고[] | 'loading' | 'error'}(오늘 1건과 분리된 전체 이력, 서버가
+  // 최신순(date DESC) 정렬해 내려준다). 펼칠 때마다 refetch하고, 회고 저장 성공 시 캐시를 비운다.
+  const [historyOpen, setHistoryOpen] = useState({});
+  const [reflectionHistory, setReflectionHistory] = useState({});
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -1251,6 +1261,26 @@ export default function ChatCoach() {
     }));
   };
 
+  // 계획의 전체 회고를 서버에서 최신순(date DESC)으로 불러온다. 오류 시 'error'로 두어 재시도
+  // 행을 띄운다(오늘 마무리 loadReflections와 같은 방어).
+  const loadReflectionHistory = async (planId) => {
+    setReflectionHistory((prev) => ({ ...prev, [planId]: 'loading' }));
+    try {
+      const list = await fetchReflections(planId);
+      setReflectionHistory((prev) => ({ ...prev, [planId]: Array.isArray(list) ? list : [] }));
+    } catch {
+      setReflectionHistory((prev) => ({ ...prev, [planId]: 'error' }));
+    }
+  };
+
+  // 지난 회고 기록 목록을 펼치거나 접는다. 펼칠 때마다 refetch해 다른 방문자의 회고도 반영한다
+  // (보관된 계획 목록의 "펼칠 때 refetch" 관례와 동일).
+  const toggleReflectionHistory = (planId) => {
+    const next = !historyOpen[planId];
+    setHistoryOpen((prev) => ({ ...prev, [planId]: next }));
+    if (next) loadReflectionHistory(planId);
+  };
+
   // 작성/수정 중 선택 상태 갱신(난이도·이유 공용).
   const setReflectionDraftField = (planId, field, value) => {
     setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], [field]: value } }));
@@ -1282,6 +1312,13 @@ export default function ChatCoach() {
         delete next[planId]; // 저장 완료 → 폼 종료(저장 뷰로 전환)
         return next;
       });
+      // 오늘 회고가 바뀌었으니 지난 회고 목록 캐시를 비운다 — 다음에 펼치면 최신 목록을 다시 받는다.
+      setReflectionHistory((prev) => {
+        const next = { ...prev };
+        delete next[planId];
+        return next;
+      });
+      setHistoryOpen((prev) => ({ ...prev, [planId]: false }));
     } catch (err) {
       setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], saving: false } }));
       if (err.code === 'PLAN_NOT_FOUND') {
@@ -1565,6 +1602,51 @@ export default function ChatCoach() {
                         </button>
                       </div>
                     )}
+                    {/* 지난 회고 기록 — 계획의 전체 회고를 서버 최신순 그대로 접이식 표시(오늘 회고는 위 뷰가 담당) */}
+                    <div style={{ marginTop: '6px', borderTop: '1px dashed var(--border)', paddingTop: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleReflectionHistory(group.planId)}
+                        style={{ ...quickReplyButtonStyle, alignSelf: 'flex-start' }}
+                        aria-expanded={historyOpen[group.planId] === true}
+                      >
+                        {historyOpen[group.planId] ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                        지난 회고
+                      </button>
+                      {historyOpen[group.planId] && (() => {
+                        const history = reflectionHistory[group.planId];
+                        if (history === 'error') {
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => loadReflectionHistory(group.planId)}
+                              style={{ ...quickReplyButtonStyle, marginTop: '4px' }}
+                            >
+                              <RefreshCw size={12} />
+                              회고 기록을 불러오지 못했습니다 · 다시 시도
+                            </button>
+                          );
+                        }
+                        if (!Array.isArray(history)) {
+                          return <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>불러오는 중...</div>;
+                        }
+                        if (history.length === 0) {
+                          return <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>아직 기록된 회고가 없어요</div>;
+                        }
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                            {history.map((r) => (
+                              <div key={r.date} style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>{r.date}</span>
+                                <span>{r.completedCount}/{r.totalCount} 완료</span>
+                                <span>· {reflectionLabel(metaOptions.difficulties, r.difficulty)}</span>
+                                <span>· {reflectionLabel(metaOptions.reasons, r.reason)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 );
               })}

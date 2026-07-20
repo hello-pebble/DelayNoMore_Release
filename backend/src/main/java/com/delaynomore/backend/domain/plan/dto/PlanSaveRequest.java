@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.dto;
 
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.validation.ValidPlanDates;
 import com.delaynomore.backend.domain.plan.validation.ValidPlanTasks;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -13,6 +14,9 @@ import java.util.Map;
 
 // 계획 보관/수정 요청(POST·PUT 공용). 형식 검증은 여기서(@Valid) 하고, 위반은 400 + fieldErrors.
 // tasks는 형식(@ValidPlanTasks)만 검증하고 내용은 원본 그대로 보관한다(정규화·변조 없음).
+// 날짜 규칙(@ValidPlanDates)은 endDate 형식·범위만 검증한다 — startDate·duration은 서버가
+// tasks에서 산출하므로(PlanService) 클라이언트 값은 무시된다.
+@ValidPlanDates
 public record PlanSaveRequest(
 
         @NotBlank(message = "목표를 공백 제외 2자 이상 입력해주세요.")
@@ -46,6 +50,8 @@ public record PlanSaveRequest(
         @Pattern(regexp = "DRAFT|CONFIRMED", message = "status는 DRAFT 또는 CONFIRMED만 허용됩니다.")
         String status,
         String confirmedAt,
+        // startDate는 서버가 tasks 최초 날짜 키로 산출한다(클라이언트 값은 advisory — 무시). endDate는
+        // 클라이언트 값을 유지하되 @ValidPlanDates로 형식·범위(>= 마지막 할 일 날짜)를 검증한다.
         String startDate,
         String endDate,
         String createdAt
@@ -53,9 +59,11 @@ public record PlanSaveRequest(
 
     private static final String DEFAULT_STATUS = "DRAFT";
 
-    public Plan toPlan(Long id, long savedAt) {
+    // 서버가 산출한 startDate·duration을 주입하는 오버로드 — 클라이언트가 보낸 startDate/duration은
+    // 무시하고(규칙 소유권은 서버) endDate·나머지 필드만 왕복시킨다. PlanService가 사용한다.
+    public Plan toPlan(Long id, long savedAt, String resolvedStartDate, int resolvedDuration) {
         String resolvedStatus = (status == null || status.isBlank()) ? DEFAULT_STATUS : status;
-        return new Plan(id, goalName, duration, dailyHours, currentLevel, tasks,
-                resolvedStatus, confirmedAt, startDate, endDate, createdAt, savedAt);
+        return new Plan(id, goalName, resolvedDuration, dailyHours, currentLevel, tasks,
+                resolvedStatus, confirmedAt, resolvedStartDate, endDate, createdAt, savedAt);
     }
 }
