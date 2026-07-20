@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.service;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
@@ -54,6 +55,14 @@ public class PlanService {
         Plan plan = planRepository.findById(id)
                 .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
         return PlanResponse.from(plan);
+    }
+
+    // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷으로 묶어 주별 완료율을 낸다. 읽기 전용이라
+    // getPlan과 같은 조회·404 패턴. 완료 개수 계산은 서버 소유(plan.tasks 기준, WeeklySummaryResponse.from).
+    public WeeklySummaryResponse getWeeklySummary(long id) {
+        Plan plan = planRepository.findById(id)
+                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
+        return WeeklySummaryResponse.from(plan);
     }
 
     public PlanResponse update(long id, PlanSaveRequest request, String sessionId) {

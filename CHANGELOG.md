@@ -14,6 +14,26 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.10.0]
+
+주간 완료율 요약 기능. 계획을 시작일 기준 7일 버킷("N주차")으로 묶어 주별 완료율을 내려주는
+읽기 전용 API와, 보관함 목록에서 계획별로 펼쳐 보는 요약 카드를 추가했다. 완료 개수 계산은
+기존과 같이 서버가 소유(`plan.tasks` 기준)하고, 저장소는 휘발성 인메모리 정책을 유지한다.
+
+> 참고: 이 v0.10.0은 v0.9.3 다음의 신규 MINOR 릴리스다. 위 "재번호 안내"에 과거 PR 제목으로
+> 나오는 'v0.10.0'(현재 v0.9.1로 재번호됨)과는 다른 릴리스다 — SemVer상 v0.9.3의 다음 MINOR가
+> v0.10.0이라 번호만 겹친다.
+
+### Added
+- **주간 완료율 요약 API** — `GET /plans/{id}/summary/weekly`. 계획을 startDate 기준 7일 버킷으로
+  슬라이스해 주별 `{index, startDate, endDate, done, total, rate}`와 전체 `{totalDone, totalTotal}`을
+  응답한다. 완료율 계산은 서버 소유 — 신규 도메인 메서드 `Plan.countTasksBetween`(날짜 범위 합산)과
+  주 버킷 산출 support 유틸 `PlanWeeklySummary`(startDate+7일 단위, 마지막 주는 endDate에서 잘린 부분
+  주). 없는 계획은 404 `PLAN_NOT_FOUND`.
+- **주간 요약 카드(프론트)** — 보관함 목록 각 계획 행에 "주간 요약" 버튼을 추가해, 펼치면
+  주차별 완료율을 진행 바와 함께 표시한다(변경 이력 패널과 같은 온디맨드 로드·펼칠 때 refetch
+  패턴). 완료율은 서버가 계산한 값을 표시만 한다(`fetchWeeklySummary` 래퍼 신규).
+
 ## [0.9.3]
 
 이관 예정 backlog 정리 — **문서 전용, 코드/동작 변경 없음**. `docs/BACKEND_MIGRATION.md`에
@@ -559,7 +579,8 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...v0.9.1

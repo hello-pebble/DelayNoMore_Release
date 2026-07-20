@@ -115,6 +115,11 @@ export const fetchPlans = () => requestJson('/plans', null, 'GET');
 export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 
+// 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
+// 서버 소유(plan.tasks 기준)라 프론트는 표시만 한다. 응답 data: { planId, startDate, endDate,
+// totalDone, totalTotal, weeks: [{ index, startDate, endDate, done, total, rate }] }
+export const fetchWeeklySummary = (planId) => requestJson(`/plans/${planId}/summary/weekly`, null, 'GET');
+
 // 하루 마무리 회고 — 계획별·날짜별 1건(PUT=업서트). 완료 개수는 보내지 않는다(서버가
 // plan.tasks에서 재계산). 저장은 서버 기준 오늘(Asia/Seoul) 날짜만 허용된다.
 // 호출부는 err.code(REFLECTION_NOT_FOUND / PLAN_NOT_FOUND 등)로 분기한다.

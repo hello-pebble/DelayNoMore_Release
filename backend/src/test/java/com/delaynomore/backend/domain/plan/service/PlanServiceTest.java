@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.service;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
@@ -236,6 +237,89 @@ class PlanServiceTest {
         // when
         BusinessException exception = catchThrowableOfType(
                 BusinessException.class, () -> planService.getPlan(MISSING_ID));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+    }
+
+    // === 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷으로 묶어 주별 완료율(서버 소유) ===
+
+    @Test
+    void getWeeklySummary_8일계획_2주차로분할_주별완료율산출() {
+        // given — 8일(07-16~07-23): 1주차(07-16~07-22)에 완료 1/전체 2, 2주차(07-23)에 완료 1/전체 1
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(
+                        Map.of("id", "t-1", "content", "단어 암기", "completed", true),
+                        Map.of("id", "t-2", "content", "듣기 연습", "completed", false)),
+                "2026-07-23", List.of(
+                        Map.of("id", "t-3", "content", "총정리", "completed", true)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 8, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-23", "2026-07-16T00:00:00Z");
+        PlanResponse saved = planService.create(request, null);
+
+        // when
+        WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id());
+
+        // then — 주 경계 포함 판정(07-23은 2주차)과 주별 done/total/rate
+        assertThat(summary.planId()).isEqualTo(saved.id());
+        assertThat(summary.startDate()).isEqualTo("2026-07-16");
+        assertThat(summary.endDate()).isEqualTo("2026-07-23");
+        assertThat(summary.totalDone()).isEqualTo(2);
+        assertThat(summary.totalTotal()).isEqualTo(3);
+        assertThat(summary.weeks()).containsExactly(
+                new WeeklySummaryResponse.Week(1, "2026-07-16", "2026-07-22", 1, 2, 50),
+                new WeeklySummaryResponse.Week(2, "2026-07-23", "2026-07-23", 1, 1, 100));
+    }
+
+    @Test
+    void getWeeklySummary_주별합계_countAllTasks와일치() {
+        // given — 주 경계에 걸친 완료/전체가 주별로 나뉘어도 합계는 전체 진행률과 같아야 한다
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(
+                        Map.of("id", "t-1", "content", "a", "completed", true),
+                        Map.of("id", "t-2", "content", "b", "completed", false)),
+                "2026-07-24", List.of(
+                        Map.of("id", "t-3", "content", "c", "completed", true),
+                        Map.of("id", "t-4", "content", "d", "completed", true)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 9, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-24", "2026-07-16T00:00:00Z");
+        PlanResponse saved = planService.create(request, null);
+
+        // when
+        WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id());
+
+        // then
+        int weekDoneSum = summary.weeks().stream().mapToInt(WeeklySummaryResponse.Week::done).sum();
+        int weekTotalSum = summary.weeks().stream().mapToInt(WeeklySummaryResponse.Week::total).sum();
+        assertThat(weekDoneSum).isEqualTo(summary.totalDone()).isEqualTo(3);
+        assertThat(weekTotalSum).isEqualTo(summary.totalTotal()).isEqualTo(4);
+    }
+
+    @Test
+    void getWeeklySummary_rate_반올림() {
+        // given — 완료 1/전체 3 → 33% (Math.round(33.33))
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(
+                        Map.of("id", "t-1", "content", "a", "completed", true),
+                        Map.of("id", "t-2", "content", "b", "completed", false),
+                        Map.of("id", "t-3", "content", "c", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-16", "2026-07-16T00:00:00Z");
+        PlanResponse saved = planService.create(request, null);
+
+        // when
+        WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id());
+
+        // then
+        assertThat(summary.weeks()).hasSize(1);
+        assertThat(summary.weeks().get(0).rate()).isEqualTo(33);
+    }
+
+    @Test
+    void getWeeklySummary_없는ID_PLAN_NOT_FOUND예외() {
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.getWeeklySummary(MISSING_ID));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
