@@ -5,6 +5,14 @@
 
 ## 이관 완료
 
+### 진행률·이월·enum 메타 (2026-07)
+
+| # | 항목 | 서버 구현 | 프론트에 남은 것 |
+|---|---|---|---|
+| 1 | **진행률/완료율 계산** | `Plan.countAllTasks()`(회고의 `countTasksOn`과 같은 도메인 메서드) → `PlanResponse.progress {done, total}`. 목록·단건 응답 모두 포함 | 라이브 draft(`draftChecklist`)의 진행률 로컬 계산(`getPlanProgress`) — 600ms 디바운스 동기화 전의 즉시 표시 UX. 서버 스냅샷 표시는 progress 필드 사용 |
+| 2 | **미완료 이월(carry-over) 연산** | `POST /plans/{id}/carry-over` 도메인 액션 — 오늘(KST) 미완료를 내일로 이동(ID 보존), 기간 밖이면 endDate/duration 하루 연장, CONFIRMED는 409 `PLAN_LOCKED`. 연산·가드는 `PlanRepository.mutate`의 키 단위 원자 구간에서 실행. 이력("미완료 N건을 D로 이동")은 액션이 직접 발행 — PUT diff의 이월 역감지(`detectCarryOver`)는 제거됨 | 확인창용 미완료 카운트(`countTodayIncomplete`)와 응답 반영만. 이월 후 `lastSyncedRef` 선갱신으로 디바운스 PUT과의 경합 차단 |
+| 3 | **회고/이력 enum 소스오브트루스** | `ReflectionDifficulty`·`ReflectionReason`·`AuditEventType` enum(코드+한글 라벨) + `GET /meta/reflection-options`·`GET /meta/audit-event-types`. 저장 검증(`@Pattern`)과 enum의 일치는 드리프트 가드 테스트가 보장 | `DEFAULT_*` 폴백 사본 — 백엔드 미가용 시에도 회고/이력 화면 유지(마운트 시 메타 API로 교체) |
+
 ### PR #35 (2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
@@ -20,20 +28,17 @@
 - OpenRouter API 키(서버 환경변수에만 존재)
 - 초안 생성 입력 범위(`AiDraftRequest` — 기간 1~14일, 하루 1~24시간). 보관(`PlanSaveRequest`)의
   duration 1~365는 의도된 느슨함: 이월·"기간 +3일" 반복이 기간을 계속 연장할 수 있어서다
-- 회고 완료 개수 재계산(`ReflectionService.countTodayTasks` — 클라이언트 수치를 믿지 않음)
-- 변경 이력 diff 발행(`AuditEventService` — PUT 전체 교체에서 이벤트 종류 복원)
+- 회고 완료 개수 재계산(`Plan.countTasksOn` — 클라이언트 수치를 믿지 않음. 진행률 이관 때 `ReflectionService`의 private 메서드에서 엔티티 도메인 메서드로 추출됨)
+- 변경 이력 diff 발행(`AuditEventService` — PUT 전체 교체에서 이벤트 종류 복원. 이월 detail은 이관 후 carry-over 액션이 직접 발행)
 
 ## 이관 예정 (우선순위순)
 
 | # | 항목 | 현재 위치 | 이관 방안 |
 |---|---|---|---|
-| 1 | **진행률/완료율 계산** | `chat_coach.jsx` `getPlanProgress`·`todayGroups` | 서버의 `countTodayTasks` 재사용해 `PlanResponse`에 progress 필드 추가 — 목록 API가 tasks 전체를 안 내려도 되게 됨 |
-| 2 | **미완료 이월(carry-over) 연산** | `chat_coach.jsx` `carryOverTasks` (서버는 결과를 `detectCarryOver`로 역감지) | `POST /plans/{id}/carry-over` 도메인 액션 엔드포인트 — 서버가 수행하면 감지 로직 자체가 불필요 |
-| 3 | **회고/이력 enum 소스오브트루스** | `chat_coach.jsx` `DIFFICULTY_OPTIONS`·`REASON_OPTIONS`·`AUDIT_EVENT_LABELS` 하드코딩 | 메타 API(예: `GET /api/v1/meta/reflection-options`)로 코드+라벨 제공 |
-| 4 | **startDate/endDate 산출·검증** | `ai_engine.js` `getFormattedDate` 기반 계산, 서버는 무검증 왕복 | 계획 생성/수정 시 서버가 산출·검증(duration과 tasks 날짜 개수 일관성 포함) |
-| 5 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
-| 6 | **LLM patch 병합** | `ai_engine.js` `applyPlanPatch`·`draftWithPatch` | 서버가 병합 후 정규화된 전체 계획 반환 — 토큰/페이로드 트레이드오프 검토 |
-| 7 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
+| 1 | **startDate/endDate 산출·검증** | `ai_engine.js` `getFormattedDate` 기반 계산, 서버는 무검증 왕복 | 계획 생성/수정 시 서버가 산출·검증(duration과 tasks 날짜 개수 일관성 포함) |
+| 2 | **AI 초안의 서버 측 저장 연결** | 초안 파싱(서버) 후 프론트가 별도 POST /plans | draft 완료 시 서버가 바로 보관(옵션) — 스트리밍 UX와 조율 필요 |
+| 3 | **LLM patch 병합** | `ai_engine.js` `applyPlanPatch`·`draftWithPatch` | 서버가 병합 후 정규화된 전체 계획 반환 — 토큰/페이로드 트레이드오프 검토 |
+| 4 | **mock 폴백 계획 생성기** | `ai_engine.js` `generateMockChecklistDraft` 등(서버 프롬프트 규칙 재구현) | "AI 미가용 시 서버가 템플릿 초안 생성"으로 이관 — 단, 백엔드 자체가 죽었을 때의 폴백이라는 존재 이유가 있어 프론트 폴백 유지 여부는 별도 결정 |
 
 ## 이관하지 않는 것 (프론트 소유가 자연스러움)
 

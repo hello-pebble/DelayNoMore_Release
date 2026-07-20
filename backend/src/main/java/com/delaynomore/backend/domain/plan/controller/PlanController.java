@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.plan.controller;
 
+import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.service.PlanService;
@@ -65,6 +66,16 @@ public class PlanController {
                                             @Valid @RequestBody PlanSaveRequest request,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         return ApiResponse.ok(planService.update(id, request, sessionId));
+    }
+
+    // 본문 없는 도메인 액션 — 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간 하루 연장)은
+    // 서버가 소유하므로 클라이언트는 날짜를 지정하지 않는다.
+    @Operation(summary = "미완료 이월 — 오늘(KST) 미완료 항목을 내일로 이동")
+    @PostMapping("/{id}/carry-over")
+    public ApiResponse<CarryOverResponse> carryOver(@PathVariable long id,
+                                                    @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to carry over plan {}", id);
+        return ApiResponse.ok(planService.carryOver(id, sessionId));
     }
 
     @Operation(summary = "보관된 계획 삭제")

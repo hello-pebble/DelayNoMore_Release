@@ -106,6 +106,10 @@ export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/drafts/stream
 // 로그인/DB 도입 전의 원격 데모용이며, 응답/요청 형태는 PlanController(/api/v1/plans) 계약을 따른다.
 export const createPlan = (payload) => requestJson('/plans', payload);
 export const updatePlan = (id, payload) => requestJson(`/plans/${id}`, payload, 'PUT');
+// 미완료 이월 도메인 액션 — 본문 없는 POST. 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간
+// 하루 연장)은 서버 소유라 클라이언트는 날짜를 지정하지 않는다.
+// 응답: { movedCount, targetDate, plan } — movedCount 0은 "옮길 게 없음"의 정상 no-op.
+export const carryOverPlan = (id) => requestJson(`/plans/${id}/carry-over`, null);
 export const fetchPlans = () => requestJson('/plans', null, 'GET');
 export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
@@ -114,6 +118,11 @@ export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 // plan.tasks에서 재계산). 저장은 서버 기준 오늘(Asia/Seoul) 날짜만 허용된다.
 // 호출부는 err.code(REFLECTION_NOT_FOUND / PLAN_NOT_FOUND 등)로 분기한다.
 export const putReflection = (planId, date, payload) => requestJson(`/plans/${planId}/reflections/${date}`, payload, 'PUT');
+
+// 메타(선택지·라벨) — 회고 선택지와 이력 이벤트 라벨의 소스오브트루스는 서버 enum이다.
+// 프론트는 마운트 시 한 번 받아 쓰고, 실패하면 하드코딩 폴백(DEFAULT_*)으로 화면을 지킨다.
+export const fetchReflectionOptions = () => requestJson('/meta/reflection-options', null, 'GET');
+export const fetchAuditEventTypes = () => requestJson('/meta/audit-event-types', null, 'GET');
 
 // 계획 변경 이력(최신순) — 이벤트는 서버가 변경 서비스 안에서 직접 발행하므로 읽기만 있다.
 // 삭제된 계획 id도 404가 아니라 과거 이력(또는 빈 목록)으로 응답한다.

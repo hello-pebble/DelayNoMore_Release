@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.Plan;
@@ -7,6 +8,7 @@ import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
+import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -78,6 +80,41 @@ public class PlanService {
                 PlanTaskDiff.parseTasks(current.tasks()), PlanTaskDiff.parseTasks(incoming.tasks()))) {
             throw new BusinessException(ErrorCode.PLAN_LOCKED);
         }
+    }
+
+    // 미완료 이월 도메인 액션 — 오늘(KST) 미완료를 내일로 옮긴다. 예전엔 프론트가 계산해 PUT으로
+    // 보내고 서버가 diff에서 역감지했지만, 이제 날짜 규칙과 연산 모두 서버가 소유한다.
+    // 가드·연산은 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼 다른 쓰기와 경합하지 않는다.
+    public CarryOverResponse carryOver(long id, String sessionId) {
+        String fromDate = KstDates.today().toString();
+        String toDate = KstDates.today().plusDays(1).toString();
+        int[] movedCount = new int[1];
+        Plan updated = planRepository.mutate(id, current -> {
+            // 이월은 구조 변경(항목 이동·기간 연장)이므로 고정 계획에는 PUT 가드와 같은 판정을 적용한다.
+            if (current.isConfirmed()) {
+                throw new BusinessException(ErrorCode.PLAN_LOCKED);
+            }
+            PlanCarryOver.Result result = PlanCarryOver.apply(current.tasks(), fromDate, toDate);
+            movedCount[0] = result.movedCount();
+            if (result.movedCount() == 0) {
+                return current; // 이월할 미완료 없음 — 계획 불변(savedAt 보존), 이력도 없다.
+            }
+            // 내일이 기간 밖이면 종료일·기간을 하루 연장한다(프론트 기존 동작 그대로).
+            boolean extendsRange = current.endDate() != null && current.endDate().compareTo(toDate) < 0;
+            return new Plan(current.id(), current.goalName(),
+                    extendsRange ? (current.duration() == null ? 1 : current.duration() + 1) : current.duration(),
+                    current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
+                    current.confirmedAt(), current.startDate(),
+                    extendsRange ? toDate : current.endDate(), current.createdAt(),
+                    System.currentTimeMillis());
+        });
+        if (updated == null) {
+            throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+        }
+        if (movedCount[0] > 0) {
+            auditEventService.recordCarryOver(id, movedCount[0], toDate, sessionId);
+        }
+        return new CarryOverResponse(movedCount[0], toDate, PlanResponse.from(updated));
     }
 
     public void delete(long id, String sessionId) {

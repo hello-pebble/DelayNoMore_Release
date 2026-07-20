@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
@@ -7,6 +8,7 @@ import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
+import com.delaynomore.backend.global.time.KstDates;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -66,6 +68,43 @@ class PlanServiceTest {
         assertThat(saved.goalName()).isEqualTo("토익 900");
         assertThat(saved.tasks()).isEqualTo(request.tasks());
         assertThat(saved.status()).isEqualTo("DRAFT"); // status 미지정 시 기본값
+    }
+
+    @Test
+    void create_진행률계산_progress포함() {
+        // given — 이틀에 걸쳐 완료 2건 / 전체 5건
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(
+                        Map.of("id", "t-1", "content", "단어 암기", "completed", true),
+                        Map.of("id", "t-2", "content", "듣기 연습", "completed", false),
+                        Map.of("id", "t-3", "content", "문법 정리", "completed", true)),
+                "2026-07-17", List.of(
+                        Map.of("id", "t-4", "content", "모의고사", "completed", false),
+                        Map.of("id", "t-5", "content", "오답 노트", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
+
+        // when
+        PlanResponse saved = planService.create(request, null);
+
+        // then — 완료율 계산은 서버 소유
+        assertThat(saved.progress()).isEqualTo(new PlanResponse.Progress(2, 5));
+    }
+
+    @Test
+    void create_tasks비정상구조_progress방어계산() {
+        // given — 날짜 값이 List가 아닌 항목이 섞여 있어도(프론트 원본 그대로 보관) 죽지 않고 무시
+        Map<String, Object> tasks = Map.of(
+                "2026-07-16", List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", true)),
+                "2026-07-17", "이상한 값");
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
+                null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
+
+        // when
+        PlanResponse saved = planService.create(request, null);
+
+        // then — 비정상 날짜는 0건 취급, 정상 날짜만 집계
+        assertThat(saved.progress()).isEqualTo(new PlanResponse.Progress(1, 1));
     }
 
     @Test
@@ -289,6 +328,114 @@ class PlanServiceTest {
         // then
         assertThat(updated.goalName()).isEqualTo("토익 990");
         assertThat(updated.status()).isEqualTo("CONFIRMED");
+    }
+
+    // === 미완료 이월(carry-over) 도메인 액션 — 날짜 규칙(오늘 KST → 내일)은 서버 소유 ===
+
+    private static final String TODAY = KstDates.today().toString();
+    private static final String TOMORROW = KstDates.today().plusDays(1).toString();
+
+    private PlanResponse createPlanWithTasks(Map<String, Object> tasks, Integer duration, String endDate) {
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", duration, 2, "완전 초보", tasks,
+                null, null, TODAY, endDate, TODAY + "T00:00:00Z");
+        return planService.create(request, null);
+    }
+
+    @Test
+    void carryOver_미완료있음_내일로이동및이력발행() {
+        // given — 오늘 미완료 2건 + 완료 1건, 내일 키는 아직 없음(endDate는 내일이라 연장 없음)
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "단어 암기", "completed", false),
+                Map.of("id", "t-2", "content", "문법 정리", "completed", true),
+                Map.of("id", "t-3", "content", "듣기 연습", "completed", false)));
+        PlanResponse saved = createPlanWithTasks(tasks, 2, TOMORROW);
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), "session-a");
+
+        // then — 미완료만 내일로, savedAt 갱신, "이동" detail의 PLAN_UPDATED 발행
+        assertThat(result.movedCount()).isEqualTo(2);
+        assertThat(result.targetDate()).isEqualTo(TOMORROW);
+        assertThat(result.plan().tasks().get(TODAY))
+                .isEqualTo(List.of(Map.of("id", "t-2", "content", "문법 정리", "completed", true)));
+        assertThat(result.plan().tasks().get(TOMORROW)).isEqualTo(List.of(
+                Map.of("id", "t-1", "content", "단어 암기", "completed", false),
+                Map.of("id", "t-3", "content", "듣기 연습", "completed", false)));
+        assertThat(result.plan().savedAt()).isGreaterThanOrEqualTo(saved.savedAt());
+        assertThat(auditEventService.getEvents(saved.id()).get(0).detail())
+                .isEqualTo("미완료 2건을 " + TOMORROW + "로 이동");
+    }
+
+    @Test
+    void carryOver_종료일이오늘_endDate와duration하루연장() {
+        // given — 마지막 날의 미완료를 넘기면 기간이 하루 늘어난다(프론트 기존 동작 그대로)
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "총정리", "completed", false)));
+        PlanResponse saved = createPlanWithTasks(tasks, 1, TODAY);
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), null);
+
+        // then
+        assertThat(result.plan().endDate()).isEqualTo(TOMORROW);
+        assertThat(result.plan().duration()).isEqualTo(2);
+    }
+
+    @Test
+    void carryOver_종료일이내일이후_기간연장없음() {
+        // given
+        String dayAfterTomorrow = KstDates.today().plusDays(2).toString();
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "단어 암기", "completed", false)));
+        PlanResponse saved = createPlanWithTasks(tasks, 3, dayAfterTomorrow);
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), null);
+
+        // then
+        assertThat(result.plan().endDate()).isEqualTo(dayAfterTomorrow);
+        assertThat(result.plan().duration()).isEqualTo(3);
+    }
+
+    @Test
+    void carryOver_이월할미완료없음_movedCount0_계획불변() {
+        // given — 오늘 전부 완료
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "단어 암기", "completed", true)));
+        PlanResponse saved = createPlanWithTasks(tasks, 2, TOMORROW);
+        int eventCountBefore = auditEventService.getEvents(saved.id()).size();
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), null);
+
+        // then — 정상 no-op: savedAt 보존(계획 불변), 이력도 없다
+        assertThat(result.movedCount()).isZero();
+        assertThat(result.plan().tasks()).isEqualTo(tasks);
+        assertThat(result.plan().savedAt()).isEqualTo(saved.savedAt());
+        assertThat(auditEventService.getEvents(saved.id())).hasSize(eventCountBefore);
+    }
+
+    @Test
+    void carryOver_고정계획_PLAN_LOCKED예외() {
+        // given — 이월은 구조 변경이므로 고정 계획에는 PUT 가드와 같은 판정이 걸린다
+        PlanResponse confirmed = createConfirmedPlan();
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.carryOver(confirmed.id(), null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void carryOver_없는ID_PLAN_NOT_FOUND예외() {
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.carryOver(MISSING_ID, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
     }
 
     @Test

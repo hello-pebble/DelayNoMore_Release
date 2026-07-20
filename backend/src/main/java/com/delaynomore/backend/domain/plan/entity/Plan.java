@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.plan.entity;
 
+import java.util.List;
 import java.util.Map;
 
 // 보관된 계획 한 건. 지금은 인메모리 보관용이지만, 추후 로그인+PostgreSQL 도입 시 이 record가
@@ -26,5 +27,45 @@ public record Plan(
 
     public boolean isConfirmed() {
         return "CONFIRMED".equals(status);
+    }
+
+    // {완료, 전체} 개수 묶음 — 진행률(PlanResponse.progress)과 회고 완료 개수 재계산이 공유한다.
+    public record TaskCounts(int completed, int total) {
+    }
+
+    // 전 날짜 합산 완료/전체 개수 — 완료율 계산은 서버 소유(프론트는 표시만).
+    public TaskCounts countAllTasks() {
+        if (tasks == null) {
+            return new TaskCounts(0, 0);
+        }
+        int completed = 0;
+        int total = 0;
+        for (Object dayTasks : tasks.values()) {
+            TaskCounts day = countList(dayTasks);
+            completed += day.completed();
+            total += day.total();
+        }
+        return new TaskCounts(completed, total);
+    }
+
+    // 특정 날짜의 완료/전체 개수 — 회고 저장 시 클라이언트 수치를 믿지 않고 서버가 재계산한다.
+    public TaskCounts countTasksOn(String date) {
+        return countList(tasks == null ? null : tasks.get(date));
+    }
+
+    // tasks 내부 구조는 프론트 원본 그대로라 방어적으로 센다: 날짜 값이 List가 아니면 빈 것으로
+    // (0/0 허용 — 할 일 없는 날의 회고도 유효), 항목은 Map이면서 completed == Boolean.TRUE인
+    // 것만 완료로 센다.
+    private static TaskCounts countList(Object dayTasks) {
+        if (!(dayTasks instanceof List<?> list)) {
+            return new TaskCounts(0, 0);
+        }
+        int completed = 0;
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> task && Boolean.TRUE.equals(task.get("completed"))) {
+                completed++;
+            }
+        }
+        return new TaskCounts(completed, list.size());
     }
 }
