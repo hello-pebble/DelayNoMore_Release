@@ -9,7 +9,12 @@
 - **MINOR**: 하위 호환되는 기능 추가 (예: 목표 저장, 팀 공유)
 - **PATCH**: 하위 호환되는 버그/디자인 수정
 
-## [0.11.1]
+> **재번호 안내**: PR #41~#44(진행률·이월·enum 메타 / 날짜 산출·검증 / LLM patch 병합 / 이관
+> backlog 정리)는 모두 "프론트→백엔드 로직 이관"이라는 하나의 주제라 v0.9.0~v0.9.3(PATCH)으로
+> 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
+> v0.11.1)을 그대로 둔다.
+
+## [0.9.3]
 
 이관 예정 backlog 정리 — **문서 전용, 코드/동작 변경 없음**. `docs/BACKEND_MIGRATION.md`에
 남아 있던 이관 예정 2건의 진행 여부를 결정해 반영했다. 저장소는 기존 휘발성 인메모리 정책을
@@ -25,7 +30,7 @@
   "이관하지 않는 것"으로 옮긴다: 백엔드 미가용 시에도 데모가 끊기지 않게 하는 프론트 최후
   폴백(FEATURES.md #4 보장)이라 프론트에 남는 게 자연스럽다.
 
-## [0.11.0]
+## [0.9.2]
 
 "LLM 채팅 patch 병합 서버 이관" 릴리스. 자유 대화(chat coach)로 계획을 수정할 때 LLM이 내는
 sparse patch(변경된 날짜만)를 프론트가 병합하던 것을 서버로 옮겼다. LLM은 여전히 변경분만
@@ -55,7 +60,7 @@ sparse patch(변경된 날짜만)를 프론트가 병합하던 것을 서버로 
 - **BACKEND_MIGRATION 현황 갱신** — "LLM patch 병합"을 "이관 완료"로 옮기고 잔여 이관 예정
   항목을 renumber(`docs/BACKEND_MIGRATION.md`).
 
-## [0.10.0]
+## [0.9.1]
 
 "날짜 규칙 서버 이관 + 회고 기록 목록" 릴리스. 프론트(브라우저 로컬 날짜)가 계산해
 무검증으로 저장하던 **startDate·endDate·duration**을 서버가 산출·검증하도록 옮기고(규칙 소유권은
@@ -554,9 +559,10 @@ Oracle Cloud Always Free VM에 단일 컨테이너로 배포되어 동작 확인
 ### Removed
 - 중복되던 `backend/Dockerfile` 제거(루트 `Dockerfile`로 단일화).
 
-[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.11.0...HEAD
-[0.11.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...v0.10.0
+[Unreleased]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.1...v0.9.2
+[0.9.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/hello-pebble/DelayNoMore_Release/compare/v0.7.0...v0.8.0

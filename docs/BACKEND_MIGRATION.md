@@ -5,20 +5,20 @@
 
 ## 이관 완료
 
-### LLM 채팅 patch 병합 (2026-07)
+### LLM 채팅 patch 병합 (v0.9.2 · 2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
 |---|---|---|---|
 | 1 | **자유 대화 patch 병합** | `ChatPatchMerger`(신규, ai 도메인 stateless 유틸) — LLM이 여전히 변경된 날짜만 담은 sparse patch를 내면(출력 토큰 절약 유지), 서버가 현재 계획(`AiChatRequest.tasks`)에 병합해 정규화된 전체 tasks(`{id, content, completed}` 객체)를 응답에 담는다. `AiChatResponse.patch` → `tasks`로 계약 변경(clean cut — 단일 배포 데모라 프론트·백엔드 항상 함께 배포). SSE `plan` 이벤트도 `patch`→`tasks`. 완료 체크 보존은 **날짜+content 매칭**(예전 프론트 `carryOverCompleted`와 같은 semantics). `AiResponseParser`는 파싱만 담당(`toChatResponse`→`parseChat`으로 분리), 병합은 현재 계획을 아는 `AiService`가 소유 | 서버가 반환한 전체 tasks를 채택만 한다(`draftWithTasks`) — draft의 duration/endDate 로컬 재계산은 즉시 표시 UX로 유지 |
 
-### startDate/endDate/duration 산출·검증 (2026-07)
+### startDate/endDate/duration 산출·검증 (v0.9.1 · 2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
 |---|---|---|---|
 | 1 | **startDate/duration 산출** | `PlanService`가 `startDate`를 tasks의 **최초 날짜 키**로 산출(생성 시 1회 → 이후 불변, carry-over가 오늘 키를 지워도 보존)하고 `duration`을 `[startDate, endDate]` **span**으로 산출한다. 클라이언트가 보낸 startDate/duration은 무시. carry-over의 기존 `duration+1`도 같은 규칙으로 일원화. 공유 로직은 `PlanDates`(support) 유틸(`isIsoDate`/`minTaskKey`/`maxTaskKey`/`spanDays`) — tasks 키 검증의 ISO 파서도 여기로 통합 | 라이브 draft(`ai_engine.js`)의 startDate/endDate/duration 로컬 계산 — 서버 왕복 전 즉시 표시 UX. 보관 후 표시는 `fromPlanResponse`가 서버 산출값 채택 |
 | 2 | **endDate 검증** | `@ValidPlanDates`(record TYPE 레벨 교차필드 제약) — endDate가 ISO(YYYY-MM-DD)이고 tasks의 마지막 날짜 키 이상인지 검증, 위반은 400 + `fieldErrors.endDate`. endDate는 계획의 지평선이라 마지막 할 일 날짜보다 뒤여도 유효(상한 아닌 하한만 검증) — carry-over만 연장 | 배포 스큐 안전을 위해 `toPlanPayload`가 endDate를 계속 전송(신클라이언트→구서버 호환). 서버가 형식·범위를 강제 |
 
-### 진행률·이월·enum 메타 (2026-07)
+### 진행률·이월·enum 메타 (v0.9.0 · 2026-07)
 
 | # | 항목 | 서버 구현 | 프론트에 남은 것 |
 |---|---|---|---|
@@ -44,7 +44,7 @@
 - 회고 완료 개수 재계산(`Plan.countTasksOn` — 클라이언트 수치를 믿지 않음. 진행률 이관 때 `ReflectionService`의 private 메서드에서 엔티티 도메인 메서드로 추출됨)
 - 변경 이력 diff 발행(`AuditEventService` — PUT 전체 교체에서 이벤트 종류 복원. 이월 detail은 이관 후 carry-over 액션이 직접 발행)
 
-## 이관 보류 (선결 과제 이후 재검토)
+## 이관 보류 (선결 과제 이후 재검토) — 결정: v0.9.3
 
 | # | 항목 | 현재 위치 | 보류 사유 |
 |---|---|---|---|
@@ -52,7 +52,7 @@
 
 ## 이관하지 않는 것 (프론트 소유가 자연스러움)
 
-- **mock 폴백 계획 생성기**(`ai_engine.js` `generateMockChecklistDraft`·`extendMockChecklistDays`·`mockChatWithCoach`) — `OPENROUTER_API_KEY` 미설정/백엔드 미가용 시에도 데모 흐름이 끊기지 않게 하는 **프론트 최후 폴백**(FEATURES.md #4가 보장). 백엔드 자체가 죽으면 서버가 대신 생성해줄 수 없으므로 프론트에 남는 것이 자연스럽다. "AI는 죽었지만 백엔드는 살아있는"(502·키 미설정) 경우만 떼어 서버 템플릿 생성(`AiPromptBuilder.tasksPerDayRange`/`targetDates`로 규칙 일원화)으로 옮길 수는 있으나, 그때도 백엔드 다운용 프론트 생성기는 그대로 필요해 템플릿 로직이 양쪽에 남는다 — 중복 대비 이득이 적어 현행 유지
+- **mock 폴백 계획 생성기**(`ai_engine.js` `generateMockChecklistDraft`·`extendMockChecklistDays`·`mockChatWithCoach`, **결정: v0.9.3**) — `OPENROUTER_API_KEY` 미설정/백엔드 미가용 시에도 데모 흐름이 끊기지 않게 하는 **프론트 최후 폴백**(FEATURES.md #4가 보장). 백엔드 자체가 죽으면 서버가 대신 생성해줄 수 없으므로 프론트에 남는 것이 자연스럽다. "AI는 죽었지만 백엔드는 살아있는"(502·키 미설정) 경우만 떼어 서버 템플릿 생성(`AiPromptBuilder.tasksPerDayRange`/`targetDates`로 규칙 일원화)으로 옮길 수는 있으나, 그때도 백엔드 다운용 프론트 생성기는 그대로 필요해 템플릿 로직이 양쪽에 남는다 — 중복 대비 이득이 적어 현행 유지
 - 로컬 날짜 유틸(`date_utils.js`) — 사용자 타임존 의존 표시
 - 세션 식별자(`session_id.js`)·마지막 본 계획 포인터(localStorage)
 - 600ms 디바운스 동기화·낙관적 UI·실패 롤백(`chat_coach.jsx`)
