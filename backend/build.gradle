@@ -38,6 +38,10 @@ dependencies {
 	// 기동 시 "Unsupported Database: PostgreSQL"로 실패한다. 버전은 Boot BOM 관리.
 	implementation 'org.flywaydb:flyway-core'
 	implementation 'org.flywaydb:flyway-database-postgresql'
+	// Boot 4부터 FlywayAutoConfiguration도 spring-boot-autoconfigure에서 분리돼 별도 스타터가
+	// 필요하다(Jackson·RestClient와 같은 패턴) — 이게 없으면 flyway-core만으로는 마이그레이션이
+	// 자동 실행되지 않는다(스프링이 Flyway 빈을 아예 만들지 않음).
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
