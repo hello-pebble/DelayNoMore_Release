@@ -7,6 +7,8 @@ package com.delaynomore.backend.domain.plan.entity;
 public record AuditEvent(
         long id,           // 저장소 발급 전역 시퀀스 — 최신순 정렬의 단일 기준(동일 시각 타이브레이커)
         long planId,
+        String ownerId,    // 소유자 게스트 ID — 이벤트에 함께 박아, 계획이 삭제된 뒤에도 소유자
+                           // 스코프로 이력을 조회할 수 있게 한다(삭제 이력을 소유자에게 복원).
         String type,       // PLAN_CREATED | PLAN_UPDATED | PLAN_CONFIRMED | TASK_COMPLETED
                            // | TASK_REOPENED | REFLECTION_SAVED | PLAN_DELETED
         String detail,     // 사람이 읽는 부가 설명(한국어, 없으면 null)
@@ -15,6 +17,6 @@ public record AuditEvent(
 ) {
 
     public AuditEvent withId(long newId) {
-        return new AuditEvent(newId, planId, type, detail, sessionId, createdAt);
+        return new AuditEvent(newId, planId, ownerId, type, detail, sessionId, createdAt);
     }
 }

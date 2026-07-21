@@ -7,8 +7,9 @@ import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
-// 계획 변경 이력 저장소 — 계획 보관함과 같은 인메모리(휘발성) 체제. 서버 재시작 시 초기화되고
-// 사용자 구분 없이 모든 방문자가 공용으로 쓴다(원격 기능 테스트용 데모 체제).
+// 계획 변경 이력 저장소 — 계획 보관함과 같은 인메모리(휘발성) 체제. 서버 재시작 시 초기화된다.
+// 조회는 (planId, ownerId) 짝으로만 열려 있어 소유자별로 격리된다 — 이벤트에 소유자를 박아 두어
+// 계획이 삭제된 뒤에도 소유자가 자신의 이력을 조회할 수 있다.
 // 의도적으로 deleteAllByPlanId가 없다 — 감사 이력은 계획 삭제(PLAN_DELETED)를 살아남아야
 // "언제 삭제됐는가"에 답할 수 있고, 메모리는 전역 상한(링버퍼)만으로 관리한다.
 // 추후 DB 도입 시 내부 구현만 교체할 수 있게 시그니처는 DB 관례(append=INSERT, findAllBy…)를 따른다.
@@ -31,10 +32,11 @@ public class AuditEventRepository {
         return saved;
     }
 
-    // id 내림차순(최신 이벤트가 앞) — DB 전환 시 ORDER BY id DESC 로 대체된다.
-    public synchronized List<AuditEvent> findAllByPlanId(long planId) {
+    // (planId, ownerId) 짝으로 조회, id 내림차순(최신 이벤트가 앞) — 남의 계획은 빈 목록이 된다.
+    // DB 전환 시 WHERE plan_id = ? AND owner_id = ? ORDER BY id DESC 로 대체된다.
+    public synchronized List<AuditEvent> findAllByPlanIdAndOwner(long planId, String ownerId) {
         return store.stream()
-                .filter(e -> e.planId() == planId)
+                .filter(e -> e.planId() == planId && ownerId.equals(e.ownerId()))
                 .sorted((a, b) -> Long.compare(b.id(), a.id()))
                 .toList();
     }

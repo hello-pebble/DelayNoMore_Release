@@ -7,6 +7,7 @@ import java.util.Map;
 // 테이블 행과 1:1로 대응하도록 필드를 평탄하게 유지한다. tasks는 프론트 스키마 원본 그대로 보관.
 public record Plan(
         Long id,                   // 서버 발급 ID (저장 전 null)
+        String owner,              // 소유자 게스트 ID — 브라우저별 안정 식별자(X-Guest-Id 헤더). 로그인 시 memberId로 이전
         String goalName,
         Integer duration,
         Integer dailyHours,
@@ -21,7 +22,7 @@ public record Plan(
 ) {
 
     public Plan withId(long newId) {
-        return new Plan(newId, goalName, duration, dailyHours, currentLevel, tasks,
+        return new Plan(newId, owner, goalName, duration, dailyHours, currentLevel, tasks,
                 status, confirmedAt, startDate, endDate, createdAt, savedAt);
     }
 

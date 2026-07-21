@@ -26,9 +26,14 @@ class ReflectionServiceTest {
     private static final long MISSING_ID = 999L;
     private static final String TODAY = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
 
+    // 소유자(닉네임) 스코프 — 회고는 계획의 소유권을 상속하므로 테스트 기본 소유자를 고정한다.
+    private static final String OWNER = "guest-a";
+    private static final String OTHER_OWNER = "guest-b";
+
     private final PlanRepository planRepository = new PlanRepository();
     private final ReflectionRepository reflectionRepository = new ReflectionRepository();
-    private final AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
+    private final AuditEventService auditEventService =
+            new AuditEventService(new AuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
@@ -41,7 +46,7 @@ class ReflectionServiceTest {
                 Map.of("id", "t-4", "content", "독해 문제", "completed", false),
                 Map.of("id", "t-5", "content", "오답 노트", "completed", false)));
         return planService.create(new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
-                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"), null);
+                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"), OWNER, null);
     }
 
     private ReflectionSaveRequest request() {
@@ -54,7 +59,7 @@ class ReflectionServiceTest {
         PlanResponse plan = savePlan(null);
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // then — 클라이언트는 개수를 보내지 않았지만 plan.tasks에서 3/5가 계산된다
         assertThat(saved.planId()).isEqualTo(plan.id());
@@ -70,18 +75,18 @@ class ReflectionServiceTest {
     void save_재저장_createdAt보존및중복없음() throws InterruptedException {
         // given
         PlanResponse plan = savePlan(null);
-        ReflectionResponse first = reflectionService.save(plan.id(), TODAY, request(), null);
+        ReflectionResponse first = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // when — 잠깐 기다려 updatedAt이 확실히 달라지게 한 뒤 다른 선택으로 재저장
         Thread.sleep(5);
         ReflectionResponse second = reflectionService.save(plan.id(), TODAY,
-                new ReflectionSaveRequest("NORMAL", "AS_PLANNED"), null);
+                new ReflectionSaveRequest("NORMAL", "AS_PLANNED"), OWNER, null);
 
         // then — 업서트: 최초 저장 시각은 보존되고, 목록에 중복이 생기지 않는다
         assertThat(second.createdAt()).isEqualTo(first.createdAt());
         assertThat(second.updatedAt()).isNotEqualTo(first.updatedAt());
         assertThat(second.difficulty()).isEqualTo("NORMAL");
-        assertThat(reflectionService.getAll(plan.id())).hasSize(1);
+        assertThat(reflectionService.getAll(plan.id(), OWNER)).hasSize(1);
     }
 
     @Test
@@ -90,10 +95,10 @@ class ReflectionServiceTest {
         Map<String, Object> tasks = Map.of("2000-01-01", List.of(
                 Map.of("id", "t-1", "content", "지난 할 일", "completed", false)));
         PlanResponse plan = planService.create(new PlanSaveRequest("옛 계획", 1, 1, "완전 초보", tasks,
-                null, null, null, null, null), null);
+                null, null, null, null, null), OWNER, null);
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // then
         assertThat(saved.completedCount()).isZero();
@@ -107,7 +112,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(plan.id(), "2099-01-01", request(), null));
+                () -> reflectionService.save(plan.id(), "2099-01-01", request(), OWNER, null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.REFLECTION_DATE_NOT_TODAY);
@@ -120,7 +125,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(plan.id(), "abc", request(), null));
+                () -> reflectionService.save(plan.id(), "abc", request(), OWNER, null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.REFLECTION_DATE_INVALID);
@@ -132,7 +137,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.save(MISSING_ID, TODAY, request(), null));
+                () -> reflectionService.save(MISSING_ID, TODAY, request(), OWNER, null));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
@@ -144,7 +149,7 @@ class ReflectionServiceTest {
         PlanResponse plan = savePlan("CONFIRMED");
 
         // when
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // then
         assertThat(saved.completedCount()).isEqualTo(3);
@@ -157,7 +162,7 @@ class ReflectionServiceTest {
 
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.get(plan.id(), TODAY));
+                () -> reflectionService.get(plan.id(), TODAY, OWNER));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.REFLECTION_NOT_FOUND);
@@ -167,10 +172,10 @@ class ReflectionServiceTest {
     void get_저장된회고_그대로반환() {
         // given
         PlanResponse plan = savePlan(null);
-        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), null);
+        ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // when
-        ReflectionResponse found = reflectionService.get(plan.id(), TODAY);
+        ReflectionResponse found = reflectionService.get(plan.id(), TODAY, OWNER);
 
         // then
         assertThat(found).isEqualTo(saved);
@@ -180,7 +185,7 @@ class ReflectionServiceTest {
     void getAll_없는계획_PLAN_NOT_FOUND예외() {
         // when
         BusinessException exception = catchThrowableOfType(BusinessException.class,
-                () -> reflectionService.getAll(MISSING_ID));
+                () -> reflectionService.getAll(MISSING_ID, OWNER));
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
@@ -190,12 +195,55 @@ class ReflectionServiceTest {
     void delete_계획삭제시_회고도캐스케이드삭제() {
         // given
         PlanResponse plan = savePlan(null);
-        reflectionService.save(plan.id(), TODAY, request(), null);
+        reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
 
         // when
-        planService.delete(plan.id(), null);
+        planService.delete(plan.id(), OWNER, null);
 
         // then — 저장소에서 직접 확인(계획이 없어 서비스 조회는 PLAN_NOT_FOUND가 되므로)
         assertThat(reflectionRepository.findAllByPlanId(plan.id())).isEmpty();
+    }
+
+    // === 소유자(닉네임) 격리 — 회고는 계획 소유권을 상속, 남의 계획의 회고는 존재 자체를 숨긴다 ===
+
+    @Test
+    void save_다른소유자_PLAN_NOT_FOUND예외() {
+        // given
+        PlanResponse plan = savePlan(null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(BusinessException.class,
+                () -> reflectionService.save(plan.id(), TODAY, request(), OTHER_OWNER, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+    }
+
+    @Test
+    void get_다른소유자_PLAN_NOT_FOUND예외() {
+        // given — 소유자가 회고를 저장해 뒀다
+        PlanResponse plan = savePlan(null);
+        reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(BusinessException.class,
+                () -> reflectionService.get(plan.id(), TODAY, OTHER_OWNER));
+
+        // then — REFLECTION_NOT_FOUND가 아니라 PLAN_NOT_FOUND(계획 존재 자체를 숨긴다)
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+    }
+
+    @Test
+    void getAll_다른소유자_PLAN_NOT_FOUND예외() {
+        // given
+        PlanResponse plan = savePlan(null);
+        reflectionService.save(plan.id(), TODAY, request(), OWNER, null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(BusinessException.class,
+                () -> reflectionService.getAll(plan.id(), OTHER_OWNER));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_NOT_FOUND);
     }
 }

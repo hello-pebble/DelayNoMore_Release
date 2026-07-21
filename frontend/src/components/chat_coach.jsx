@@ -21,11 +21,15 @@ import {
   fetchWeeklySummary
 } from '../db_service';
 import { getSessionId } from '../session_id';
+import { getGuestId } from '../guest_id';
 import { todayStr } from '../date_utils';
 
 // "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
-// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 모든 방문자가 공유한다).
-const LAST_VIEWED_PLAN_KEY = 'delaynomore:lastViewedPlanId';
+// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 게스트 ID별로 격리된다). 소유자(게스트 ID)
+// 별로 키를 분리해, 로그인 전환(guestId→memberId) 시에도 다른 소유자의 포인터가 새지 않게 한다.
+const lastViewedPlanKey = () => `delaynomore:lastViewedPlanId:${getGuestId()}`;
+// 소유자 스코프 이전(v0.11.0)의 전역 포인터 — 다른 소유자의 계획 id일 수 있어 1회 정리만 한다.
+const LEGACY_LAST_VIEWED_PLAN_KEY = 'delaynomore:lastViewedPlanId';
 
 // 서버 자동 동기화 디바운스 — 완료 토글 연타나 스트리밍 수정이 요청 폭주로 이어지지 않게 한다.
 const SYNC_DEBOUNCE_MILLIS = 600;
@@ -36,8 +40,8 @@ const DURATION_PRESETS = ['3일', '5일', '7일'];
 const DAILY_HOURS_PRESETS = ['1시간', '2시간', '4시간', '6시간'];
 const LEVEL_PRESETS = ['완전 초보', '기본 개념은 아는 수준', '실전 경험 있음'];
 
-// 오늘 마무리(회고) 선택지 — 자유 입력 메모는 두지 않는다(모든 방문자가 공유하는 데모
-// 저장소라 개인 텍스트가 남지 않게). 소스오브트루스는 서버 enum(메타 API로 수신)이고,
+// 오늘 마무리(회고) 선택지 — 자유 입력 메모는 두지 않는다(데모 저장소라 긴 개인 텍스트를
+// 남기지 않게). 소스오브트루스는 서버 enum(메타 API로 수신)이고,
 // 아래 상수는 백엔드 미가용 시 회고 화면을 지키는 폴백 사본이다.
 const DEFAULT_DIFFICULTY_OPTIONS = [
   { code: 'EASY', label: '여유로웠어요' },
@@ -60,7 +64,9 @@ function reflectionLabel(options, code) {
 // 포인터 read/write — 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 try/catch.
 function readLastViewedPlanId() {
   try {
-    return localStorage.getItem(LAST_VIEWED_PLAN_KEY);
+    // 레거시 전역 포인터는 소유자 스코프가 없던 시절 값이라(타인 계획 id일 수 있음) 한 번 정리한다.
+    localStorage.removeItem(LEGACY_LAST_VIEWED_PLAN_KEY);
+    return localStorage.getItem(lastViewedPlanKey());
   } catch {
     return null;
   }
@@ -68,7 +74,7 @@ function readLastViewedPlanId() {
 
 function writeLastViewedPlanId(id) {
   try {
-    localStorage.setItem(LAST_VIEWED_PLAN_KEY, String(id));
+    localStorage.setItem(lastViewedPlanKey(), String(id));
   } catch {
     // 무시 — 포인터가 없으면 새로고침 복원만 안 될 뿐이다.
   }
@@ -76,7 +82,7 @@ function writeLastViewedPlanId(id) {
 
 function clearLastViewedPlanId() {
   try {
-    localStorage.removeItem(LAST_VIEWED_PLAN_KEY);
+    localStorage.removeItem(lastViewedPlanKey());
   } catch {
     // 무시
   }
@@ -272,7 +278,7 @@ export default function ChatCoach() {
   const [thinkingStatus, setThinkingStatus] = useState('');
   const [copyFeedback, setCopyFeedback] = useState(null); // null | 'ok' | 'error'
 
-  // 서버 보관함 상태 — 계획은 서버 인메모리(휘발성)에 보관되고 모든 방문자가 목록을 공유한다.
+  // 서버 보관함 상태 — 계획은 서버 인메모리(휘발성)에 보관되고 게스트 ID별로 격리된다.
   const [activePlanId, setActivePlanId] = useState(null); // 현재 화면 계획의 서버 ID (null = 미보관)
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
   const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
@@ -291,7 +297,7 @@ export default function ChatCoach() {
   });
 
   // 오늘 마무리(회고) 상태 — 회고는 계획별·오늘 날짜 1건(서버 업서트, 계획 보관함과 같은
-  // 휘발성 공유 저장소). reflections는 {planId: 회고|null} — null은 "오늘 회고 없음"이 서버로
+  // 휘발성 저장소·게스트 ID별 격리). reflections는 {planId: 회고|null} — null은 "오늘 회고 없음"이 서버로
   // 확인된 상태, 키 자체가 없으면 아직 안 불러온 상태다. reflectionErrors는 불러오기 실패한
   // planId 표시(재시도 행), reflectionDrafts는 작성/수정 중 선택({difficulty, reason, editing, saving}).
   const [showReflection, setShowReflection] = useState(false);
@@ -312,6 +318,11 @@ export default function ChatCoach() {
   const dirtyRef = useRef(null); // 아직 서버에 반영 안 된 최신 변경 { id, payload }
   const lastSyncedRef = useRef(null); // 서버에 있는 것으로 아는 payload의 JSON — 불필요한 재전송(no-op PUT) 억제
   const archivePendingRef = useRef(false); // 초안이 아직 보관되지 못해(서버 미가용) 재시도가 필요한 상태
+  const aliveRef = useRef(true); // 언마운트 후 서버 쓰기·상태 갱신 차단 — 긴 비동기 흐름(스트리밍·재시도)이
+                                 // 뒤늦게 데이터를 생성/부활시키지 않게. (향후 로그인 시 소유자 전환 대비:
+                                 // 지금은 게스트 ID가 안정이라 요청 도중 소유자가 바뀌지 않지만, memberId
+                                 // 전환을 도입하면 이 가드가 전환 경계도 지킨다. AbortController를 db_service에
+                                 // 스레딩하는 방식은 이 코드베이스엔 과하다고 판단해 두지 않는다.)
 
   // 계획 고정 여부 — "계획 저장"을 누르면 CONFIRMED가 되어, 이후에는 대화로 계획을
   // 수정할 수 없다(강제성 부여: 확정한 계획은 실행만, 재협상 없음). 완료 체크는 계속 가능.
@@ -326,11 +337,16 @@ export default function ChatCoach() {
     scrollToBottom();
   }, [messages, isTyping, isThinking]);
 
-  // 생각 중 타이머 해제 cleanup
+  // 언마운트 cleanup — 타이머 해제 + alive 플래그 내림. 남은 동기화 타이머가 발사되면 뒤늦은
+  // PUT이 나가고, 스트리밍/재시도 흐름이 완료 후 데이터를 생성·부활시킬 수 있어 이를 함께 막는다
+  // (언마운트 시에만 실행되므로, dep 변경에 대기 중 변경이 유실된다는 아래 자동 동기화 effect의
+  // 우려와 충돌하지 않는다).
   useEffect(() => {
     return () => {
+      aliveRef.current = false;
       if (thinkingTimerRef.current) clearInterval(thinkingTimerRef.current);
       if (statusTimerRef.current) clearInterval(statusTimerRef.current);
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
   }, []);
 
@@ -383,10 +399,12 @@ export default function ChatCoach() {
         dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도
         return;
       }
-      if (!recreateIfMissing) return;
-      // 백그라운드 동기화 중 대상이 사라짐(다른 방문자 삭제·서버 재시작) — 작업을 잃지 않게 새로 보관.
+      if (!recreateIfMissing || !aliveRef.current) return;
+      // 백그라운드 동기화 중 대상이 사라짐(내가 다른 탭에서 삭제·서버 재시작) — 작업을 잃지 않게
+      // 새로 보관하되, 언마운트 후라면 만들지 않는다(떠난 화면이 데이터를 되살리지 않게).
       try {
         const saved = await createPlan(pending.payload);
+        if (!aliveRef.current) return;
         lastSyncedRef.current = JSON.stringify(pending.payload);
         setActivePlanId(saved.id);
         writeLastViewedPlanId(saved.id);
@@ -487,23 +505,36 @@ export default function ChatCoach() {
   // 초안이 완성되면(또는 서버 미가용으로 실패했던 보관을 재시도할 때) 서버 보관함에 등록한다.
   // 성공하면 활성 계획이 되고, 서버가 죽어 있으면 재시도 대기 상태로, 한도 초과면 안내만 한다.
   const archiveNewPlan = async (checklist) => {
+    if (!aliveRef.current) return; // 언마운트 후엔 서버에 새 계획을 만들지 않는다(재시도 경로 포함)
     const payload = toPlanPayload(checklist);
     try {
       const saved = await createPlan(payload);
+      if (!aliveRef.current) return; // 응답이 늦게 와도 떠난 화면의 상태를 갱신하지 않는다
       archivePendingRef.current = false;
       lastSyncedRef.current = JSON.stringify(payload); // 방금 보관 → no-op PUT 억제
       setActivePlanId(saved.id);
       writeLastViewedPlanId(saved.id);
       refreshPlans();
     } catch (err) {
+      if (!aliveRef.current) return;
       if (err.code === 'PLAN_LIMIT_EXCEEDED') {
-        archivePendingRef.current = false; // 한도 초과는 재시도해도 소용없으니 포기하고 안내만
+        archivePendingRef.current = false; // 내 보관함 한도 초과는 재시도해도 소용없으니 포기하고 안내만
         setMessages((prev) => [
           ...prev,
           {
             id: generateUniqueId('bot'),
             sender: 'bot',
-            text: '⚠️ 보관함이 가득 차서 이 계획은 서버에 보관되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+            text: '⚠️ 내 보관함이 가득 차서(최대 10개) 이 계획은 저장되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+          }
+        ]);
+      } else if (err.code === 'PLAN_STORE_FULL') {
+        archivePendingRef.current = false; // 서버 전역 상한 — 잠시 후 재시도 안내
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateUniqueId('bot'),
+            sender: 'bot',
+            text: '⚠️ 데모 서버 저장 공간이 가득 차서 이 계획은 보관되지 않았어요. 잠시 후 다시 시도해 주세요.'
           }
         ]);
       } else {
@@ -652,6 +683,7 @@ export default function ChatCoach() {
         const { reply, updatedDraft } = await streamChatWithCoach(
           slots, draftChecklist, history, userText, onToken
         );
+        if (!aliveRef.current) return; // 응답이 늦게 와도 떠난 화면을 갱신하지 않는다
 
         stopThinking();
         // 최종 reply로 말풍선을 확정한다(스트림 미사용 mock 폴백이거나, 마지막에 기본 문구로
@@ -754,6 +786,7 @@ export default function ChatCoach() {
           )
         );
       });
+      if (!aliveRef.current) return; // 생성이 끝나기 전 화면을 떠났으면 보관하지 않는다
 
       stopThinking();
       setDraftChecklist(checklist);
@@ -859,6 +892,7 @@ export default function ChatCoach() {
         await syncActivePlan({ recreateIfMissing: true });
       }
       const { movedCount, plan } = await carryOverPlan(planId);
+      if (!aliveRef.current) return; // 응답이 늦게 와도 떠난 화면의 상태를 갱신하지 않는다
       if (movedCount === 0) {
         // 로컬 계산과 어긋난 경우(서버 KST 기준 오늘엔 미완료 없음) — 계획은 불변이다.
         window.alert('서버 기준 오늘 날짜에는 옮길 미완료 항목이 없습니다.');
@@ -999,12 +1033,12 @@ export default function ChatCoach() {
     }
   };
 
-  // 보관함에서 계획 삭제 — 공유 저장소라 모든 방문자의 목록에서 사라진다.
+  // 보관함에서 계획 삭제 — 내 보관함에서만 사라진다(게스트 ID별 격리).
   // 이미 지워진 경우(404)는 성공으로 취급하고 목록만 갱신한다.
   const handleDeletePlan = async (planId) => {
     const entry = savedPlans.find((p) => p.id === planId);
     const goalName = entry?.goalName || '계획';
-    if (!window.confirm(`"${goalName}" 계획을 보관함에서 삭제할까요? 모든 방문자의 목록에서 사라집니다.`)) return;
+    if (!window.confirm(`"${goalName}" 계획을 보관함에서 삭제할까요? 이 브라우저 보관함에서 사라집니다.`)) return;
     if (planId === activePlanId) {
       // 대기 중 자동 동기화를 먼저 취소한다 — 그러지 않으면 뒤늦은 PUT이 404→재생성으로
       // 방금 지운 계획을 새 id로 되살릴 수 있다. 화면 계획은 그대로 두되 미보관 상태로 전환.
@@ -1685,7 +1719,7 @@ export default function ChatCoach() {
                 );
               })}
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                모든 방문자가 함께 보는 데모 회고입니다 · 다른 방문자가 회고를 수정할 수 있어요 · 서버 재시작 시 초기화됩니다
+                이 브라우저 보관함의 데모 회고입니다 · 서버 재시작 시 초기화됩니다
               </div>
             </div>
           )}
@@ -1695,7 +1729,7 @@ export default function ChatCoach() {
   );
 
   // === 보관된 계획 목록 (체크리스트 패널 헤더 아래 접이식 바) ===
-  // 서버 공유 보관함이라 폴링 없이 "열 때마다 refetch"로 다른 방문자의 변경을 반영한다.
+  // 서버 보관함이라 폴링 없이 "열 때마다 refetch"로 최신 상태를 반영한다(다른 탭의 변경 포함).
   const planListBar = (savedPlans.length > 0 || plansStatus === 'error') && (
     <div style={{ borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
       <button
@@ -1909,7 +1943,7 @@ export default function ChatCoach() {
                         ))}
                       </ul>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
-                        모든 방문자가 함께 보는 데모 이력입니다 · 최근 1000건만 보관됩니다
+                        이 브라우저 보관함의 데모 이력입니다 · 최근 1000건만 보관됩니다
                       </div>
                     </>
                   )}
@@ -1923,7 +1957,7 @@ export default function ChatCoach() {
             새 계획 만들기
           </button>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-            모든 방문자가 함께 보는 데모 보관함입니다 · 서버 재시작 시 초기화됩니다
+            이 브라우저 보관함입니다 · 브라우저 데이터 삭제·서버 재시작 시 사라집니다
           </div>
         </div>
       )}
