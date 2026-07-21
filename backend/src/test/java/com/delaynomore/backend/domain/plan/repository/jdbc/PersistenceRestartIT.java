@@ -3,10 +3,10 @@ package com.delaynomore.backend.domain.plan.repository.jdbc;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.JdbcPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;

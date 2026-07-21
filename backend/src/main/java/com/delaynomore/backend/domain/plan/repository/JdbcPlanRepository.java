@@ -1,14 +1,14 @@
 package com.delaynomore.backend.domain.plan.repository;
 
 import com.delaynomore.backend.domain.plan.entity.Plan;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -19,6 +19,9 @@ import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
 // 계획 보관함 JDBC 구현 — PostgreSQL에 영속한다(v0.12.0). postgres 프로필에서만 활성화된다.
+// ObjectMapper는 tools.jackson(Jackson 3.x) 타입이어야 한다 — Boot 4.1의 JacksonAutoConfiguration이
+// tools.jackson.databind.json.JsonMapper(ObjectMapper의 하위 타입) 빈만 등록하고, 구 Jackson 2
+// (com.fasterxml.jackson.databind.ObjectMapper)는 별도 빈으로 자동구성되지 않는다.
 // update/mutate/deleteById의 원자성은 인메모리의 computeIfPresent 대신 "트랜잭션 + SELECT ...
 // FOR UPDATE 후 검사/변형/기록"으로 얻는다 — 이 메서드들은 호출한 @Transactional 서비스 메서드가
 // 연 트랜잭션(propagation REQUIRED) 안에서 실행돼야 잠금이 커밋까지 유지된다. 가드/뮤테이터가
@@ -182,7 +185,7 @@ public class JdbcPlanRepository implements PlanRepository {
         }
         try {
             return objectMapper.writeValueAsString(tasks);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("tasks JSON 직렬화 실패", e);
         }
     }
@@ -193,7 +196,7 @@ public class JdbcPlanRepository implements PlanRepository {
         }
         try {
             return objectMapper.readValue(json, TASKS_TYPE);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
             throw new IllegalStateException("tasks JSON 역직렬화 실패", e);
         }
     }
