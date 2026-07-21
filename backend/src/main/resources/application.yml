@@ -7,6 +7,18 @@ spring:
     deserialization:
       # duration: 3.5 같은 소수가 정수 필드로 조용히 절삭되지 않게 한다("정수여야 합니다" 규칙 → 400).
       accept-float-as-int: false
+  # spring-boot-starter-jdbc·spring-boot-starter-flyway는 빌드 의존성이라 프로필로 조건부 제외가
+  # 안 된다 — 클래스패스에 있으면 spring.datasource.url이 없어도 DataSourceAutoConfiguration이
+  # Bean 생성을 강행하다 "Failed to determine a suitable driver class"로 기동 자체가 실패한다.
+  # 기본 프로필에서는 명시적으로 꺼서 인메모리 저장소만으로 기동하고, postgres 프로필에서
+  # spring.autoconfigure.exclude를 빈 리스트로 재정의해 되살린다(프로필 문서가 키 전체를 덮어씀).
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.JdbcTemplateAutoConfiguration
+      - org.springframework.boot.jdbc.autoconfigure.JdbcClientAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
 
 openrouter:
   api:
@@ -15,13 +27,17 @@ openrouter:
     model: ${OPENROUTER_MODEL:qwen/qwen3.7-plus}
 
 # postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
-# 기본(프로필 미지정) 기동은 datasource 설정이 없어 DataSource·Flyway 자동구성이 물러나고
-# 인메모리 저장소(@Profile("!postgres"))로 동작한다 — 롤백 경로이자 단위 테스트 체제.
+# 기본(프로필 미지정) 기동은 datasource 설정이 없고 Flyway도 위에서 꺼뒀으므로 DataSource가
+# 전혀 필요 없이 인메모리 저장소(@Profile("!postgres"))로 동작한다 — 롤백 경로이자 단위 테스트 체제.
 ---
 spring:
   config:
     activate:
       on-profile: postgres
+  # 기본 문서의 exclude 리스트를 빈 리스트로 재정의해 DataSource·Flyway 자동구성을 되살린다 —
+  # spring.autoconfigure.exclude는 키 전체가 교체되지 다른 프로필 값과 항목 단위로 합쳐지지 않는다.
+  autoconfigure:
+    exclude: []
   datasource:
     # Supabase는 대시보드 Connect의 "Session pooler"(포트 5432) 문자열을 권장 —
     # 트랜잭션 풀러(6543)는 Flyway가 쓰는 세션 기능(advisory lock)을 지원하지 않는다.
