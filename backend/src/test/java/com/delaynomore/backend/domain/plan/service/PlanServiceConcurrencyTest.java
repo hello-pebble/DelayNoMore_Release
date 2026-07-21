@@ -3,8 +3,11 @@ package com.delaynomore.backend.domain.plan.service;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -26,9 +29,9 @@ class PlanServiceConcurrencyTest {
     private static final String OWNER = "guest-a";
     private static final String HIJACKER = "guest-b";
 
-    private final PlanRepository planRepository = new PlanRepository();
+    private final PlanRepository planRepository = new InMemoryPlanRepository();
     private final PlanService planService = new PlanService(planRepository,
-            new ReflectionRepository(), new AuditEventService(new AuditEventRepository()));
+            new InMemoryReflectionRepository(), new AuditEventService(new InMemoryAuditEventRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

@@ -14,6 +14,10 @@ dist-ssr
 .env
 .env.local
 
+# DB 백업 덤프 (deploy/db-backup.sh 산출물 — 저장소에 커밋 금지)
+backups/
+*.dump
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

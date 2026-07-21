@@ -6,8 +6,11 @@ import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.ReflectionSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.AuditEvent;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -25,9 +28,9 @@ class AuditEventServiceTest {
     private static final String OWNER = "guest-a";
     private static final String OTHER_OWNER = "guest-b";
 
-    private final PlanRepository planRepository = new PlanRepository();
-    private final ReflectionRepository reflectionRepository = new ReflectionRepository();
-    private final AuditEventRepository auditEventRepository = new AuditEventRepository();
+    private final PlanRepository planRepository = new InMemoryPlanRepository();
+    private final ReflectionRepository reflectionRepository = new InMemoryReflectionRepository();
+    private final AuditEventRepository auditEventRepository = new InMemoryAuditEventRepository();
     private final AuditEventService auditEventService =
             new AuditEventService(auditEventRepository);
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);

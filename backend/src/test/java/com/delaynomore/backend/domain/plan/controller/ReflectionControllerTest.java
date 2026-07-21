@@ -1,8 +1,11 @@
 package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
 import com.delaynomore.backend.global.error.GlobalExceptionHandler;
@@ -24,10 +27,10 @@ class ReflectionControllerTest {
 
     @BeforeEach
     void setUp() {
-        PlanRepository planRepository = new PlanRepository();
-        AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
+        PlanRepository planRepository = new InMemoryPlanRepository();
+        AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         ReflectionService reflectionService =
-                new ReflectionService(planRepository, new ReflectionRepository(), auditEventService);
+                new ReflectionService(planRepository, new InMemoryReflectionRepository(), auditEventService);
         mvc = MockMvcBuilders.standaloneSetup(new ReflectionController(reflectionService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
