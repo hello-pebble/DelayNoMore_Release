@@ -9,6 +9,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -47,6 +48,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AsyncRequestTimeoutException.class)
     public void handleAsyncTimeout(AsyncRequestTimeoutException e) throws AsyncRequestTimeoutException {
         throw e;
+    }
+
+    // 존재하지 않는 정적 리소스(예: 봇이 스캔하는 /.env, /wp-admin) — 캐치올(Exception.class)이
+    // 이걸 500·ERROR 로그로 바꿔버리면 정상적인 스캔 트래픽이 장애처럼 보인다. 원래 Spring
+    // 기본 동작(조용한 404)대로 되돌린다.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Void> handleNoResourceFound(NoResourceFoundException e) {
+        return ResponseEntity.notFound().build();
     }
 
     @ExceptionHandler(Exception.class)
