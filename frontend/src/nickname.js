@@ -1,7 +1,7 @@
-// 닉네임 — 로그인 도입 전의 간이 계정 키. 계획·회고·이력이 닉네임별로 격리되며,
-// 같은 닉네임을 입력하면 어느 브라우저에서든 같은 보관함을 본다(비밀번호 없음 — 인증이 아니다).
-// X-Session-Id(브라우저 표식)와 별개: 세션은 이력의 "이 브라우저/다른 세션" 구분용으로 남는다.
-// 모든 계획 API 요청에 X-Nickname 헤더로 실린다(db_service.js).
+// 닉네임 — 화면에 표시되는 이름(라벨)일 뿐이다. 데이터 소유·격리의 기준은 guest_id.js이며,
+// 닉네임은 서버로 전송되지 않는다. 따라서 다른 브라우저에서 같은 닉네임을 써도 데이터는 공유되지
+// 않고(각자 별도의 게스트 보관함), 닉네임을 바꿔도 데이터 스코프는 그대로다.
+// localStorage에 보관해 새로고침 후에도 표시 이름을 유지한다.
 
 const NICKNAME_KEY = 'delaynomore:nickname';
 
@@ -9,7 +9,8 @@ const NICKNAME_KEY = 'delaynomore:nickname';
 // (session_id.js의 try/catch 관례와 동일: 보존이 약해질 뿐 앱이 죽지 않게).
 let inMemoryNickname = null;
 
-// 닉네임 규칙 — 백엔드 OwnerNickname.java와 거울처럼 유지(트림 후 한글·영문·숫자 2~20자).
+// 닉네임(표시 이름) 규칙 — 트림 후 한글·영문·숫자 2~20자. 서버로 전송되지 않으므로 순수 UI
+// 검증이다(데이터 소유 키인 게스트 ID의 서버 검증은 OwnerGuestId.java와 guest_id.js에 있다).
 // 공백·기호 불허: HTTP 헤더 인코딩 경계 사례(+, %, 공백)를 규칙 차원에서 차단한다.
 const NICKNAME_PATTERN = /^[0-9A-Za-z가-힣]{2,20}$/;
 

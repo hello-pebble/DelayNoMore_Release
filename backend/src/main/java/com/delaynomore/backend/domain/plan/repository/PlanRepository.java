@@ -42,6 +42,11 @@ public class PlanRepository {
         return Optional.ofNullable(store.get(id));
     }
 
+    // 소유자별 보유 개수 — 소유자당 한도(create 가드)용. DB 전환 시 SELECT COUNT(*) WHERE owner = ?.
+    public long countByOwner(String owner) {
+        return store.values().stream().filter(p -> owner.equals(p.owner())).count();
+    }
+
     // 존재할 때만 통째로 교체(last-write-wins — 공유 데모 저장소라 동시 수정 경합은 허용)하고
     // "교체 전 값"을 돌려준다(없으면 null) — 변경 이력이 이전 상태와 diff하는 데 쓴다.
     // computeIfPresent는 키 단위로 원자 실행되므로 교체와 이전 값 캡처 사이에 다른 쓰기가 끼어들 수 없다.

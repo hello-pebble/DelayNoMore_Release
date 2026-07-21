@@ -22,14 +22,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AuditEventServiceTest {
 
     // 소유자(닉네임) 스코프 — 이력 조회는 계획 소유자 확인을 거치므로 테스트 기본 소유자를 고정한다.
-    private static final String OWNER = "테스터";
-    private static final String OTHER_OWNER = "다른사람";
+    private static final String OWNER = "guest-a";
+    private static final String OTHER_OWNER = "guest-b";
 
     private final PlanRepository planRepository = new PlanRepository();
     private final ReflectionRepository reflectionRepository = new ReflectionRepository();
     private final AuditEventRepository auditEventRepository = new AuditEventRepository();
     private final AuditEventService auditEventService =
-            new AuditEventService(auditEventRepository, planRepository);
+            new AuditEventService(auditEventRepository);
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
     private final ReflectionService reflectionService =
             new ReflectionService(planRepository, reflectionRepository, auditEventService);
@@ -176,7 +176,7 @@ class AuditEventServiceTest {
         PlanResponse saved = createBasePlan();
 
         // when — 이월 도메인 액션이 수행 직후 직접 발행하는 경로
-        auditEventService.recordCarryOver(saved.id(), 2, "2026-07-17", "session-a");
+        auditEventService.recordCarryOver(saved.id(), OWNER, 2, "2026-07-17", "session-a");
 
         // then — detail 형식은 예전 역감지 시절과 동일(이력 화면 연속성)
         AuditEventResponse latest = events(saved.id()).get(0);
@@ -214,31 +214,34 @@ class AuditEventServiceTest {
     }
 
     @Test
-    void delete_계획삭제_PLAN_DELETED는저장소에남고_조회는빈목록() {
+    void delete_계획삭제_소유자는PLAN_DELETED포함이력조회가능() {
         // given
         PlanResponse saved = createBasePlan();
 
         // when
         planService.delete(saved.id(), OWNER, "session-a");
 
-        // then — 이력 자체는 캐스케이드 없이 저장소에 남는다(PLAN_DELETED 포함)
-        List<AuditEvent> stored = auditEventRepository.findAllByPlanId(saved.id());
-        assertThat(stored).hasSize(2);
-        assertThat(stored.get(0).type()).isEqualTo("PLAN_DELETED");
-        assertThat(stored.get(0).detail()).contains("토익 900");
-        // 다만 계획이 사라지면 소유자를 확인할 길이 없어 서비스 조회는 빈 목록이다
-        // (닉네임 격리의 트레이드오프 — AuditEventService.getEvents 주석 참고).
-        assertThat(events(saved.id())).isEmpty();
+        // then — 이벤트에 소유자가 박혀 있어, 계획이 사라져도 소유자는 이력을 그대로 조회한다
+        // ("언제 삭제됐는가" 계약 복원). 캐스케이드 삭제 없음.
+        List<AuditEventResponse> events = events(saved.id());
+        assertThat(events).hasSize(2);
+        assertThat(events.get(0).type()).isEqualTo("PLAN_DELETED");
+        assertThat(events.get(0).detail()).contains("토익 900");
     }
 
     @Test
-    void getEvents_다른소유자_빈목록() {
+    void getEvents_다른소유자_빈목록_삭제후에도유지() {
         // given
         PlanResponse saved = createBasePlan();
         assertThat(events(saved.id())).isNotEmpty();
 
-        // when — 다른 닉네임으로 조회하면 404가 아니라 빈 목록(존재 여부 은닉)
+        // when / then — 다른 소유자는 404가 아니라 빈 목록(존재 여부 은닉)
         assertThat(auditEventService.getEvents(saved.id(), OTHER_OWNER)).isEmpty();
+
+        // 계획을 삭제해도 타인에게는 여전히 빈 목록, 소유자에게는 보인다
+        planService.delete(saved.id(), OWNER, "session-a");
+        assertThat(auditEventService.getEvents(saved.id(), OTHER_OWNER)).isEmpty();
+        assertThat(auditEventService.getEvents(saved.id(), OWNER)).isNotEmpty();
     }
 
     @Test
@@ -291,12 +294,12 @@ class AuditEventServiceTest {
     void append_상한초과_가장오래된것부터축출() {
         // given — 저장소 직접 검증: 상한을 넘겨 append하면 오래된 이벤트가 밀려난다
         for (int i = 0; i < 1010; i++) {
-            auditEventRepository.append(new AuditEvent(0, 1L, "PLAN_UPDATED", null, null, "t" + i));
+            auditEventRepository.append(new AuditEvent(0, 1L, OWNER, "PLAN_UPDATED", null, null, "t" + i));
         }
 
         // then
         assertThat(auditEventRepository.count()).isEqualTo(1000);
-        List<AuditEvent> remaining = auditEventRepository.findAllByPlanId(1L);
+        List<AuditEvent> remaining = auditEventRepository.findAllByPlanIdAndOwner(1L, OWNER);
         assertThat(remaining.get(remaining.size() - 1).id()).isEqualTo(11); // 1~10번은 축출됨
     }
 }

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { validateNickname } from '../nickname';
 
-// 닉네임 설정 게이트 — 닉네임이 없으면 앱(ChatCoach) 대신 이 화면이 먼저 뜬다.
-// 헤더의 "변경" 버튼으로도 열린다(initialValue 프리필 + onCancel 취소 버튼).
-// 닉네임은 로그인 전 간이 계정 키라, 화면에서 그 의미(같은 닉네임 = 같은 보관함)를 명시한다.
+// 닉네임 설정 화면 — 최초 진입 시 전체 화면 게이트로, "변경" 시 오버레이로 뜬다(App.jsx).
+// 닉네임은 화면에 보이는 표시 이름일 뿐 데이터 소유 키가 아니므로, 그 의미(데이터는 이 브라우저에
+// 귀속·다른 브라우저에선 별도 보관함)를 화면에서 명확히 안내한다.
 export default function NicknameSetup({ initialValue = '', onSubmit, onCancel }) {
   const [value, setValue] = useState(initialValue);
   const [error, setError] = useState('');
@@ -46,9 +46,10 @@ export default function NicknameSetup({ initialValue = '', onSubmit, onCancel })
       >
         <div style={{ fontSize: '18px', fontWeight: 700 }}>닉네임 설정</div>
         <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-          계획·회고는 닉네임별로 구분됩니다. 같은 닉네임을 입력하면 어느
-          브라우저에서든 같은 보관함을 보게 됩니다 — 로그인 도입 전 임시
-          방식이라 비밀번호는 없어요.
+          닉네임은 화면에 표시되는 이름이에요. 계획·회고 데이터는 이 브라우저에
+          귀속되어, 닉네임을 바꿔도 데이터는 그대로 유지됩니다. 다른 브라우저에서는
+          같은 닉네임을 써도 별도의 보관함이 됩니다 — 로그인 도입 전 임시 방식이라,
+          브라우저 데이터를 지우면 복구할 수 없어요.
         </div>
         <input
           value={value}

@@ -21,17 +21,18 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 // 인메모리 저장소라 Mock 없이 실제 PlanRepository를 주입해 Service+Repository를 함께 검증한다.
 class PlanServiceTest {
 
-    private static final int MAX_PLANS = 50;
+    private static final int MAX_PLANS_PER_OWNER = 10;
+    private static final int MAX_PLANS_GLOBAL = 200;
     private static final long MISSING_ID = 999L;
 
     // 소유자(닉네임) 스코프 — 서비스 시그니처가 owner를 받으므로 테스트 기본 소유자를 고정한다.
-    private static final String OWNER = "테스터";
-    private static final String OTHER_OWNER = "다른사람";
+    private static final String OWNER = "guest-a";
+    private static final String OTHER_OWNER = "guest-b";
 
     // AuditEventService.getEvents가 계획 소유자를 확인하므로 PlanService와 같은 저장소를 공유해야 한다.
     private final PlanRepository planRepository = new PlanRepository();
     private final AuditEventService auditEventService =
-            new AuditEventService(new AuditEventRepository(), planRepository);
+            new AuditEventService(new AuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, new ReflectionRepository(),
             auditEventService);
 
@@ -193,18 +194,37 @@ class PlanServiceTest {
     }
 
     @Test
-    void create_보관한도초과_PLAN_LIMIT_EXCEEDED예외() {
-        // given
-        for (int i = 0; i < MAX_PLANS; i++) {
+    void create_소유자한도초과_PLAN_LIMIT_EXCEEDED예외_타소유자는영향없음() {
+        // given — OWNER가 자기 한도(10)를 채운다
+        for (int i = 0; i < MAX_PLANS_PER_OWNER; i++) {
             planService.create(request("목표 " + i), OWNER, null);
         }
 
-        // when
+        // when — OWNER의 11번째는 거부되지만
         BusinessException exception = catchThrowableOfType(
                 BusinessException.class, () -> planService.create(request("한도 초과"), OWNER, null));
 
-        // then
+        // then — 소유자당 한도(내 보관함 가득참), 다른 소유자는 여전히 생성 가능(격리 증명)
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LIMIT_EXCEEDED);
+        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null).id()).isPositive();
+    }
+
+    @Test
+    void create_전역상한초과_PLAN_STORE_FULL예외() {
+        // given — 20명이 각 10건씩 = 200건으로 저장소를 전역 상한까지 채운다
+        int owners = MAX_PLANS_GLOBAL / MAX_PLANS_PER_OWNER;
+        for (int o = 0; o < owners; o++) {
+            for (int i = 0; i < MAX_PLANS_PER_OWNER; i++) {
+                planService.create(request("g" + o + "-" + i), "guest-" + o, null);
+            }
+        }
+
+        // when — 자기 보관함은 0건인 신규 소유자라도 전역이 가득 차 저장 불가
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.create(request("전역 초과"), "guest-new", null));
+
+        // then — 서버 메모리 보호(503 성격)
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_STORE_FULL);
     }
 
     @Test

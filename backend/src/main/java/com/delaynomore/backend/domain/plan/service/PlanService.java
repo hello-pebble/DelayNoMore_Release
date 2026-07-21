@@ -21,21 +21,28 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class PlanService {
 
-    // 공유 데모 저장소 폭주 방지 — 닉네임별로 격리되어도 저장소 자체는 한 서버 메모리이므로
-    // 상한은 전역(닉네임 합산)으로 유지한다. 닉네임별 할당량이 필요해지면
-    // findAllByOwner(owner).size() 검사로 바꾸면 된다.
-    private static final int MAX_PLANS = 50;
+    // 소유자당 한도 — 한 게스트가 보관할 수 있는 계획 수. 초과 시 "내 보관함 가득참"(사용자가
+    // 직접 해소 가능하므로 PLAN_LIMIT_EXCEEDED, 400).
+    private static final int MAX_PLANS_PER_OWNER = 10;
+    // 전역 상한 — 소유자 격리와 무관하게 저장소는 한 서버 메모리이므로, 합산 폭주를 막는 안전판.
+    // 초과 시 "서버 보관함 가득참"(사용자 잘못이 아니므로 PLAN_STORE_FULL, 503).
+    private static final int MAX_PLANS_GLOBAL = 200;
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
     private final AuditEventService auditEventService;
 
-    // synchronized: 한도 검사(count)와 저장(save)을 원자적으로 묶는다. 공유 데모 저장소라
-    // 여러 방문자가 동시에 생성하면 각자 검사를 통과한 뒤 저장해 상한 50건을 넘길 수 있는데
-    // (TOCTOU), 생성 경로를 직렬화해 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
+    // synchronized: 두 한도 검사(count·countByOwner)와 저장(save)을 원자적으로 묶는다. 동시에
+    // 생성하면 각자 검사를 통과한 뒤 저장해 상한을 넘길 수 있는데(TOCTOU), 생성 경로를 직렬화해
+    // 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
+    // 검사 순서: 소유자당 한도를 먼저 본다 — 저장소가 전역으로도 가득 찬 상황에서도, 자기 보관함이
+    // 꽉 찬 사용자에게는 "내 계획을 지워라"는 실행 가능한 안내가 우선 가도록.
     public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId) {
-        if (planRepository.count() >= MAX_PLANS) {
+        if (planRepository.countByOwner(owner) >= MAX_PLANS_PER_OWNER) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
+        }
+        if (planRepository.count() >= MAX_PLANS_GLOBAL) {
+            throw new BusinessException(ErrorCode.PLAN_STORE_FULL);
         }
         // 날짜 규칙은 서버 소유 — startDate는 tasks 최초 날짜 키로, duration은 [startDate, endDate]
         // 범위로 산출한다(클라이언트가 보낸 startDate/duration은 무시). endDate는 @ValidPlanDates가 검증.
@@ -153,7 +160,7 @@ public class PlanService {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
         if (movedCount[0] > 0) {
-            auditEventService.recordCarryOver(id, movedCount[0], toDate, sessionId);
+            auditEventService.recordCarryOver(id, owner, movedCount[0], toDate, sessionId);
         }
         return new CarryOverResponse(movedCount[0], toDate, PlanResponse.from(updated));
     }

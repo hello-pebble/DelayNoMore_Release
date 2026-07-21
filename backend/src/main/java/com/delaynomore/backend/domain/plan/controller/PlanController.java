@@ -5,7 +5,7 @@ import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
-import com.delaynomore.backend.domain.plan.support.OwnerNickname;
+import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -27,10 +27,11 @@ import java.util.List;
 
 /**
  * 계획 보관함 API — 로그인/DB 도입 전까지 서버 인메모리(휘발성)에 보관하는 데모용.
- * 보관함은 닉네임(X-Nickname 헤더)별로 격리된다 — 같은 닉네임이면 어느 브라우저에서든 같은 목록.
+ * 보관함은 브라우저 게스트 ID(X-Guest-Id 헤더)별로 격리된다 — 닉네임은 화면 표시용 라벨일 뿐
+ * 서버로 오지 않으므로, 다른 브라우저에서 같은 닉네임을 써도 별도의 보관함이 된다.
  *
- * X-Nickname: 소유자 스코프 필수 헤더 — X-Session-Id(변이 전용·선택)와 달리 읽기(GET)에도
- * 필요하다(목록·단건 조회가 소유자별로 갈리므로). required=false + 수동 해석(OwnerNickname.resolve)
+ * X-Guest-Id: 소유자 스코프 필수 헤더 — X-Session-Id(변이 전용·선택)와 달리 읽기(GET)에도
+ * 필요하다(목록·단건 조회가 소유자별로 갈리므로). required=false + 수동 해석(OwnerGuestId.resolve)
  * 인 이유: 누락 시 Spring 기본 400 대신 우리 ApiResponse 형식의 한국어 오류를 돌려주기 위해서다.
  */
 @Tag(name = "plan")
@@ -49,24 +50,24 @@ public class PlanController {
     @Operation(summary = "계획 보관")
     @PostMapping
     public ApiResponse<PlanResponse> create(@Valid @RequestBody PlanSaveRequest request,
-                                            @RequestHeader(value = "X-Nickname", required = false) String rawNickname,
+                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to create plan");
-        return ApiResponse.ok(planService.create(request, OwnerNickname.resolve(rawNickname), sessionId));
+        return ApiResponse.ok(planService.create(request, OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
-    @Operation(summary = "보관된 계획 목록 조회 (최근 저장순 · 닉네임별)")
+    @Operation(summary = "보관된 계획 목록 조회 (최근 저장순 · 게스트 ID별)")
     @GetMapping
     public ApiResponse<List<PlanResponse>> getPlans(
-            @RequestHeader(value = "X-Nickname", required = false) String rawNickname) {
-        return ApiResponse.ok(planService.getPlans(OwnerNickname.resolve(rawNickname)));
+            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+        return ApiResponse.ok(planService.getPlans(OwnerGuestId.resolve(rawGuestId)));
     }
 
     @Operation(summary = "보관된 계획 단건 조회")
     @GetMapping("/{id}")
     public ApiResponse<PlanResponse> getPlan(@PathVariable long id,
-                                             @RequestHeader(value = "X-Nickname", required = false) String rawNickname) {
-        return ApiResponse.ok(planService.getPlan(id, OwnerNickname.resolve(rawNickname)));
+                                             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+        return ApiResponse.ok(planService.getPlan(id, OwnerGuestId.resolve(rawGuestId)));
     }
 
     // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 읽기라
@@ -74,17 +75,17 @@ public class PlanController {
     @Operation(summary = "주간 완료율 요약")
     @GetMapping("/{id}/summary/weekly")
     public ApiResponse<WeeklySummaryResponse> getWeeklySummary(@PathVariable long id,
-                                                               @RequestHeader(value = "X-Nickname", required = false) String rawNickname) {
-        return ApiResponse.ok(planService.getWeeklySummary(id, OwnerNickname.resolve(rawNickname)));
+                                                               @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+        return ApiResponse.ok(planService.getWeeklySummary(id, OwnerGuestId.resolve(rawGuestId)));
     }
 
     @Operation(summary = "보관된 계획 수정")
     @PutMapping("/{id}")
     public ApiResponse<PlanResponse> update(@PathVariable long id,
                                             @Valid @RequestBody PlanSaveRequest request,
-                                            @RequestHeader(value = "X-Nickname", required = false) String rawNickname,
+                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
-        return ApiResponse.ok(planService.update(id, request, OwnerNickname.resolve(rawNickname), sessionId));
+        return ApiResponse.ok(planService.update(id, request, OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
     // 본문 없는 도메인 액션 — 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간 하루 연장)은
@@ -92,19 +93,19 @@ public class PlanController {
     @Operation(summary = "미완료 이월 — 오늘(KST) 미완료 항목을 내일로 이동")
     @PostMapping("/{id}/carry-over")
     public ApiResponse<CarryOverResponse> carryOver(@PathVariable long id,
-                                                    @RequestHeader(value = "X-Nickname", required = false) String rawNickname,
+                                                    @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
                                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to carry over plan {}", id);
-        return ApiResponse.ok(planService.carryOver(id, OwnerNickname.resolve(rawNickname), sessionId));
+        return ApiResponse.ok(planService.carryOver(id, OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
     @Operation(summary = "보관된 계획 삭제")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id,
-                                    @RequestHeader(value = "X-Nickname", required = false) String rawNickname,
+                                    @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to delete plan {}", id);
-        planService.delete(id, OwnerNickname.resolve(rawNickname), sessionId);
+        planService.delete(id, OwnerGuestId.resolve(rawGuestId), sessionId);
         return ApiResponse.ok(null);
     }
 }

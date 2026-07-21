@@ -47,7 +47,8 @@ public class ReflectionService {
                 request.difficulty(), request.reason(),
                 existing == null ? now : existing.createdAt(), // 재저장 시 최초 저장 시각 보존
                 now));
-        auditEventService.recordReflectionSaved(planId, normalizedDate, counts.completed(), counts.total(), sessionId);
+        auditEventService.recordReflectionSaved(planId, owner, normalizedDate,
+                counts.completed(), counts.total(), sessionId);
         return ReflectionResponse.from(saved);
     }
 

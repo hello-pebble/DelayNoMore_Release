@@ -3,7 +3,7 @@
 // 인증·목표 저장·팀·알림 등은 제거되었다.
 
 import { getSessionId } from './session_id';
-import { getNickname } from './nickname';
+import { getGuestId } from './guest_id';
 
 const API_BASE = '/api/v1';
 
@@ -16,13 +16,11 @@ const requestJson = async (path, payload, method = 'POST') => {
     // 변경 이력의 세션 귀속용 — 서버는 변이 요청에서만 이 헤더를 읽고, 읽기는 기록하지 않는다.
     headers['X-Session-Id'] = getSessionId();
   }
-  // 소유자 스코프 — 계획·회고·이력 API는 닉네임(간이 계정 키)으로 데이터가 격리되므로 읽기에도
-  // 필요하다. 헤더 값은 ASCII만 허용되어(한글 원문은 fetch가 거부) 퍼센트 인코딩해 보내고 서버
-  // (OwnerNickname)가 UTF-8로 복원한다. AI·메타 엔드포인트는 이 헤더를 무시한다(경로 분기 불필요).
-  const nickname = getNickname();
-  if (nickname) {
-    headers['X-Nickname'] = encodeURIComponent(nickname);
-  }
+  // 소유자 스코프 — 계획·회고·이력 API는 브라우저 게스트 ID로 데이터가 격리되므로 읽기에도
+  // 필요하다. 요청 진입 시점에 한 번 고정해 붙인다(호출 도중 소유자 전환이 생겨도 이 요청은 시작
+  // 시점의 소유자로만 나간다 — 로그인 도입 후 guestId→memberId 전환 대비). guestId는 ASCII라
+  // 인코딩이 필요 없다. AI·메타 엔드포인트는 이 헤더를 무시한다(경로 분기 불필요).
+  headers['X-Guest-Id'] = getGuestId();
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -111,7 +109,7 @@ export const streamAiChat = (payload, onEvent) => consumeSse('/ai/chats/stream',
 // 이벤트: {type:'day',date,tasks:[...]} / {type:'done'} / {type:'error',m}
 export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/drafts/stream', payload, onEvent);
 
-// 계획 보관함 CRUD — 서버 인메모리 공유 저장소(휘발성: 재시작 시 초기화, 모든 방문자 공용).
+// 계획 보관함 CRUD — 서버 인메모리 저장소(휘발성: 재시작 시 초기화, 게스트 ID별 격리).
 // 로그인/DB 도입 전의 원격 데모용이며, 응답/요청 형태는 PlanController(/api/v1/plans) 계약을 따른다.
 export const createPlan = (payload) => requestJson('/plans', payload);
 export const updatePlan = (id, payload) => requestJson(`/plans/${id}`, payload, 'PUT');

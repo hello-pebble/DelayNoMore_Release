@@ -27,13 +27,13 @@ class ReflectionServiceTest {
     private static final String TODAY = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
 
     // 소유자(닉네임) 스코프 — 회고는 계획의 소유권을 상속하므로 테스트 기본 소유자를 고정한다.
-    private static final String OWNER = "테스터";
-    private static final String OTHER_OWNER = "다른사람";
+    private static final String OWNER = "guest-a";
+    private static final String OTHER_OWNER = "guest-b";
 
     private final PlanRepository planRepository = new PlanRepository();
     private final ReflectionRepository reflectionRepository = new ReflectionRepository();
     private final AuditEventService auditEventService =
-            new AuditEventService(new AuditEventRepository(), planRepository);
+            new AuditEventService(new AuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 

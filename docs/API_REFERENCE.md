@@ -25,12 +25,15 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | code | HTTP | 발생 지점 |
 |---|---|---|
 | `INVALID_INPUT` | 400 | 모든 `@Valid` 검증 실패 (fieldErrors 동반) |
-| `PLAN_LIMIT_EXCEEDED` | 400 | 계획 보관함 개수 초과 |
+| `GUEST_ID_REQUIRED` | 400 | `X-Guest-Id` 헤더 누락/공백 |
+| `GUEST_ID_INVALID` | 400 | `X-Guest-Id` 형식 위반(영문·숫자·하이픈 8~64자 아님) |
+| `PLAN_LIMIT_EXCEEDED` | 400 | 소유자당 계획 개수 초과(최대 10개) |
 | `REFLECTION_DATE_INVALID` | 400 | 회고 날짜가 YYYY-MM-DD가 아님 |
 | `REFLECTION_DATE_NOT_TODAY` | 400 | 회고 날짜가 KST 오늘이 아님 |
-| `PLAN_NOT_FOUND` | 404 | 계획 단건 조회·수정·삭제·회고 저장 시 없는 id |
+| `PLAN_NOT_FOUND` | 404 | 계획 단건 조회·수정·삭제·회고 저장 시 없는 id 또는 다른 소유자 |
 | `REFLECTION_NOT_FOUND` | 404 | 해당 날짜 회고 없음 |
 | `PLAN_LOCKED` | 409 | CONFIRMED 계획에 완료 토글 외 변경 (v0.8.0) |
+| `PLAN_STORE_FULL` | 503 | 전역 저장소 상한 초과(서버 메모리 보호, 최대 200개) |
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
 | `INTERNAL_ERROR` | 500 | 그 외 서버 오류 |
@@ -112,13 +115,17 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 
 ## 계획 보관함 (`/api/v1/plans`)
 
-**모든 메서드(GET 포함)는 필수 헤더 `X-Nickname`을 받습니다** — 닉네임은 로그인 도입 전의 간이 계정 키로, 계획·회고·변경 이력이 닉네임별로 격리됩니다(같은 닉네임 = 같은 보관함). HTTP 헤더 값은 ASCII만 안전하므로 한글 닉네임은 퍼센트 인코딩해 보냅니다(클라이언트 `encodeURIComponent` → 서버 UTF-8 복원). 예: `X-Nickname: %EA%B9%80%EC%BD%94%EC%B9%98` (= 김코치).
+**모든 메서드(GET 포함)는 필수 헤더 `X-Guest-Id`를 받습니다** — 게스트 ID는 브라우저가 최초 1회 생성하는 안정 식별자로, 계획·회고·변경 이력이 게스트 ID별로 격리됩니다. 닉네임은 화면 표시용 라벨일 뿐 서버로 오지 않으므로, **다른 브라우저에서 같은 닉네임을 써도 별도의 보관함**이 됩니다. ASCII 값이라 인코딩이 필요 없습니다. 예: `X-Guest-Id: 550e8400-e29b-41d4-a716-446655440000`.
 
-- 규칙: 트림 후 한글·영문·숫자 2~20자 (공백·기호 불가)
-- 누락/공백 → 400 `NICKNAME_REQUIRED`, 규칙 위반·깨진 인코딩 → 400 `NICKNAME_INVALID`
-- 다른 닉네임의 계획 접근 → 404 `PLAN_NOT_FOUND` (존재 여부를 숨김), 변경 이력은 빈 목록
+- 규칙: 트림 후 영문·숫자·하이픈 8~64자 (`crypto.randomUUID` 및 폴백 허용)
+- 누락/공백 → 400 `GUEST_ID_REQUIRED`, 규칙 위반 → 400 `GUEST_ID_INVALID`
+- 다른 게스트의 계획 접근 → 404 `PLAN_NOT_FOUND` (존재 여부를 숨김), 변경 이력은 빈 목록
 
-변이 메서드(POST/PUT/DELETE)는 추가로 선택 헤더 `X-Session-Id: s-abc123`을 받아 변경 이력에 세션을 귀속시킵니다(같은 닉네임을 여러 브라우저에서 쓸 때 "이 브라우저/다른 세션" 구분용). 없으면(구형 클라이언트·curl) 이력에 null로 기록됩니다. 읽기(GET)는 이력을 남기지 않으므로 이 헤더는 받지 않습니다.
+> **보안 성격**: 게스트 ID는 인증 수단이 아니지만 현재 구조에서는 데이터를 여는 bearer 토큰과 같습니다. "로그인 전 브라우저 단위 임시 개인 보관함"이며, 브라우저 데이터 삭제·서버 재시작 시 복구할 수 없습니다. HTTP 배포에서는 네트워크상 게스트 ID 보호도 보장되지 않으므로 민감한 정보를 저장하면 안 됩니다.
+
+**응답 캐싱**: 계획 API 응답에는 `Cache-Control: no-store`가 붙습니다 — 소유자별 개인 데이터가 프록시·브라우저 캐시에 남아 재사용되지 않게 합니다. **CORS**: 프리플라이트(OPTIONS)에서 `X-Guest-Id` 요청 헤더가 허용됩니다(`Access-Control-Allow-Headers`).
+
+변이 메서드(POST/PUT/DELETE)는 추가로 선택 헤더 `X-Session-Id: s-abc123`을 받아 변경 이력에 세션을 귀속시킵니다(같은 게스트 ID를 여러 브라우저 탭에서 쓸 때 "이 브라우저/다른 세션" 구분용). 없으면(구형 클라이언트·curl) 이력에 null로 기록됩니다. 읽기(GET)는 이력을 남기지 않으므로 이 헤더는 받지 않습니다.
 
 ### 6. POST /plans — 계획 보관
 
@@ -148,7 +155,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
   "progress": { "done": 0, "total": 1 } }
 ```
 
-오류: 400 `INVALID_INPUT`+fieldErrors, 400 `PLAN_LIMIT_EXCEEDED`
+오류: 400 `INVALID_INPUT`+fieldErrors, 400 `GUEST_ID_REQUIRED`/`GUEST_ID_INVALID`, 400 `PLAN_LIMIT_EXCEEDED`(소유자당 10개), 503 `PLAN_STORE_FULL`(전역 200개)
 
 ### 7. GET /plans — 목록 조회 (최근 저장순)
 
@@ -298,7 +305,7 @@ detail의 실제 형식(type별):
 
 동작 규칙:
 
-- 모르는 planId·다른 닉네임의 계획은 404가 아니라 **빈 목록** `[]` (존재 여부를 숨김). 닉네임 격리 이후 삭제된 계획의 이력은 소유자를 확인할 수 없어 조회되지 않는다(이력 자체는 저장소에 남는다 — 로그인 도입 시 이벤트에 소유자를 붙여 복원 예정)
+- 모르는 planId·다른 소유자의 계획은 404가 아니라 **빈 목록** `[]` (존재 여부를 숨김). 이벤트에 소유자(게스트 ID)가 함께 기록되므로, **삭제된 계획의 `PLAN_DELETED` 이력도 소유자에게는 조회된다**("언제 삭제됐는가" 계약 유지). 다른 소유자에게는 삭제 후에도 빈 목록이다
 - 한 번의 PUT에서 여러 이벤트가 발행될 수 있고(디바운스 배칭), 순서는 `PLAN_CONFIRMED` → `TASK_*`(날짜·항목 순) → `PLAN_UPDATED`
 - 완전 동일(no-op) PUT은 이벤트를 발행하지 않는다
 - 이월의 "미완료 N건 이동" detail은 carry-over 액션(11)이 직접 발행한다 — PUT diff에서의 이월 패턴 역감지는 제거됨(구형 클라이언트가 PUT으로 이월하면 일반 `계획 내용 변경`으로 기록)

@@ -61,7 +61,7 @@ public record PlanSaveRequest(
 
     // 서버가 산출·해석한 값(startDate·duration·owner)을 주입하는 오버로드 — 클라이언트가 보낸
     // startDate/duration은 무시하고(규칙 소유권은 서버) endDate·나머지 필드만 왕복시킨다.
-    // owner는 요청 바디가 아니라 X-Nickname 헤더에서만 온다(전송 경로 단일화). PlanService가 사용한다.
+    // owner는 요청 바디가 아니라 X-Guest-Id 헤더에서만 온다(전송 경로 단일화). PlanService가 사용한다.
     public Plan toPlan(Long id, long savedAt, String resolvedStartDate, int resolvedDuration, String owner) {
         String resolvedStatus = (status == null || status.isBlank()) ? DEFAULT_STATUS : status;
         return new Plan(id, owner, goalName, resolvedDuration, dailyHours, currentLevel, tasks,
