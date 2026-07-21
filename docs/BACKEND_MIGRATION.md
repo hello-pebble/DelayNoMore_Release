@@ -68,7 +68,15 @@
    프로필) 구현을 프로필로 선택한다. JDBC 구현은 인메모리의 키 단위 원자 구간을 트랜잭션 +
    `SELECT … FOR UPDATE`로 대체하고, 서비스에 `@Transactional`을 얹어 계획 변경과 감사 append를
    원자로 묶는다. 스키마는 Flyway(`V1__init.sql`), 저장소는 Supabase 관리형 Postgres. 인메모리는
-   롤백·단위 테스트용으로 잠시 유지
+   롤백·단위 테스트용으로 잠시 유지.
+   **알려진 한계**: DB 전환은 *서버* 쪽 영속화만 해결한다 — 계획의 `owner` 컬럼은 여전히 브라우저
+   localStorage의 게스트 ID이고, 이를 조회하는 유일한 키는 X-Guest-Id 헤더뿐이다(아래 #2). 닉네임은
+   서버로 전송되지 않는 화면 표시용 라벨이라 서버가 "이 닉네임의 데이터"를 찾을 방법 자체가 없다.
+   따라서 브라우저 데이터 삭제·다른 브라우저(시크릿 포함)·다른 기기로 접속하면, DB에 데이터가
+   실제로 남아 있어도 닉네임을 기억하는 것만으로는 자동 재연결이 안 된다(현재는 DB에서 owner 값을
+   직접 조회해 `localStorage.setItem('delaynomore:guestId', '<UUID>')`로 수동 복원하는 것 외에
+   방법이 없음). 이 간극은 로그인 도입(#2, owner를 guestId→memberId로 re-key) 전까지 구조적으로
+   남는다
 2. **사용자 인증/격리** — 브라우저 게스트 ID(X-Guest-Id 헤더) 기반 격리는 v0.11.0에서 완료(계획
    owner 필드 = guestId + 소유권 가드 + 이벤트 소유자 기록). 다만 비밀번호가 없어 인증은 아니고
    데이터를 여는 bearer 성격이다 — 로그인 도입 시 owner 컬럼을 guestId→memberId로 re-key 하는
