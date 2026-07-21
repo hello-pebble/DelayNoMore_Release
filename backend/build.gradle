@@ -51,4 +51,11 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	testLogging {
+		// 기본 로깅은 "ExceptionType at File:Line"만 찍고 메시지를 생략해 원인 파악이 어렵다 —
+		// CI에서 실패 원인을 로그만으로 바로 진단할 수 있게 전체 스택트레이스를 남긴다.
+		exceptionFormat = 'full'
+		showStackTraces = true
+		showCauses = true
+	}
 }
