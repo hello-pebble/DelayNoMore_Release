@@ -14,7 +14,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 // 프로필(=JDBC 구현체)로 스프링 컨텍스트를 띄운다. Supabase가 PG17이므로 이미지도 17로 맞춘다.
 // 컨테이너는 정적 싱글턴으로 한 번만 띄워 하위 테스트 클래스들이 공유한다(테스트마다 재기동 방지).
 // Docker가 없는 환경에서는 @Testcontainers(disabledWithoutDocker=true)로 클래스를 통째로 건너뛴다.
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+// webEnvironment는 기본값(MOCK)을 쓴다 — NONE은 Spring Boot 4에서 Jackson ObjectMapper
+// 자동구성을 활성화하지 않아 JdbcPlanRepository(ObjectMapper 의존)가 컨텍스트 로딩에 실패한다.
+// MOCK은 실제 포트를 열지 않으면서도 웹 자동구성 전체(Jackson 포함)를 프로덕션과 동일하게 켠다.
+@SpringBootTest
 @ActiveProfiles("postgres")
 @Testcontainers(disabledWithoutDocker = true)
 abstract class AbstractPostgresIntegrationTest {
