@@ -13,6 +13,7 @@ import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Objects;
@@ -37,6 +38,12 @@ public class PlanService {
     // 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
     // 검사 순서: 소유자당 한도를 먼저 본다 — 저장소가 전역으로도 가득 찬 상황에서도, 자기 보관함이
     // 꽉 찬 사용자에게는 "내 계획을 지워라"는 실행 가능한 안내가 우선 가도록.
+    // @Transactional: 계획 저장 + 감사 append를 한 트랜잭션으로 커밋한다(JDBC 프로필). 한계 —
+    // 트랜잭션 프록시는 이 메서드가 반환한 뒤(모니터 해제 후) 커밋하므로, READ COMMITTED에서 경합
+    // 시 count 검사가 직전 insert를 못 봐 상한을 최대 1 초과할 수 있다. 다중 서버가 범위 밖인 단일
+    // 서버 데모에서는 허용 가능한 오차이며, 강화(자기호출 내부 트랜잭션 or pg_advisory_xact_lock)는
+    // 다중 서버 마일스톤으로 이연한다.
+    @Transactional
     public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId) {
         if (planRepository.countByOwner(owner) >= MAX_PLANS_PER_OWNER) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
@@ -78,6 +85,7 @@ public class PlanService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
     }
 
+    @Transactional
     public PlanResponse update(long id, PlanSaveRequest request, String owner, String sessionId) {
         // startDate는 생성 시 산출된 뒤 불변이라 원자 구간 밖에서 읽어도 레이스가 없다(어떤 동시
         // 쓰기도 startDate를 바꾸지 못한다). 이 값을 보존하고 duration만 [startDate, endDate]로 재산출
@@ -126,6 +134,7 @@ public class PlanService {
     // 미완료 이월 도메인 액션 — 오늘(KST) 미완료를 내일로 옮긴다. 예전엔 프론트가 계산해 PUT으로
     // 보내고 서버가 diff에서 역감지했지만, 이제 날짜 규칙과 연산 모두 서버가 소유한다.
     // 가드·연산은 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼 다른 쓰기와 경합하지 않는다.
+    @Transactional
     public CarryOverResponse carryOver(long id, String owner, String sessionId) {
         String fromDate = KstDates.today().toString();
         String toDate = KstDates.today().plusDays(1).toString();
@@ -165,6 +174,7 @@ public class PlanService {
         return new CarryOverResponse(movedCount[0], toDate, PlanResponse.from(updated));
     }
 
+    @Transactional
     public void delete(long id, String owner, String sessionId) {
         // 소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 검사와 제거 사이에 끼어들 수 없다.
         Plan deleted = planRepository.deleteById(id,

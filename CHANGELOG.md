@@ -14,6 +14,53 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.12.0]
+
+**DB 영속화.** 누적 데이터를 쌓기 위해 저장소를 휘발성 인메모리에서 **PostgreSQL(Supabase 관리형)**
+로 옮겼다. 이제 서버를 재시작해도 계획·회고·변경 이력이 복원되고, 회고 데이터가 누적된다. 로그인·
+AI 재추천·다중 서버·읽기 복제본·Redis·자동 데이터 보존 배치는 이번 범위가 아니다. 인메모리 구현체는
+롤백 경로이자 단위 테스트용으로 잠시 유지한다(프로필로 전환).
+
+### Added
+- **PostgreSQL 스키마(Flyway `V1__init.sql`)** — `plans`·`reflections`·`audit_events` 세 테이블.
+  레코드와 1:1로 평탄하게 대응하고(날짜·시각은 프론트 ISO 문자열 왕복을 위해 `TEXT`, `saved_at`은
+  epoch ms `BIGINT`), `Plan.tasks`는 `JSONB`로 보관. 인덱스는 조회 패턴에 맞춘다
+  (`(owner, saved_at DESC, id DESC)`, `(plan_id, date DESC)`, `(plan_id, owner_id, id DESC)`).
+  `reflections`는 `plans`에 `ON DELETE CASCADE` FK, `audit_events`는 FK 없음(계획 삭제를 살아남는
+  이력). Supabase 자동 API 노출을 막기 위해 세 테이블에 정책 없는 RLS를 켠다(앱은 특권 역할로 직접
+  접속해 우회).
+- **JDBC 리포지토리 구현(`NamedParameterJdbcTemplate`)** — `JdbcPlanRepository`·
+  `JdbcReflectionRepository`·`JdbcAuditEventRepository`. 인메모리의 `computeIfPresent`/`compute`
+  원자 구간을 **트랜잭션 + `SELECT … FOR UPDATE`**로 대체해 같은 가드·업서트 의미를 보존한다.
+  `save`/`append`는 `RETURNING id`로 발급 ID를 돌려주고, `update`는 교체 전 값을, `deleteById`는
+  제거된 값을 돌려준다. `tasks`(JSONB)는 Jackson으로 직렬화(`CAST(:tasks AS jsonb)`)/역직렬화.
+- **리포지토리 인터페이스 + 프로필 분리** — 세 저장소를 인터페이스로 추출하고 구현을 프로필로 선택
+  한다: 기본(`!postgres`)은 `InMemory*Repository`(휘발성·롤백·단위 테스트), `postgres`는 JDBC 구현.
+  서비스 코드는 변경 없이 그대로 동작한다.
+- **서비스 트랜잭션** — `PlanService`의 `create`·`update`·`carryOver`·`delete`와
+  `ReflectionService.save`에 `@Transactional`. 계획 변경과 감사 append가 한 트랜잭션으로 커밋된다.
+- **PostgreSQL 통합 테스트(Testcontainers)** — 실제 PG17 컨테이너에 Flyway를 적용해 세 JDBC 구현의
+  저장·조회·원자 가드·업서트 `createdAt` 보존·캐스케이드·감사 생존을 검증하고, 새 인스턴스로 다시
+  읽어 **재시작 후 복원**을 증명한다(`PersistenceRestartIT`). Docker가 없으면 자동으로 건너뛴다.
+- **백업·복원 절차** — `deploy/db-backup.sh`(pg_dump `-Fc`)·`deploy/db-restore.sh`(pg_restore
+  `--clean --if-exists`). Supabase 대시보드 자동 백업을 1차로, 이 스크립트를 이식형 오프사이트
+  백업으로 병행한다.
+
+### Changed
+- **감사 기록이 트랜잭션에 편승** — 인메모리 시절 "append는 실패할 일이 없다" 전제를 대체한다.
+  JDBC 프로필에서는 감사 append 실패가 본 계획 변경까지 롤백시켜 계획과 이력이 원자적으로 함께 남는다.
+- **배포(`deploy/oci-pull.sh`)** — `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`를 주면 영속 모드
+  (`SPRING_PROFILES_ACTIVE=postgres`)로 기동한다. 미설정이면 기존처럼 인메모리(휘발성) 모드.
+  Supabase는 대시보드 Connect의 "Session pooler"(포트 5432, `sslmode=require`) 문자열을 권장한다
+  (트랜잭션 풀러 6543은 Flyway의 세션 기능 미지원).
+- **버전 정렬** — `build.gradle` `version`을 `0.10.0` → `0.12.0`으로 상향(그간 CHANGELOG에 뒤처져
+  있던 것을 이 릴리스에서 맞춘다).
+
+### Notes
+- `PlanService.create`의 `synchronized`는 단일 서버 TOCTOU 가드로 유지한다. 트랜잭션 프록시의
+  커밋 창(모니터 해제 후 커밋) 때문에 경합 시 소유자당 한도를 최대 1 초과할 수 있으나, 다중 서버가
+  범위 밖인 단일 서버 데모에서는 허용한다(강화는 다중 서버 마일스톤으로 이연).
+
 ## [0.11.0]
 
 브라우저 단위 개인화. 로그인 도입(로드맵 6번) 전 단계로, 브라우저가 생성한 **게스트 ID**를

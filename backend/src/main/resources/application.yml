@@ -13,3 +13,24 @@ openrouter:
     url: https://openrouter.ai/api/v1
     key: ${OPENROUTER_API_KEY:YOUR_OPENROUTER_API_KEY_HERE}
     model: ${OPENROUTER_MODEL:qwen/qwen3.7-plus}
+
+# postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
+# 기본(프로필 미지정) 기동은 datasource 설정이 없어 DataSource·Flyway 자동구성이 물러나고
+# 인메모리 저장소(@Profile("!postgres"))로 동작한다 — 롤백 경로이자 단위 테스트 체제.
+---
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    # Supabase는 대시보드 Connect의 "Session pooler"(포트 5432) 문자열을 권장 —
+    # 트랜잭션 풀러(6543)는 Flyway가 쓰는 세션 기능(advisory lock)을 지원하지 않는다.
+    # 예) jdbc:postgresql://aws-1-ap-northeast-2.pooler.supabase.com:5432/postgres?sslmode=require
+    url: ${DB_URL}
+    username: ${DB_USERNAME}   # 세션 풀러는 postgres.<project-ref> 형식
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:5} # Supabase 풀러 연결 한도 보호(무료 티어 안전값)
+  flyway:
+    enabled: true
+    locations: classpath:db/migration

@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
 import com.delaynomore.backend.global.error.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +22,7 @@ class AuditEventControllerTest {
 
     @BeforeEach
     void setUp() {
-        AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
+        AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         mvc = MockMvcBuilders.standaloneSetup(new AuditEventController(auditEventService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

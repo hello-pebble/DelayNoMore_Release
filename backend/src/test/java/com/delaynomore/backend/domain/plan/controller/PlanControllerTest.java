@@ -1,8 +1,11 @@
 package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.global.config.WebConfig;
@@ -30,9 +33,9 @@ class PlanControllerTest {
 
     @BeforeEach
     void setUp() {
-        PlanRepository planRepository = new PlanRepository();
-        AuditEventService auditEventService = new AuditEventService(new AuditEventRepository());
-        PlanService planService = new PlanService(planRepository, new ReflectionRepository(), auditEventService);
+        PlanRepository planRepository = new InMemoryPlanRepository();
+        AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
+        PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), auditEventService);
         mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .addInterceptors(new WebConfig.NoStoreInterceptor())

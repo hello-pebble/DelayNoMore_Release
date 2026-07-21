@@ -63,7 +63,12 @@
 
 이관을 더 확대하기 전에 필요한 것 (ROADMAP 항목 6과 연동):
 
-1. **인메모리 → DB 전환** — 리포지토리 시그니처는 이미 DB 관례(save/findAll/findById/update/deleteById)로 준비됨
+1. ~~**인메모리 → DB 전환**~~ — **v0.12.0에서 완료**. 리포지토리를 인터페이스로 추출해
+   인메모리(`InMemory*Repository`, `!postgres` 프로필)와 PostgreSQL(`Jdbc*Repository`, `postgres`
+   프로필) 구현을 프로필로 선택한다. JDBC 구현은 인메모리의 키 단위 원자 구간을 트랜잭션 +
+   `SELECT … FOR UPDATE`로 대체하고, 서비스에 `@Transactional`을 얹어 계획 변경과 감사 append를
+   원자로 묶는다. 스키마는 Flyway(`V1__init.sql`), 저장소는 Supabase 관리형 Postgres. 인메모리는
+   롤백·단위 테스트용으로 잠시 유지
 2. **사용자 인증/격리** — 브라우저 게스트 ID(X-Guest-Id 헤더) 기반 격리는 v0.11.0에서 완료(계획
    owner 필드 = guestId + 소유권 가드 + 이벤트 소유자 기록). 다만 비밀번호가 없어 인증은 아니고
    데이터를 여는 bearer 성격이다 — 로그인 도입 시 owner 컬럼을 guestId→memberId로 re-key 하는

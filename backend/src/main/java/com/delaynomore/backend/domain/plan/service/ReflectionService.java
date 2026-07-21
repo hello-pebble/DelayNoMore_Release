@@ -11,6 +11,7 @@ import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -28,6 +29,8 @@ public class ReflectionService {
     // 저장(업서트) — 날짜 검증 → 계획 존재 확인 → 완료/전체 개수 서버 재계산 → 원자적 업서트.
     // 완료 개수를 클라이언트가 보내지 않는 이유: 공유 데모 저장소라 조작 가능하고, plan.tasks가
     // 이미 서버에 있으므로 서버 계산이 항상 일관된 값을 만든다.
+    // @Transactional: 회고 업서트 + 감사 append를 한 트랜잭션으로 커밋한다(JDBC 프로필).
+    @Transactional
     public ReflectionResponse save(long planId, String date, ReflectionSaveRequest request,
                                    String owner, String sessionId) {
         LocalDate parsed = parseDate(date);

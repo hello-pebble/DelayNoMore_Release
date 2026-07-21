@@ -5,8 +5,11 @@ import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
+import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.time.KstDates;
@@ -30,10 +33,10 @@ class PlanServiceTest {
     private static final String OTHER_OWNER = "guest-b";
 
     // AuditEventService.getEvents가 계획 소유자를 확인하므로 PlanService와 같은 저장소를 공유해야 한다.
-    private final PlanRepository planRepository = new PlanRepository();
+    private final PlanRepository planRepository = new InMemoryPlanRepository();
     private final AuditEventService auditEventService =
-            new AuditEventService(new AuditEventRepository());
-    private final PlanService planService = new PlanService(planRepository, new ReflectionRepository(),
+            new AuditEventService(new InMemoryAuditEventRepository());
+    private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
             auditEventService);
 
     private PlanSaveRequest request(String goalName) {
