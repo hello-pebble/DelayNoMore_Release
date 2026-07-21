@@ -11,10 +11,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
-// 계획 보관함 저장소 — 아직 DB가 없어 인메모리(휘발성)로 보관한다. 서버 재시작 시 초기화되고
-// 사용자 구분 없이 모든 방문자가 공용으로 쓴다(원격 기능 테스트용 데모 체제).
+// 계획 보관함 저장소 — 아직 DB가 없어 인메모리(휘발성)로 보관한다. 서버 재시작 시 초기화된다.
+// 목록 조회는 소유자(닉네임)별로만 열려 있다(findAllByOwner) — 로그인 전 간이 격리.
 // 추후 로그인+PostgreSQL 도입 시 내부 구현만 JdbcClient로 교체할 수 있게
-// 메서드 시그니처는 DB 관례(save/findAll/findById/update/deleteById)를 유지한다.
+// 메서드 시그니처는 DB 관례(save/findAllByOwner/findById/update/deleteById)를 유지한다.
 @Repository
 public class PlanRepository {
 
@@ -27,9 +27,12 @@ public class PlanRepository {
         return saved;
     }
 
-    // savedAt 내림차순(최근 저장이 앞) — DB 전환 시 ORDER BY savedAt DESC 로 대체된다.
-    public List<Plan> findAll() {
+    // 소유자별 목록, savedAt 내림차순(최근 저장이 앞) — DB 전환 시
+    // WHERE owner = ? ORDER BY savedAt DESC 로 대체된다. 스코프 없는 findAll()은 두지 않는다 —
+    // 어떤 조회도 실수로 전체 목록을 내보낼 수 없게. owner가 없는(레거시) 계획은 아무에게도 안 보인다.
+    public List<Plan> findAllByOwner(String owner) {
         return store.values().stream()
+                .filter(p -> owner.equals(p.owner()))
                 .sorted(Comparator.comparingLong(Plan::savedAt).reversed()
                         .thenComparing(Comparator.comparingLong(Plan::id).reversed()))
                 .toList();
@@ -65,9 +68,18 @@ public class PlanRepository {
         return store.computeIfPresent(id, (key, current) -> mutator.apply(current));
     }
 
-    // 제거된 값을 돌려준다(없으면 null) — 변경 이력의 PLAN_DELETED detail(goalName)에 쓴다.
-    public Plan deleteById(long id) {
-        return store.remove(id);
+    // 가드를 통과할 때만 원자적으로 제거하고 제거된 값을 돌려준다(없으면 null) — 변경 이력의
+    // PLAN_DELETED detail(goalName)에 쓴다. currentStateGuard는 update()와 같은 관례: 키 단위
+    // 원자 구간 안에서 "현재 상태 기준으로 삭제가 허용되는가"(소유자 일치)를 검사하고, 예외를
+    // 던지면 맵은 변경되지 않은 채 전파된다. computeIfPresent가 null을 반환하면 매핑이 제거된다.
+    public Plan deleteById(long id, Consumer<Plan> currentStateGuard) {
+        Plan[] removed = new Plan[1];
+        store.computeIfPresent(id, (key, current) -> {
+            currentStateGuard.accept(current);
+            removed[0] = current;
+            return null;
+        });
+        return removed[0];
     }
 
     public int count() {

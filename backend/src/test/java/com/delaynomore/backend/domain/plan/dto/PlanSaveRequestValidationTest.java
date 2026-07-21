@@ -141,7 +141,7 @@ class PlanSaveRequestValidationTest {
 
         // when / then — @Pattern은 null을 통과시키고, toPlan이 DRAFT 기본값을 준다
         assertThat(violations(request)).isEmpty();
-        assertThat(request.toPlan(1L, 0L, "2026-07-16", 1).status()).isEqualTo("DRAFT");
+        assertThat(request.toPlan(1L, 0L, "2026-07-16", 1, "테스터").status()).isEqualTo("DRAFT");
     }
 
     @Test

@@ -21,10 +21,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 통과한 변경이 어떤 이벤트로 기록되는지(diff 분류 포함)를 함께 검증한다.
 class AuditEventServiceTest {
 
+    // 소유자(닉네임) 스코프 — 이력 조회는 계획 소유자 확인을 거치므로 테스트 기본 소유자를 고정한다.
+    private static final String OWNER = "테스터";
+    private static final String OTHER_OWNER = "다른사람";
+
     private final PlanRepository planRepository = new PlanRepository();
     private final ReflectionRepository reflectionRepository = new ReflectionRepository();
     private final AuditEventRepository auditEventRepository = new AuditEventRepository();
-    private final AuditEventService auditEventService = new AuditEventService(auditEventRepository);
+    private final AuditEventService auditEventService =
+            new AuditEventService(auditEventRepository, planRepository);
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
     private final ReflectionService reflectionService =
             new ReflectionService(planRepository, reflectionRepository, auditEventService);
@@ -48,11 +53,11 @@ class AuditEventServiceTest {
             "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
     private PlanResponse createBasePlan() {
-        return planService.create(request("토익 900", BASE_TASKS, null), "session-a");
+        return planService.create(request("토익 900", BASE_TASKS, null), OWNER, "session-a");
     }
 
     private List<AuditEventResponse> events(long planId) {
-        return auditEventService.getEvents(planId);
+        return auditEventService.getEvents(planId, OWNER);
     }
 
     @Test
@@ -74,7 +79,7 @@ class AuditEventServiceTest {
         PlanResponse saved = createBasePlan();
 
         // when — 프론트의 "계획 저장(고정)"은 status만 바뀐 전체 PUT으로 온다
-        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), "session-a");
+        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), OWNER, "session-a");
 
         // then
         assertThat(events(saved.id()).get(0).type()).isEqualTo("PLAN_CONFIRMED");
@@ -89,7 +94,7 @@ class AuditEventServiceTest {
                 "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
         // when
-        planService.update(saved.id(), request("토익 900", toggled, null), "session-b");
+        planService.update(saved.id(), request("토익 900", toggled, null), OWNER, "session-b");
 
         // then — 토글만 있는 PUT은 PLAN_UPDATED 없이 TASK_COMPLETED 한 건만
         List<AuditEventResponse> events = events(saved.id());
@@ -103,13 +108,13 @@ class AuditEventServiceTest {
     void update_고정계획_완료토글_가드통과후TASK_COMPLETED기록() {
         // given — 고정(CONFIRMED)된 계획 (서버 가드는 완료 토글만 허용)
         PlanResponse saved = createBasePlan();
-        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), "session-a");
+        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), OWNER, "session-a");
         Map<String, Object> toggled = Map.of(
                 "2026-07-16", List.of(task("t-1", "단어 암기", true), task("t-2", "문법 정리", true)),
                 "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
         // when — 토글만 있는 PUT은 가드를 통과하고 감사 흐름도 기존대로 동작해야 한다
-        planService.update(saved.id(), request("토익 900", toggled, "CONFIRMED"), "session-b");
+        planService.update(saved.id(), request("토익 900", toggled, "CONFIRMED"), OWNER, "session-b");
 
         // then
         List<AuditEventResponse> events = events(saved.id());
@@ -126,7 +131,7 @@ class AuditEventServiceTest {
                 "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
         // when
-        planService.update(saved.id(), request("토익 900", toggled, null), null);
+        planService.update(saved.id(), request("토익 900", toggled, null), OWNER, null);
 
         // then
         List<String> types = events(saved.id()).stream().map(AuditEventResponse::type).toList();
@@ -139,7 +144,7 @@ class AuditEventServiceTest {
         PlanResponse saved = createBasePlan();
 
         // when — 목표 이름 변경(구조 변경, 이월 아님)
-        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), null);
+        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), OWNER, null);
 
         // then
         AuditEventResponse latest = events(saved.id()).get(0);
@@ -157,7 +162,7 @@ class AuditEventServiceTest {
                 "2026-07-17", List.of(task("t-3", "듣기 연습", false), task("t-1", "단어 암기", false)));
 
         // when
-        planService.update(saved.id(), request("토익 900", moved, null), null);
+        planService.update(saved.id(), request("토익 900", moved, null), OWNER, null);
 
         // then
         AuditEventResponse latest = events(saved.id()).get(0);
@@ -186,7 +191,7 @@ class AuditEventServiceTest {
         PlanResponse saved = createBasePlan();
 
         // when — 내용이 완전히 같은 no-op PUT(프론트는 억제하지만 curl로는 가능)
-        planService.update(saved.id(), request("토익 900", BASE_TASKS, null), null);
+        planService.update(saved.id(), request("토익 900", BASE_TASKS, null), OWNER, null);
 
         // then — PLAN_CREATED 외에 아무것도 늘지 않는다
         assertThat(events(saved.id())).hasSize(1);
@@ -201,7 +206,7 @@ class AuditEventServiceTest {
                 "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
         // when
-        planService.update(saved.id(), request("토익 950", mixed, null), null);
+        planService.update(saved.id(), request("토익 950", mixed, null), OWNER, null);
 
         // then
         List<String> types = events(saved.id()).stream().map(AuditEventResponse::type).toList();
@@ -209,18 +214,31 @@ class AuditEventServiceTest {
     }
 
     @Test
-    void delete_계획삭제_PLAN_DELETED기록및이력보존조회가능() {
+    void delete_계획삭제_PLAN_DELETED는저장소에남고_조회는빈목록() {
         // given
         PlanResponse saved = createBasePlan();
 
         // when
-        planService.delete(saved.id(), "session-a");
+        planService.delete(saved.id(), OWNER, "session-a");
 
-        // then — 계획이 사라져도 이력은 남는다("언제 삭제됐는가"에 답해야 하므로 캐스케이드 없음)
-        List<AuditEventResponse> events = events(saved.id());
-        assertThat(events).hasSize(2);
-        assertThat(events.get(0).type()).isEqualTo("PLAN_DELETED");
-        assertThat(events.get(0).detail()).contains("토익 900");
+        // then — 이력 자체는 캐스케이드 없이 저장소에 남는다(PLAN_DELETED 포함)
+        List<AuditEvent> stored = auditEventRepository.findAllByPlanId(saved.id());
+        assertThat(stored).hasSize(2);
+        assertThat(stored.get(0).type()).isEqualTo("PLAN_DELETED");
+        assertThat(stored.get(0).detail()).contains("토익 900");
+        // 다만 계획이 사라지면 소유자를 확인할 길이 없어 서비스 조회는 빈 목록이다
+        // (닉네임 격리의 트레이드오프 — AuditEventService.getEvents 주석 참고).
+        assertThat(events(saved.id())).isEmpty();
+    }
+
+    @Test
+    void getEvents_다른소유자_빈목록() {
+        // given
+        PlanResponse saved = createBasePlan();
+        assertThat(events(saved.id())).isNotEmpty();
+
+        // when — 다른 닉네임으로 조회하면 404가 아니라 빈 목록(존재 여부 은닉)
+        assertThat(auditEventService.getEvents(saved.id(), OTHER_OWNER)).isEmpty();
     }
 
     @Test
@@ -229,10 +247,10 @@ class AuditEventServiceTest {
         String today = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
         Map<String, Object> tasks = Map.of(today, List.of(
                 task("t-1", "단어 암기", true), task("t-2", "문법 정리", false)));
-        PlanResponse saved = planService.create(request("토익 900", tasks, null), null);
+        PlanResponse saved = planService.create(request("토익 900", tasks, null), OWNER, null);
 
         // when
-        reflectionService.save(saved.id(), today, new ReflectionSaveRequest("HARD", "NOT_ENOUGH_TIME"), "session-c");
+        reflectionService.save(saved.id(), today, new ReflectionSaveRequest("HARD", "NOT_ENOUGH_TIME"), OWNER, "session-c");
 
         // then
         AuditEventResponse latest = events(saved.id()).get(0);
@@ -245,7 +263,7 @@ class AuditEventServiceTest {
     void getEvents_최신순정렬() {
         // given
         PlanResponse saved = createBasePlan();
-        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), null);
+        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), OWNER, null);
 
         // when
         List<AuditEventResponse> events = events(saved.id());
@@ -260,8 +278,8 @@ class AuditEventServiceTest {
     @Test
     void record_세션ID_공백은null_초과분은절단() {
         // given
-        PlanResponse saved = planService.create(request("토익 900", BASE_TASKS, null), "   ");
-        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), "x".repeat(80));
+        PlanResponse saved = planService.create(request("토익 900", BASE_TASKS, null), OWNER, "   ");
+        planService.update(saved.id(), request("토익 950", BASE_TASKS, null), OWNER, "x".repeat(80));
 
         // then — 공백뿐인 헤더는 null(알 수 없음), 임의 장문 헤더는 64자로 절단해 저장
         List<AuditEventResponse> events = events(saved.id());

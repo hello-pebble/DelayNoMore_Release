@@ -21,7 +21,9 @@ import java.util.Objects;
 @RequiredArgsConstructor
 public class PlanService {
 
-    // 공유 데모 저장소 폭주 방지 — 익명 방문자 전원이 함께 쓰는 휘발성 보관함이므로 개수 상한을 둔다.
+    // 공유 데모 저장소 폭주 방지 — 닉네임별로 격리되어도 저장소 자체는 한 서버 메모리이므로
+    // 상한은 전역(닉네임 합산)으로 유지한다. 닉네임별 할당량이 필요해지면
+    // findAllByOwner(owner).size() 검사로 바꾸면 된다.
     private static final int MAX_PLANS = 50;
 
     private final PlanRepository planRepository;
@@ -31,7 +33,7 @@ public class PlanService {
     // synchronized: 한도 검사(count)와 저장(save)을 원자적으로 묶는다. 공유 데모 저장소라
     // 여러 방문자가 동시에 생성하면 각자 검사를 통과한 뒤 저장해 상한 50건을 넘길 수 있는데
     // (TOCTOU), 생성 경로를 직렬화해 이를 막는다. 생성만 개수를 늘리므로 create만 잠그면 충분하다.
-    public synchronized PlanResponse create(PlanSaveRequest request, String sessionId) {
+    public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId) {
         if (planRepository.count() >= MAX_PLANS) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
         }
@@ -40,45 +42,54 @@ public class PlanService {
         String startDate = PlanDates.minTaskKey(request.tasks());
         int duration = PlanDates.spanDays(startDate, request.endDate());
         Plan saved = planRepository.save(
-                request.toPlan(null, System.currentTimeMillis(), startDate, duration));
+                request.toPlan(null, System.currentTimeMillis(), startDate, duration, owner));
         auditEventService.recordPlanCreated(saved, sessionId);
         return PlanResponse.from(saved);
     }
 
-    public List<PlanResponse> getPlans() {
-        return planRepository.findAll().stream()
+    public List<PlanResponse> getPlans(String owner) {
+        return planRepository.findAllByOwner(owner).stream()
                 .map(PlanResponse::from)
                 .toList();
     }
 
-    public PlanResponse getPlan(long id) {
-        Plan plan = planRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
-        return PlanResponse.from(plan);
+    public PlanResponse getPlan(long id, String owner) {
+        return PlanResponse.from(requireOwnedPlan(id, owner));
     }
 
     // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷으로 묶어 주별 완료율을 낸다. 읽기 전용이라
     // getPlan과 같은 조회·404 패턴. 완료 개수 계산은 서버 소유(plan.tasks 기준, WeeklySummaryResponse.from).
-    public WeeklySummaryResponse getWeeklySummary(long id) {
-        Plan plan = planRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
-        return WeeklySummaryResponse.from(plan);
+    public WeeklySummaryResponse getWeeklySummary(long id, String owner) {
+        return WeeklySummaryResponse.from(requireOwnedPlan(id, owner));
     }
 
-    public PlanResponse update(long id, PlanSaveRequest request, String sessionId) {
+    // 소유자 확인 조회 — 남의 계획은 "존재 자체를 숨긴다"(404). 403이 아닌 이유: 닉네임은
+    // 인증이 아니라 스코프 키라, 존재 여부 노출 자체가 정보 유출이다.
+    private Plan requireOwnedPlan(long id, String owner) {
+        return planRepository.findById(id)
+                .filter(p -> owner.equals(p.owner()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
+    }
+
+    public PlanResponse update(long id, PlanSaveRequest request, String owner, String sessionId) {
         // startDate는 생성 시 산출된 뒤 불변이라 원자 구간 밖에서 읽어도 레이스가 없다(어떤 동시
         // 쓰기도 startDate를 바꾸지 못한다). 이 값을 보존하고 duration만 [startDate, endDate]로 재산출
         // 한다 — 클라이언트가 보낸 startDate/duration은 무시(규칙 소유권은 서버). DB 이관 시에도 이
         // 불변식(startDate 고정)을 유지해야 이 비원자 읽기가 안전하다.
-        Plan current = planRepository.findById(id)
-                .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
+        Plan current = requireOwnedPlan(id, owner);
         String startDate = current.startDate();
         int duration = PlanDates.spanDays(startDate, request.endDate());
-        Plan updated = request.toPlan(id, System.currentTimeMillis(), startDate, duration);
-        // 고정 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
+        Plan updated = request.toPlan(id, System.currentTimeMillis(), startDate, duration, owner);
+        // 고정·소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
         // 쓰기(예: 다른 브라우저의 고정)가 끼어들 수 없어 check-then-act 레이스가 없다.
+        // (위 requireOwnedPlan은 startDate를 읽기 위한 사전 조회일 뿐, 판정은 이 원자 구간이 최종이다.)
         Plan previous = planRepository.update(updated,
-                c -> assertUnlockedOrToggleOnly(c, updated));
+                c -> {
+                    if (!owner.equals(c.owner())) {
+                        throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+                    }
+                    assertUnlockedOrToggleOnly(c, updated);
+                });
         if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
@@ -108,11 +119,15 @@ public class PlanService {
     // 미완료 이월 도메인 액션 — 오늘(KST) 미완료를 내일로 옮긴다. 예전엔 프론트가 계산해 PUT으로
     // 보내고 서버가 diff에서 역감지했지만, 이제 날짜 규칙과 연산 모두 서버가 소유한다.
     // 가드·연산은 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼 다른 쓰기와 경합하지 않는다.
-    public CarryOverResponse carryOver(long id, String sessionId) {
+    public CarryOverResponse carryOver(long id, String owner, String sessionId) {
         String fromDate = KstDates.today().toString();
         String toDate = KstDates.today().plusDays(1).toString();
         int[] movedCount = new int[1];
         Plan updated = planRepository.mutate(id, current -> {
+            // 소유자 불일치는 존재 자체를 숨긴다(404) — requireOwnedPlan과 같은 기준을 원자 구간 안에서.
+            if (!owner.equals(current.owner())) {
+                throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+            }
             // 이월은 구조 변경(항목 이동·기간 연장)이므로 고정 계획에는 PUT 가드와 같은 판정을 적용한다.
             if (current.isConfirmed()) {
                 throw new BusinessException(ErrorCode.PLAN_LOCKED);
@@ -127,7 +142,7 @@ public class PlanService {
             boolean extendsRange = current.endDate() != null && current.endDate().compareTo(toDate) < 0;
             String newEndDate = extendsRange ? toDate : current.endDate();
             int newDuration = PlanDates.spanDays(current.startDate(), newEndDate);
-            return new Plan(current.id(), current.goalName(),
+            return new Plan(current.id(), current.owner(), current.goalName(),
                     newDuration,
                     current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
                     current.confirmedAt(), current.startDate(),
@@ -143,8 +158,14 @@ public class PlanService {
         return new CarryOverResponse(movedCount[0], toDate, PlanResponse.from(updated));
     }
 
-    public void delete(long id, String sessionId) {
-        Plan deleted = planRepository.deleteById(id);
+    public void delete(long id, String owner, String sessionId) {
+        // 소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 검사와 제거 사이에 끼어들 수 없다.
+        Plan deleted = planRepository.deleteById(id,
+                c -> {
+                    if (!owner.equals(c.owner())) {
+                        throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+                    }
+                });
         if (deleted == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }

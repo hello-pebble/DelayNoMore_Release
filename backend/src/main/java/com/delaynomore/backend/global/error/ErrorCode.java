@@ -9,6 +9,8 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "입력값을 다시 확인해주세요."),
+    NICKNAME_REQUIRED(HttpStatus.BAD_REQUEST, "닉네임이 필요합니다. X-Nickname 헤더를 확인해주세요."),
+    NICKNAME_INVALID(HttpStatus.BAD_REQUEST, "닉네임은 한글·영문·숫자 2~20자만 허용됩니다."),
     AI_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY, "AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해주세요."),
     AI_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "AI 응답을 해석하지 못했습니다. 잠시 후 다시 시도해주세요."),
     PLAN_NOT_FOUND(HttpStatus.NOT_FOUND, "계획을 찾을 수 없습니다. 이미 삭제되었을 수 있어요."),

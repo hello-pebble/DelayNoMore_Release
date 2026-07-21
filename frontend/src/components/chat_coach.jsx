@@ -24,7 +24,8 @@ import { getSessionId } from '../session_id';
 import { todayStr } from '../date_utils';
 
 // "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
-// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 모든 방문자가 공유한다).
+// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 닉네임별로 격리된다). 닉네임을 바꾸면
+// 이 포인터가 새 닉네임의 목록에 없어 마운트 복원 로직이 자연히 정리한다.
 const LAST_VIEWED_PLAN_KEY = 'delaynomore:lastViewedPlanId';
 
 // 서버 자동 동기화 디바운스 — 완료 토글 연타나 스트리밍 수정이 요청 폭주로 이어지지 않게 한다.
@@ -326,11 +327,15 @@ export default function ChatCoach() {
     scrollToBottom();
   }, [messages, isTyping, isThinking]);
 
-  // 생각 중 타이머 해제 cleanup
+  // 생각 중 타이머 해제 cleanup. 동기화 디바운스 타이머도 함께 지운다 — 닉네임 전환으로
+  // 리마운트될 때 남은 타이머가 발사되면 PUT이 "새 닉네임" 헤더로 나가 404 → 재생성 경로가
+  // 이전 닉네임의 계획을 새 닉네임 소유로 되살릴 수 있다(언마운트 시에만 지우므로, dep 변경에
+  // 대기 중 변경이 유실된다는 아래 자동 동기화 effect의 우려와는 충돌하지 않는다).
   useEffect(() => {
     return () => {
       if (thinkingTimerRef.current) clearInterval(thinkingTimerRef.current);
       if (statusTimerRef.current) clearInterval(statusTimerRef.current);
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     };
   }, []);
 

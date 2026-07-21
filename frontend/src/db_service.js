@@ -3,6 +3,7 @@
 // 인증·목표 저장·팀·알림 등은 제거되었다.
 
 import { getSessionId } from './session_id';
+import { getNickname } from './nickname';
 
 const API_BASE = '/api/v1';
 
@@ -14,6 +15,13 @@ const requestJson = async (path, payload, method = 'POST') => {
   if (method !== 'GET') {
     // 변경 이력의 세션 귀속용 — 서버는 변이 요청에서만 이 헤더를 읽고, 읽기는 기록하지 않는다.
     headers['X-Session-Id'] = getSessionId();
+  }
+  // 소유자 스코프 — 계획·회고·이력 API는 닉네임(간이 계정 키)으로 데이터가 격리되므로 읽기에도
+  // 필요하다. 헤더 값은 ASCII만 허용되어(한글 원문은 fetch가 거부) 퍼센트 인코딩해 보내고 서버
+  // (OwnerNickname)가 UTF-8로 복원한다. AI·메타 엔드포인트는 이 헤더를 무시한다(경로 분기 불필요).
+  const nickname = getNickname();
+  if (nickname) {
+    headers['X-Nickname'] = encodeURIComponent(nickname);
   }
   const response = await fetch(`${API_BASE}${path}`, {
     method,

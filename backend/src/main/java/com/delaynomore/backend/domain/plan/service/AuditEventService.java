@@ -5,6 +5,7 @@ import com.delaynomore.backend.domain.plan.entity.AuditEvent;
 import com.delaynomore.backend.domain.plan.entity.AuditEventType;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
+import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -28,6 +29,7 @@ public class AuditEventService {
     private static final String GENERIC_UPDATE_DETAIL = "계획 내용 변경";
 
     private final AuditEventRepository auditEventRepository;
+    private final PlanRepository planRepository;
 
     public void recordPlanCreated(Plan saved, String sessionId) {
         append(saved.id(), AuditEventType.PLAN_CREATED, null, sessionId);
@@ -82,7 +84,17 @@ public class AuditEventService {
         }
     }
 
-    public List<AuditEventResponse> getEvents(long planId) {
+    // 소유자 불일치·미존재 계획은 빈 목록 — 기존 "모르는 planId는 404가 아니라 빈 목록" 계약 유지.
+    // 트레이드오프: 삭제된 계획의 이력(PLAN_DELETED)은 이제 소유자도 볼 수 없다(계획이 지워지면
+    // 소유자를 알 길이 없으므로). UI는 삭제된 계획의 이력을 조회하지 않아 실사용 영향은 없다.
+    // 이력에 소유자를 남기려면 AuditEvent에 owner 필드를 추가해야 하는데, 로그인 도입 시로 미룬다.
+    public List<AuditEventResponse> getEvents(long planId, String owner) {
+        boolean owned = planRepository.findById(planId)
+                .filter(p -> owner.equals(p.owner()))
+                .isPresent();
+        if (!owned) {
+            return List.of();
+        }
         return auditEventRepository.findAllByPlanId(planId).stream()
                 .map(AuditEventResponse::from)
                 .toList();

@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.ReflectionResponse;
 import com.delaynomore.backend.domain.plan.dto.ReflectionSaveRequest;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
+import com.delaynomore.backend.domain.plan.support.OwnerNickname;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -22,7 +23,8 @@ import java.util.List;
 
 /**
  * 하루 마무리 회고 API — 계획별·날짜별 1건(업서트). 계획 보관함과 같은 서버 인메모리(휘발성)
- * 데모 체제로, 모든 방문자가 회고를 공유한다. 저장은 오늘(Asia/Seoul 기준) 날짜만 허용하고,
+ * 데모 체제. 회고는 자체 소유자 없이 계획(X-Nickname)의 소유권을 상속한다 — 남의 계획의 회고는
+ * 저장·조회 모두 404. 저장은 오늘(Asia/Seoul 기준) 날짜만 허용하고,
  * 완료/전체 개수는 서버가 계획의 오늘 할 일에서 재계산한다.
  */
 @Tag(name = "reflection")
@@ -40,20 +42,24 @@ public class ReflectionController {
     public ApiResponse<ReflectionResponse> save(@PathVariable long planId,
                                                 @PathVariable String date,
                                                 @Valid @RequestBody ReflectionSaveRequest request,
+                                                @RequestHeader(value = "X-Nickname", required = false) String rawNickname,
                                                 @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to save reflection for plan {} on {}", planId, date);
-        return ApiResponse.ok(reflectionService.save(planId, date, request, sessionId));
+        return ApiResponse.ok(reflectionService.save(planId, date, request,
+                OwnerNickname.resolve(rawNickname), sessionId));
     }
 
     @Operation(summary = "특정 날짜의 회고 조회")
     @GetMapping("/{date}")
-    public ApiResponse<ReflectionResponse> get(@PathVariable long planId, @PathVariable String date) {
-        return ApiResponse.ok(reflectionService.get(planId, date));
+    public ApiResponse<ReflectionResponse> get(@PathVariable long planId, @PathVariable String date,
+                                               @RequestHeader(value = "X-Nickname", required = false) String rawNickname) {
+        return ApiResponse.ok(reflectionService.get(planId, date, OwnerNickname.resolve(rawNickname)));
     }
 
     @Operation(summary = "계획의 회고 목록 조회 (날짜 내림차순)")
     @GetMapping
-    public ApiResponse<List<ReflectionResponse>> getAll(@PathVariable long planId) {
-        return ApiResponse.ok(reflectionService.getAll(planId));
+    public ApiResponse<List<ReflectionResponse>> getAll(@PathVariable long planId,
+                                                        @RequestHeader(value = "X-Nickname", required = false) String rawNickname) {
+        return ApiResponse.ok(reflectionService.getAll(planId, OwnerNickname.resolve(rawNickname)));
     }
 }
