@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.entity.Reflection;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -32,38 +33,66 @@ public final class WorkloadRecommendation {
 
     // 추천 결과 — 화면 "지난 계획" 통계와 결정된 다음 분량을 함께 담는다.
     public record Recommendation(
-            int currentTasksPerDay,      // round(전체 항목수 / 날짜 버킷 수)
+            int currentTasksPerDay,      // round(전체 항목수 / 날짜 버킷 수) — 가장 최근 계획 기준
             int recommendedTasksPerDay,  // 규칙 적용 + 안전범위 클램프
-            int observedDays,            // startDate ~ min(endDate, 오늘) 사이 날짜 버킷 수
-            int completedCount,
-            int totalCount,
-            int completionRate,          // 관찰 창 한정(미래 제외), 반올림 백분율
-            int hardCount,
-            int reflectionCount,
-            String topReasonCode,        // 최빈 회고 이유(enum name), 없으면 null
-            boolean insufficientHistory, // observedDays < 3 → 추천 없이 기존 유지
-            int delta                    // -1 / 0 / +1
+            int observedDays,            // 합산 관찰일수(계보 전체, 미래 제외)
+            int completedCount,          // 합산 완료 개수
+            int totalCount,              // 합산 전체 개수
+            int completionRate,          // 관찰 창 한정(미래 제외), 합산 기준 반올림 백분율
+            int hardCount,               // 합산 '벅찼어요' 회고 수
+            int reflectionCount,         // 합산 회고 수
+            String topReasonCode,        // 합산 최빈 회고 이유(enum name), 없으면 null
+            boolean insufficientHistory, // 합산 observedDays < 3 → 추천 없이 기존 유지
+            int delta,                   // -1 / 0 / +1
+            int observedPlanCount        // 합산에 쓴 계획 수(1~3) — 같은 goalName 최근 계획
     ) {
     }
 
+    // 합산 입력 — 한 계획과 그 계획의 회고. 계보(같은 목표 최근 계획들)를 최근-우선으로 넘긴다.
+    public record PlanHistory(Plan plan, List<Reflection> reflections) {
+    }
+
+    // 단일 계획 호환 진입점 — 합산 버전에 1건짜리 계보로 위임한다(기존 호출·테스트 무변경).
     public static Recommendation compute(Plan plan, List<Reflection> reflections, LocalDate today) {
-        int bucketCount = dateBucketCount(plan);
-        int current = roundDiv(plan.countAllTasks().total(), bucketCount);
-        current = clamp(current, MIN_TASKS_PER_DAY, MAX_TASKS_PER_DAY);
+        return compute(List.of(new PlanHistory(plan, reflections)), today);
+    }
 
-        // 관찰 창: 시작일 ~ min(종료일, 오늘). 미래 날짜는 완료율·관찰일수에서 제외한다.
+    // 같은 목표의 최근 계획들을 합산해 추천을 낸다. lineage는 최근 계획이 index 0. 현재 분량은 가장
+    // 최근 계획 기준으로, 완료율·관찰일수·회고는 계보 전체를 합산해 표본을 키운다. 미래 제외는
+    // 계획별로 관찰 창(startDate ~ min(endDate, 오늘))을 잡아 적용하고, 회고는 실제 저장된 것만 센다.
+    public static Recommendation compute(List<PlanHistory> lineage, LocalDate today) {
+        if (lineage == null || lineage.isEmpty()) {
+            return new Recommendation(0, 0, 0, 0, 0, 0, 0, 0, null, true, 0, 0);
+        }
+        Plan latest = lineage.get(0).plan();
+        int current = clamp(roundDiv(latest.countAllTasks().total(), dateBucketCount(latest)),
+                MIN_TASKS_PER_DAY, MAX_TASKS_PER_DAY);
+
         String todayKey = today.toString();
-        String to = minKey(plan.endDate(), todayKey);
-        Plan.TaskCounts observed = plan.countTasksBetween(plan.startDate(), to);
-        int rate = computeRate(observed.completed(), observed.total());
-        int observedDays = observedBucketCount(plan, to);
+        int completed = 0;
+        int total = 0;
+        int observedDays = 0;
+        List<Reflection> allReflections = new ArrayList<>();
+        for (PlanHistory history : lineage) {
+            Plan plan = history.plan();
+            // 관찰 창: 시작일 ~ min(종료일, 오늘). 미래 날짜는 완료율·관찰일수에서 제외한다.
+            String to = minKey(plan.endDate(), todayKey);
+            Plan.TaskCounts observed = plan.countTasksBetween(plan.startDate(), to);
+            completed += observed.completed();
+            total += observed.total();
+            observedDays += observedBucketCount(plan, to);
+            if (history.reflections() != null) {
+                allReflections.addAll(history.reflections());
+            }
+        }
+        int rate = computeRate(completed, total);
 
-        // 회고 집계 — 실제 저장된 것만.
-        int reflectionCount = reflections == null ? 0 : reflections.size();
-        int hardCount = countDifficulty(reflections, "HARD");
-        int easyCount = countDifficulty(reflections, "EASY");
-        int tooMuchCount = countReason(reflections, "TOO_MUCH_WORK");
-        String topReasonCode = topReason(reflections);
+        // 회고 집계 — 계보 전체 합산, 실제 저장된 것만.
+        int reflectionCount = allReflections.size();
+        int hardCount = countDifficulty(allReflections, "HARD");
+        int easyCount = countDifficulty(allReflections, "EASY");
+        int tooMuchCount = countReason(allReflections, "TOO_MUCH_WORK");
+        String topReasonCode = topReason(allReflections);
 
         boolean insufficient = observedDays < MIN_OBSERVED_DAYS;
         int delta = 0;
@@ -86,8 +115,8 @@ public final class WorkloadRecommendation {
         int effectiveDelta = recommended - current;
 
         return new Recommendation(current, recommended, observedDays,
-                observed.completed(), observed.total(), rate, hardCount, reflectionCount,
-                topReasonCode, insufficient, effectiveDelta);
+                completed, total, rate, hardCount, reflectionCount,
+                topReasonCode, insufficient, effectiveDelta, lineage.size());
     }
 
     // 추천 버튼 노출 조건 — 완료(고정 + 전부 완료)했거나 3일 이상 실행한 계획. 규칙을 서버가 소유해

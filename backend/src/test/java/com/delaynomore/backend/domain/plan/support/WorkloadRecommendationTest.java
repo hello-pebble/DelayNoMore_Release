@@ -159,6 +159,68 @@ class WorkloadRecommendationTest {
         assertThat(WorkloadRecommendation.isEligible(shortDraft, today, shortDraft.countAllTasks())).isFalse();
     }
 
+    @Test
+    void 합산하면_관찰일수부족이_해소되고_규칙이_적용된다() {
+        // 각 2일짜리 계획 두 건 — 단독이면 관찰 2일 < 3(추천 없음)이지만, 합치면 관찰 4일 +
+        // 완료율 33%가 되어 하루 1개 감소가 적용된다. 현재 분량은 최근(클릭한) 계획 기준.
+        Plan recent = buildPlan("2026-07-01", 2, 3, 1, "CONFIRMED");
+        Plan older = buildPlan("2026-06-01", 2, 3, 1, "CONFIRMED");
+        LocalDate today = LocalDate.parse("2026-07-05");
+
+        Recommendation single = WorkloadRecommendation.compute(recent, List.of(), today);
+        assertThat(single.insufficientHistory()).isTrue();
+        assertThat(single.observedPlanCount()).isEqualTo(1);
+
+        Recommendation merged = WorkloadRecommendation.compute(List.of(
+                new WorkloadRecommendation.PlanHistory(recent, List.of()),
+                new WorkloadRecommendation.PlanHistory(older, List.of())), today);
+
+        assertThat(merged.observedPlanCount()).isEqualTo(2);
+        assertThat(merged.observedDays()).isEqualTo(4);
+        assertThat(merged.insufficientHistory()).isFalse();
+        assertThat(merged.completionRate()).isLessThan(50);
+        assertThat(merged.currentTasksPerDay()).isEqualTo(3);   // 최근 계획 기준
+        assertThat(merged.recommendedTasksPerDay()).isEqualTo(2);
+        assertThat(merged.delta()).isEqualTo(-1);
+    }
+
+    @Test
+    void 회고는_계보전체를_합산해_집계한다() {
+        // 두 계획에 걸쳐 HARD+분량많음 신호가 나뉘어 있어도 합산되어 감소로 확정된다.
+        Plan recent = buildPlan("2026-07-01", 3, 3, 2, "CONFIRMED");   // 66% 중립 구간
+        Plan older = buildPlan("2026-06-01", 3, 3, 2, "CONFIRMED");
+        LocalDate today = LocalDate.parse("2026-07-05");
+        List<Reflection> recentRefl = List.of(refl("HARD", "TOO_MUCH_WORK"));
+        List<Reflection> olderRefl = List.of(refl("HARD", "TOO_MUCH_WORK"), refl("NORMAL", "AS_PLANNED"));
+
+        Recommendation merged = WorkloadRecommendation.compute(List.of(
+                new WorkloadRecommendation.PlanHistory(recent, recentRefl),
+                new WorkloadRecommendation.PlanHistory(older, olderRefl)), today);
+
+        assertThat(merged.observedPlanCount()).isEqualTo(2);
+        assertThat(merged.reflectionCount()).isEqualTo(3);
+        assertThat(merged.hardCount()).isEqualTo(2);
+        assertThat(merged.completionRate()).isBetween(50, 84);
+        assertThat(merged.delta()).isEqualTo(-1);              // hardMajority + tooMuchRepeated → 감소
+        assertThat(merged.topReasonCode()).isEqualTo("TOO_MUCH_WORK");
+    }
+
+    @Test
+    void 단일_계보는_기존_단일계획_결과와_동일() {
+        // 합산 오버로드에 1건만 넘겨도 v0.13.0 단일 경로와 같은 값(observedPlanCount만 1).
+        Plan plan = plan(START, 5, 3, 1);
+        LocalDate today = LocalDate.parse("2026-07-05");
+
+        Recommendation single = WorkloadRecommendation.compute(plan, List.of(), today);
+        Recommendation merged = WorkloadRecommendation.compute(
+                List.of(new WorkloadRecommendation.PlanHistory(plan, List.of())), today);
+
+        assertThat(merged.observedPlanCount()).isEqualTo(1);
+        assertThat(merged.recommendedTasksPerDay()).isEqualTo(single.recommendedTasksPerDay());
+        assertThat(merged.completionRate()).isEqualTo(single.completionRate());
+        assertThat(merged.observedDays()).isEqualTo(single.observedDays());
+    }
+
     // === 헬퍼 ===
 
     private static Plan plan(String startDate, int days, int tasksPerDay, int completedPerDay) {

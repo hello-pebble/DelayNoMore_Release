@@ -21,6 +21,7 @@ public record RecommendationResponse(
         int hardCount,
         MetaOptionResponse topReason,     // 최빈 회고 이유 {code,label}, 없으면 null
         boolean insufficientHistory,      // 관찰 3일 미만 — 추천 없이 기존 분량 유지
+        int observedPlanCount,            // 합산에 쓴 계획 수(1~3) — 같은 목표 최근 계획
         String reason,                    // AI 또는 서버 템플릿 설명(항상 존재)
         boolean aiReasonUsed              // 이유가 AI 생성인지(false면 서버 템플릿 폴백)
 ) {
@@ -31,7 +32,8 @@ public record RecommendationResponse(
                 : new MetaOptionResponse(rec.topReasonCode(), reasonLabel(rec.topReasonCode()));
         return new RecommendationResponse(plan.id(), rec.currentTasksPerDay(), rec.recommendedTasksPerDay(),
                 rec.observedDays(), rec.completedCount(), rec.totalCount(), rec.completionRate(),
-                rec.hardCount(), topReason, rec.insufficientHistory(), reason, aiReasonUsed);
+                rec.hardCount(), topReason, rec.insufficientHistory(), rec.observedPlanCount(),
+                reason, aiReasonUsed);
     }
 
     private static String reasonLabel(String reasonCode) {

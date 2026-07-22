@@ -47,16 +47,42 @@ public class WorkloadRecommendationService {
     private final TemplatePlanGenerator templatePlanGenerator;
     private final PlanService planService;
 
-    // (a) 수행 기록 계산 + 규칙 분량 + 이유 + VIEWED 기록.
+    // 합산 표본 상한 — 같은 목표의 최근 계획을 최대 이만큼 모아 추천을 안정화한다.
+    private static final int MAX_HISTORY_PLANS = 3;
+
+    // (a) 수행 기록 계산 + 규칙 분량 + 이유 + VIEWED 기록. 같은 목표(goalName)의 최근 계획을 최대
+    //     3건 합산해 표본을 키운다(계획 1건이면 v0.13.0과 동일 결과).
     @Transactional
     public RecommendationResponse recommend(long id, String owner, String sessionId) {
         Plan plan = requireOwnedPlan(id, owner);
         WorkloadRecommendation.Recommendation rec =
-                WorkloadRecommendation.compute(plan, reflectionRepository.findAllByPlanId(id), KstDates.today());
+                WorkloadRecommendation.compute(collectHistory(plan, owner), KstDates.today());
         RecommendationReasonWriter.ReasonResult reason = reasonWriter.write(rec);
         auditEventService.recordRecommendationViewed(plan.id(), owner,
                 rec.currentTasksPerDay(), rec.recommendedTasksPerDay(), sessionId);
         return RecommendationResponse.from(plan, rec, reason.text(), reason.aiUsed());
+    }
+
+    // 같은 목표의 최근 계획을 최대 3건 모은다 — 클릭한 계획을 맨 앞(현재 분량 기준)에 두고, 나머지는
+    // findAllByOwner(savedAt DESC) 순서대로 같은 goalName만 채운다. 다른 목표·타 owner는 제외된다
+    // (findAllByOwner가 owner로 이미 걸러 소유자 격리를 유지). 각 계획의 회고를 함께 실어 반환한다.
+    private List<WorkloadRecommendation.PlanHistory> collectHistory(Plan clicked, String owner) {
+        List<Plan> group = new ArrayList<>();
+        group.add(clicked);
+        for (Plan candidate : planRepository.findAllByOwner(owner)) {
+            if (group.size() >= MAX_HISTORY_PLANS) {
+                break;
+            }
+            if (!candidate.id().equals(clicked.id()) && clicked.goalName().equals(candidate.goalName())) {
+                group.add(candidate);
+            }
+        }
+        List<WorkloadRecommendation.PlanHistory> history = new ArrayList<>();
+        for (Plan plan : group) {
+            history.add(new WorkloadRecommendation.PlanHistory(plan,
+                    reflectionRepository.findAllByPlanId(plan.id())));
+        }
+        return history;
     }
 
     // (b) 선택 분량으로 초안 생성 — 저장하지 않는다(승인 전 미저장). AI가 실패하면 서버 템플릿으로
