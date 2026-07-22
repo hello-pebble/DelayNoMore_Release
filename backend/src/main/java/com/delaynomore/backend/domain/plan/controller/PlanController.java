@@ -3,8 +3,13 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.dto.RecommendationConfirmRequest;
+import com.delaynomore.backend.domain.plan.dto.RecommendationDraftRequest;
+import com.delaynomore.backend.domain.plan.dto.RecommendationDraftResponse;
+import com.delaynomore.backend.domain.plan.dto.RecommendationResponse;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
+import com.delaynomore.backend.domain.plan.service.WorkloadRecommendationService;
 import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -43,6 +48,7 @@ import java.util.List;
 public class PlanController {
 
     private final PlanService planService;
+    private final WorkloadRecommendationService recommendationService;
 
     // X-Session-Id: 변경 이력의 "다른 세션에서 발생한 변경인가?" 귀속용 선택 헤더 —
     // 브라우저가 만든 익명 식별자일 뿐 인증이 아니다. 없으면(구형 클라이언트·curl) null로 기록된다.
@@ -97,6 +103,39 @@ public class PlanController {
                                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to carry over plan {}", id);
         return ApiResponse.ok(planService.carryOver(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
+    // === 다음 계획 분량 추천(로드맵 4·5번) ===
+    // 계산(수행 기록)+AI 이유+VIEWED 기록을 유발하므로 GET이 아니라 POST. 분량 숫자는 서버 규칙이
+    // 결정하고 AI는 이유 설명만 한다.
+    @Operation(summary = "다음 계획 분량 추천 — 수행 기록 계산 + 규칙 분량 + 이유")
+    @PostMapping("/{id}/recommendation")
+    public ApiResponse<RecommendationResponse> recommend(@PathVariable long id,
+                                                         @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                         @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to recommend workload for plan {}", id);
+        return ApiResponse.ok(recommendationService.recommend(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
+    // 선택한 분량으로 초안을 생성해 미리보기로 돌려준다 — 저장하지 않는다(승인 전 미저장).
+    @Operation(summary = "추천 초안 생성(미리보기 · 미저장)")
+    @PostMapping("/{id}/recommendation/draft")
+    public ApiResponse<RecommendationDraftResponse> recommendationDraft(@PathVariable long id,
+                                                                        @Valid @RequestBody RecommendationDraftRequest request,
+                                                                        @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+        return ApiResponse.ok(recommendationService.draft(id, request.selectedTasksPerDay(),
+                OwnerGuestId.resolve(rawGuestId)));
+    }
+
+    // 승인된 초안을 새 계획으로 저장한다(원본은 불변). 결정·생성 이력이 함께 남는다.
+    @Operation(summary = "추천 초안 승인 — 새 계획으로 저장")
+    @PostMapping("/{id}/recommendation/confirm")
+    public ApiResponse<PlanResponse> recommendationConfirm(@PathVariable long id,
+                                                           @Valid @RequestBody RecommendationConfirmRequest request,
+                                                           @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                           @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to confirm recommendation from plan {}", id);
+        return ApiResponse.ok(recommendationService.confirm(id, request, OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
     @Operation(summary = "보관된 계획 삭제")

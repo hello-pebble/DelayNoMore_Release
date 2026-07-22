@@ -1,6 +1,8 @@
 package com.delaynomore.backend.domain.plan.dto;
 
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.support.WorkloadRecommendation;
+import com.delaynomore.backend.global.time.KstDates;
 
 import java.util.Map;
 
@@ -20,7 +22,10 @@ public record PlanResponse(
         String endDate,
         String createdAt,
         long savedAt,
-        Progress progress
+        Progress progress,
+        // 다음 계획 분량 추천 버튼 노출 여부 — 완료했거나 3일 이상 실행한 계획일 때 true. 규칙을
+        // 서버가 소유해(WorkloadRecommendation.isEligible) 프론트는 이 플래그만 보고 버튼을 그린다.
+        boolean recommendationEligible
 ) {
 
     // 전 날짜 합산 완료/전체 — 프론트 보관함 목록 행의 진행률 표시가 그대로 쓴다.
@@ -29,9 +34,10 @@ public record PlanResponse(
 
     public static PlanResponse from(Plan plan) {
         Plan.TaskCounts counts = plan.countAllTasks();
+        boolean eligible = WorkloadRecommendation.isEligible(plan, KstDates.today(), counts);
         return new PlanResponse(plan.id(), plan.goalName(), plan.duration(), plan.dailyHours(),
                 plan.currentLevel(), plan.tasks(), plan.status(), plan.confirmedAt(),
                 plan.startDate(), plan.endDate(), plan.createdAt(), plan.savedAt(),
-                new Progress(counts.completed(), counts.total()));
+                new Progress(counts.completed(), counts.total()), eligible);
     }
 }

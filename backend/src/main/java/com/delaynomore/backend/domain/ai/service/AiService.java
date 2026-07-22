@@ -6,6 +6,8 @@ import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.domain.ai.dto.AiHealthResponse;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
+import com.delaynomore.backend.global.error.BusinessException;
+import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,7 +60,25 @@ public class AiService {
     public Object createDraft(AiDraftRequest request) {
         List<Map<String, Object>> messages = promptBuilder.draftMessages(request);
         String raw = openRouterClient.complete(messages, NO_TOKEN_LIMIT);
-        return responseParser.normalizeDraftPlan(responseParser.parsePlan(raw), KstDates.today());
+        Map<String, Object> plan = responseParser.normalizeDraftPlan(responseParser.parsePlan(raw), KstDates.today());
+        // 추천 경로(tasksPerDay 지정)는 "날짜마다 정확히 N개"를 강제한다 — 어긋나면 잘라내거나
+        // 재시도하지 않고 실패로 처리해(AI_RESPONSE_INVALID) 호출부가 서버 템플릿 생성으로 폴백하게 한다.
+        if (request.tasksPerDay() != null) {
+            assertExactCount(plan, request.duration(), request.tasksPerDay());
+        }
+        return plan;
+    }
+
+    // 초안이 정확히 duration개의 날짜를 갖고, 각 날짜가 정확히 tasksPerDay개의 할 일을 갖는지 검증한다.
+    private void assertExactCount(Map<String, Object> plan, int duration, int tasksPerDay) {
+        if (plan.size() != duration) {
+            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+        }
+        for (Object value : plan.values()) {
+            if (!(value instanceof List<?> list) || list.size() != tasksPerDay) {
+                throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
+            }
+        }
     }
 
     /**

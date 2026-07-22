@@ -36,7 +36,8 @@ class PlanControllerTest {
         PlanRepository planRepository = new InMemoryPlanRepository();
         AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), auditEventService);
-        mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService))
+        // 이 테스트는 X-Guest-Id 헤더 계약만 검증하며 추천 엔드포인트를 호출하지 않으므로 추천 서비스는 null.
+        mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService, null))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .addInterceptors(new WebConfig.NoStoreInterceptor())
                 .build();

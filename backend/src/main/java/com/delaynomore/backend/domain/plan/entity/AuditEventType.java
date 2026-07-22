@@ -15,7 +15,12 @@ public enum AuditEventType {
     TASK_COMPLETED("할 일 완료"),
     TASK_REOPENED("완료 해제"),
     REFLECTION_SAVED("회고 저장"),
-    PLAN_DELETED("계획 삭제");
+    PLAN_DELETED("계획 삭제"),
+    // 다음 계획 분량 추천(로드맵 4·5번) — 조회·선택·생성 흐름을 추적한다.
+    WORKLOAD_RECOMMENDATION_VIEWED("다음 분량 추천 조회"),
+    WORKLOAD_RECOMMENDATION_ACCEPTED("추천 분량 채택"),
+    WORKLOAD_RECOMMENDATION_OVERRIDDEN("추천 분량 변경"),
+    PLAN_CREATED_FROM_RECOMMENDATION("추천 기반 계획 생성");
 
     private final String label;
 }

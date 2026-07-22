@@ -72,7 +72,7 @@ class AiServiceTest {
         AiService aiService = serviceWithKey("sk-live-key");
         when(openRouterClient.complete(anyList(), anyInt()))
                 .thenReturn("```json\n{\"2026-07-16\": [\"重點 핵심 개념 정리\"]}\n```");
-        AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null);
+        AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null, null);
 
         // when
         Object plan = aiService.createDraft(request);
@@ -87,7 +87,7 @@ class AiServiceTest {
         AiService aiService = serviceWithKey("sk-live-key");
         when(openRouterClient.complete(anyList(), anyInt()))
                 .thenReturn("{\"Day 1\": [\"개념 정리\"], \"Day 2\": [\"기출 풀기\"]}");
-        AiDraftRequest request = new AiDraftRequest("토익 900점", 2, 2, "600점대", null, null);
+        AiDraftRequest request = new AiDraftRequest("토익 900점", 2, 2, "600점대", null, null, null);
 
         // when
         Object plan = aiService.createDraft(request);
@@ -106,7 +106,7 @@ class AiServiceTest {
         // given
         AiService aiService = serviceWithKey("sk-live-key");
         when(openRouterClient.complete(anyList(), anyInt())).thenReturn("계획을 만들 수 없습니다.");
-        AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null);
+        AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null, null);
 
         // when
         BusinessException e = catchThrowableOfType(BusinessException.class, () -> aiService.createDraft(request));

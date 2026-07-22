@@ -126,6 +126,19 @@ export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 // totalDone, totalTotal, weeks: [{ index, startDate, endDate, done, total, rate }] }
 export const fetchWeeklySummary = (planId) => requestJson(`/plans/${planId}/summary/weekly`, null, 'GET');
 
+// 다음 계획 분량 추천(로드맵 4·5번) — 서버가 수행 기록을 계산하고 규칙으로 하루 분량을 정한다.
+// 분량 숫자는 서버 소유이고 AI는 이유 설명·내용 생성만 한다. 세 단계 모두 서버가 오케스트레이션한다.
+//  1) recommend: 수행 기록 + 규칙 분량 + 이유. 응답 data: { sourcePlanId, currentTasksPerDay,
+//     recommendedTasksPerDay, observedDays, completedCount, totalCount, completionRate, hardCount,
+//     topReason:{code,label}|null, insufficientHistory, reason, aiReasonUsed }
+//  2) draft: 선택 분량으로 초안 생성(미저장). 응답 data: { ...원본 메타, tasks, tasksPerDay, aiUsed }
+//  3) confirm: 승인된 초안을 새 계획으로 저장. 응답 data: PlanResponse
+export const postRecommendation = (planId) => requestJson(`/plans/${planId}/recommendation`, null, 'POST');
+export const postRecommendationDraft = (planId, selectedTasksPerDay) =>
+  requestJson(`/plans/${planId}/recommendation/draft`, { selectedTasksPerDay }, 'POST');
+export const confirmRecommendation = (planId, payload) =>
+  requestJson(`/plans/${planId}/recommendation/confirm`, payload, 'POST');
+
 // 하루 마무리 회고 — 계획별·날짜별 1건(PUT=업서트). 완료 개수는 보내지 않는다(서버가
 // plan.tasks에서 재계산). 저장은 서버 기준 오늘(Asia/Seoul) 날짜만 허용된다.
 // 호출부는 err.code(REFLECTION_NOT_FOUND / PLAN_NOT_FOUND 등)로 분기한다.
