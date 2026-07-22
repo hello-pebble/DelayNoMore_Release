@@ -65,6 +65,7 @@ public class RecommendationReasonWriter {
                 + "- Current tasks/day: " + rec.currentTasksPerDay() + "\n"
                 + "- Recommended tasks/day (FIXED, do not change): " + rec.recommendedTasksPerDay() + "\n"
                 + "- Decision: " + direction + "\n"
+                + "- Plans aggregated (same goal, recent): " + rec.observedPlanCount() + "\n"
                 + "- Completion rate over observed days: " + rec.completionRate() + "%\n"
                 + "- Observed days: " + rec.observedDays() + "\n"
                 + "- '벅찼어요(hard)' reflections: " + rec.hardCount() + " of " + rec.reflectionCount() + "\n"
@@ -75,25 +76,29 @@ public class RecommendationReasonWriter {
                 Map.of("role", "user", "content", userPrompt));
     }
 
-    // 서버 템플릿 — AI 없이도 규칙 결과를 설명한다. 회고 이유가 있으면 문장에 녹인다.
+    // 서버 템플릿 — AI 없이도 규칙 결과를 설명한다. 회고 이유가 있으면 문장에 녹인다. 여러 계획을
+    // 합산했으면 "최근 N개 계획 기록" 범위를 앞에 밝힌다.
     private String template(Recommendation rec) {
         int current = rec.currentTasksPerDay();
         int recommended = rec.recommendedTasksPerDay();
+        String scope = rec.observedPlanCount() > 1
+                ? "최근 " + rec.observedPlanCount() + "개 계획 기록을 보면 "
+                : "";
         if (rec.insufficientHistory()) {
-            return "관찰 기간이 3일 미만이라 기존 분량(하루 " + current + "개)을 유지합니다.";
+            return scope + "관찰 기간이 3일 미만이라 기존 분량(하루 " + current + "개)을 유지합니다.";
         }
         if (rec.delta() < 0) {
             String reasonClause = rec.topReasonCode() != null
                     ? " '" + reasonLabel(rec.topReasonCode()) + "' 회고가 이어져"
                     : "";
-            return "완료율이 " + rec.completionRate() + "%였고" + reasonClause
+            return scope + "완료율이 " + rec.completionRate() + "%였고" + reasonClause
                     + " 하루 " + current + "→" + recommended + "개로 줄이면 꾸준히 이어가기 좋아요.";
         }
         if (rec.delta() > 0) {
-            return "완료율이 " + rec.completionRate() + "%로 높고 여유롭다는 회고가 많아 "
+            return scope + "완료율이 " + rec.completionRate() + "%로 높고 여유롭다는 회고가 많아 "
                     + "하루 " + current + "→" + recommended + "개로 늘려볼 만해요.";
         }
-        return "완료율이 " + rec.completionRate() + "%로 안정적이라 현재 분량(하루 " + current + "개)을 유지합니다.";
+        return scope + "완료율이 " + rec.completionRate() + "%로 안정적이라 현재 분량(하루 " + current + "개)을 유지합니다.";
     }
 
     private static String reasonLabel(String reasonCode) {

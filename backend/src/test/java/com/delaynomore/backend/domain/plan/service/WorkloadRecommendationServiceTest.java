@@ -73,6 +73,22 @@ class WorkloadRecommendationServiceTest {
     }
 
     @Test
+    void recommend_같은목표_최근3건만_합산() {
+        when(reasonWriter.write(any())).thenReturn(new RecommendationReasonWriter.ReasonResult("이유", false));
+        // 같은 목표 3건 + 다른 목표 1건 + 타 owner 1건. 클릭 계획 포함 같은 목표 최근 3건만 합산.
+        seedPlan("owner", "자격증", 2, 3, 1);
+        seedPlan("owner", "자격증", 2, 3, 1);
+        Plan clicked = seedPlan("owner", "자격증", 2, 3, 1); // 가장 최근(마지막 저장)
+        seedPlan("owner", "다이어트", 5, 3, 3);              // 다른 목표 — 제외
+        seedPlan("other", "자격증", 5, 3, 3);                // 타 owner — 제외
+
+        RecommendationResponse response = service.recommend(clicked.id(), "owner", "s1");
+
+        assertThat(response.observedPlanCount()).isEqualTo(3);  // 같은 목표 최근 3건
+        assertThat(response.observedDays()).isEqualTo(6);       // 2일 × 3건(다이어트 5일 미포함)
+    }
+
+    @Test
     void recommend_타소유자_404() {
         Plan plan = seedPlan("owner", 5, 3, 1);
 
@@ -147,13 +163,17 @@ class WorkloadRecommendationServiceTest {
     // === 헬퍼 ===
 
     private Plan seedPlan(String owner, int days, int tasksPerDay, int completedPerDay) {
+        return seedPlan(owner, "목표", days, tasksPerDay, completedPerDay);
+    }
+
+    private Plan seedPlan(String owner, String goalName, int days, int tasksPerDay, int completedPerDay) {
         LinkedHashMap<String, Object> tasks = new LinkedHashMap<>();
         java.time.LocalDate start = java.time.LocalDate.parse(START);
         for (int i = 0; i < days; i++) {
             tasks.put(start.plusDays(i).toString(), dayTasks(tasksPerDay, completedPerDay));
         }
         String end = start.plusDays(days - 1).toString();
-        return planRepository.save(new Plan(null, owner, "목표", days, 2, "수준", tasks,
+        return planRepository.save(new Plan(null, owner, goalName, days, 2, "수준", tasks,
                 "CONFIRMED", null, START, end, null, 0L));
     }
 

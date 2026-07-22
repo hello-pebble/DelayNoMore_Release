@@ -269,18 +269,25 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 집계합니다. **규칙**: 관찰 3일 미만이면 기존 유지 · 완료율 50% 미만 −1 · 완료율 85%+ 이면서 여유
 회고 절반 이상 +1 · 벅찬 회고 절반 이상 + "분량 많음" 2회 이상이면 −1. 안전 범위 1~5개, 한 번에 ±1.
 
+**합산 표본(v0.13.1)**: 클릭한 계획과 **같은 `goalName`의 최근 계획을 최대 3건** 합산해
+완료율·관찰일수·회고를 집계합니다(`findAllByOwner` savedAt 내림차순, 타 owner·다른 목표 제외 —
+소유자 격리 유지). `currentTasksPerDay`는 가장 최근(클릭한) 계획 기준이고, `observedDays`·
+`completedCount`·`totalCount`·`hardCount`는 합산값입니다. 계획이 1건이면 v0.13.0과 동일합니다.
+목표명은 자유 텍스트라 목표명을 바꾸면 합산 그룹이 갈라집니다(구조적 계보는 이후 릴리스 예정).
+
 ```json
 // 응답 data
 { "sourcePlanId": 12, "currentTasksPerDay": 3, "recommendedTasksPerDay": 2,
   "observedDays": 6, "completedCount": 9, "totalCount": 18, "completionRate": 50,
   "hardCount": 3, "topReason": { "code": "TOO_MUCH_WORK", "label": "분량이 많았어요" },
-  "insufficientHistory": false,
-  "reason": "완료율이 50%였고 '분량이 많았어요' 회고가 이어져 하루 3→2개로 줄이면 꾸준히 이어가기 좋아요.",
+  "insufficientHistory": false, "observedPlanCount": 2,
+  "reason": "최근 2개 계획 기록을 보면 완료율이 50%였고 '분량이 많았어요' 회고가 이어져 하루 3→2개로 줄이면 꾸준히 이어가기 좋아요.",
   "aiReasonUsed": true }
 ```
 
-`aiReasonUsed`가 `false`면 AI 미가용으로 서버 규칙 템플릿이 이유를 채운 것입니다(분량 숫자는 항상
-서버 규칙 소유). `topReason`은 회고가 없으면 `null`.
+`observedPlanCount`(v0.13.1)는 합산에 쓴 계획 수(1~3)입니다 — 2 이상이면 이유 문구에도 "최근 N개
+계획 기록"이 붙습니다. `aiReasonUsed`가 `false`면 AI 미가용으로 서버 규칙 템플릿이 이유를 채운
+것입니다(분량 숫자는 항상 서버 규칙 소유). `topReason`은 회고가 없으면 `null`.
 
 ### 12-2. POST /plans/{id}/recommendation/draft — 초안 생성 (미저장)
 

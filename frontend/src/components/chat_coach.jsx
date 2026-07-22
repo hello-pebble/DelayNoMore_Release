@@ -2011,7 +2011,12 @@ export default function ChatCoach() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {/* 지난 계획 통계 — 완료율 계산·집계는 서버 소유(표시만). */}
                         <div>
-                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '3px' }}>지난 계획</div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '3px' }}>
+                            지난 계획
+                            {rec.observedPlanCount > 1 && (
+                              <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> · 최근 {rec.observedPlanCount}개 계획 합산</span>
+                            )}
+                          </div>
                           <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
                             하루 평균 {rec.currentTasksPerDay}개 · 완료 {rec.completedCount}/{rec.totalCount} · {rec.completionRate}%
                             {rec.hardCount > 0 && <> · 벅찼어요 {rec.hardCount}일</>}
