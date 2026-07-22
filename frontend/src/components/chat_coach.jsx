@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2, History, BarChart3
+  CheckCircle2, History, BarChart3, Sparkles
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -18,7 +18,7 @@ import {
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
   fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
-  fetchWeeklySummary
+  fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { getGuestId } from '../guest_id';
@@ -170,7 +170,11 @@ const DEFAULT_AUDIT_EVENT_LABELS = {
   TASK_COMPLETED: '할 일 완료',
   TASK_REOPENED: '완료 해제',
   REFLECTION_SAVED: '회고 저장',
-  PLAN_DELETED: '계획 삭제'
+  PLAN_DELETED: '계획 삭제',
+  WORKLOAD_RECOMMENDATION_VIEWED: '다음 분량 추천 조회',
+  WORKLOAD_RECOMMENDATION_ACCEPTED: '추천 분량 채택',
+  WORKLOAD_RECOMMENDATION_OVERRIDDEN: '추천 분량 변경',
+  PLAN_CREATED_FROM_RECOMMENDATION: '추천 기반 계획 생성'
 };
 
 // 이력 행의 세션 배지 — 내 세션 ID와 비교해 "다른 세션에서 발생한 변경인가?"에 답한다.
@@ -287,6 +291,10 @@ export default function ChatCoach() {
   const [auditView, setAuditView] = useState(null);
   // 주간 요약 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', summary }
   const [weeklyView, setWeeklyView] = useState(null);
+  // 다음 계획 분량 추천 뷰 — 한 번에 한 계획만 펼친다. 서버가 통계·규칙 분량·이유를 계산해 내려주고,
+  // 프론트는 표시 + 선택(분량)·승인만 릴레이한다(비즈니스 로직은 서버 소유). 형태:
+  // null | { planId, status:'loading'|'ready'|'error', data, selected, draft, draftStatus:'idle'|'generating'|'error', saving }
+  const [recommendationView, setRecommendationView] = useState(null);
 
   // 메타(선택지·라벨) — 소스오브트루스는 서버 enum. 마운트 시 한 번 받아 교체하고,
   // 실패하면 폴백 사본(DEFAULT_*)을 그대로 쓴다(백엔드 미가용에도 회고/이력 화면 유지).
@@ -1054,9 +1062,10 @@ export default function ChatCoach() {
         return;
       }
     }
-    // 삭제된 계획의 이력·주간 요약 패널이 열려 있었다면 함께 닫는다(행이 목록에서 사라지므로).
+    // 삭제된 계획의 이력·주간 요약·추천 패널이 열려 있었다면 함께 닫는다(행이 목록에서 사라지므로).
     setAuditView((prev) => (prev?.planId === planId ? null : prev));
     setWeeklyView((prev) => (prev?.planId === planId ? null : prev));
+    setRecommendationView((prev) => (prev?.planId === planId ? null : prev));
     refreshPlans();
   };
 
@@ -1099,6 +1108,81 @@ export default function ChatCoach() {
       return;
     }
     loadWeeklySummary(planId);
+  };
+
+  // === 다음 계획 분량 추천(로드맵 4·5번) ===
+  // 서버가 수행 기록을 계산하고 규칙으로 하루 분량을 정한다(분량 숫자는 서버 소유). 프론트는 통계·
+  // 이유를 표시하고 사용자의 선택(분량)·승인만 서버로 릴레이한다 — 주간 요약/이력과 같은 "펼칠 때
+  // 조회" 패턴, 늦게 도착한 응답은 그 사이 다른 계획으로 전환/닫힘이면 무시한다.
+  const loadRecommendation = async (planId) => {
+    setRecommendationView({ planId, status: 'loading', data: null, selected: null, draft: null, draftStatus: 'idle', saving: false });
+    try {
+      const data = await postRecommendation(planId);
+      setRecommendationView((prev) => (prev?.planId === planId
+        ? { planId, status: 'ready', data, selected: null, draft: null, draftStatus: 'idle', saving: false }
+        : prev));
+    } catch {
+      setRecommendationView((prev) => (prev?.planId === planId
+        ? { ...prev, status: 'error' }
+        : prev));
+    }
+  };
+
+  const toggleRecommendation = (planId) => {
+    if (recommendationView?.planId === planId) {
+      setRecommendationView(null);
+      return;
+    }
+    loadRecommendation(planId);
+  };
+
+  // 분량 선택 → 서버가 그 분량으로 초안을 생성(미저장)해 돌려준다(AI 실패 시 서버 템플릿 폴백이라
+  // 항상 초안이 온다). 중복 클릭 방지를 위해 생성 중에는 버튼을 잠근다.
+  const selectRecommendationTasks = async (planId, tasksPerDay) => {
+    setRecommendationView((prev) => (prev?.planId === planId
+      ? { ...prev, selected: tasksPerDay, draft: null, draftStatus: 'generating' }
+      : prev));
+    try {
+      const draft = await postRecommendationDraft(planId, tasksPerDay);
+      setRecommendationView((prev) => (prev?.planId === planId && prev.selected === tasksPerDay
+        ? { ...prev, draft, draftStatus: 'idle' }
+        : prev));
+    } catch {
+      setRecommendationView((prev) => (prev?.planId === planId && prev.selected === tasksPerDay
+        ? { ...prev, draftStatus: 'error' }
+        : prev));
+    }
+  };
+
+  // 미리보기 승인 → 새 계획으로 저장(승인 전에는 저장하지 않았다). 원본 계획은 서버가 건드리지
+  // 않으며, 저장된 새 계획을 화면으로 전환한다. 저장 중에는 버튼을 잠가 중복 생성을 막는다.
+  const confirmRecommendationPlan = async (planId) => {
+    const view = recommendationView;
+    if (!view || view.planId !== planId || !view.draft || view.saving) return;
+    setRecommendationView((prev) => (prev?.planId === planId ? { ...prev, saving: true } : prev));
+    try {
+      // 전환 전에 현재 활성 계획의 대기 중 변경을 마저 저장한다(디바운스 유실 방지).
+      await syncActivePlan({ recreateIfMissing: false });
+      const saved = await confirmRecommendation(planId, {
+        tasks: view.draft.tasks,
+        selectedTasksPerDay: view.selected,
+        recommendedTasksPerDay: view.data.recommendedTasksPerDay
+      });
+      if (!aliveRef.current) return;
+      setRecommendationView(null);
+      restorePlan(saved, 'switched');
+      refreshPlans();
+    } catch (err) {
+      if (!aliveRef.current) return;
+      setRecommendationView((prev) => (prev?.planId === planId ? { ...prev, saving: false } : prev));
+      if (err.code === 'PLAN_LIMIT_EXCEEDED') {
+        window.alert('내 보관함이 가득 찼습니다(최대 10개). 기존 계획을 삭제한 뒤 다시 시도해 주세요.');
+      } else if (err.code === 'PLAN_STORE_FULL') {
+        window.alert('데모 서버 보관함이 가득 찼습니다. 잠시 후 다시 시도해 주세요.');
+      } else {
+        window.alert('추천 계획을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+      }
+    }
   };
 
   // 전체 기간 늘리기 — 기존 자유 대화 파이프라인(의도 판단/재생성)을 그대로 재사용한다.
@@ -1781,6 +1865,7 @@ export default function ChatCoach() {
             const isPlanConfirmed = plan.status === 'CONFIRMED';
             const isAuditOpen = auditView?.planId === plan.id;
             const isWeeklyOpen = weeklyView?.planId === plan.id;
+            const isRecOpen = recommendationView?.planId === plan.id;
             return (
               <React.Fragment key={plan.id}>
               <div
@@ -1826,6 +1911,18 @@ export default function ChatCoach() {
                 >
                   <BarChart3 size={14} />
                 </button>
+                {/* 다음 계획 분량 추천 — 완료했거나 3일 이상 실행한 계획에만 노출(서버가 결정한
+                    recommendationEligible 플래그). */}
+                {plan.recommendationEligible && (
+                  <button
+                    type="button"
+                    onClick={() => toggleRecommendation(plan.id)}
+                    title="수행 기록으로 다음 계획 추천받기"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: isRecOpen ? 'var(--primary)' : 'var(--text-muted)', padding: '4px', flexShrink: 0, display: 'flex' }}
+                  >
+                    <Sparkles size={14} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleAuditLog(plan.id)}
@@ -1888,6 +1985,138 @@ export default function ChatCoach() {
                       </div>
                     </>
                   )}
+                </div>
+              )}
+              {/* 다음 계획 분량 추천 패널 — 서버가 계산한 통계·규칙 분량·이유를 표시하고,
+                  선택 → 초안 생성(미저장) → 미리보기 → 승인(저장) 흐름을 담는다. */}
+              {isRecOpen && (
+                <div style={{ margin: '0 4px', padding: '8px 10px', borderRadius: '8px', background: 'var(--bg-panel)', border: '1px solid var(--border)' }}>
+                  {recommendationView.status === 'loading' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>수행 기록을 분석하는 중...</div>
+                  )}
+                  {recommendationView.status === 'error' && (
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      추천을 불러오지 못했습니다.
+                      <button type="button" onClick={() => loadRecommendation(plan.id)} style={quickReplyButtonStyle}>
+                        <RefreshCw size={12} />
+                        다시 시도
+                      </button>
+                    </div>
+                  )}
+                  {recommendationView.status === 'ready' && (() => {
+                    const rec = recommendationView.data;
+                    const selected = recommendationView.selected;
+                    const draft = recommendationView.draft;
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {/* 지난 계획 통계 — 완료율 계산·집계는 서버 소유(표시만). */}
+                        <div>
+                          <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: '3px' }}>지난 계획</div>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                            하루 평균 {rec.currentTasksPerDay}개 · 완료 {rec.completedCount}/{rec.totalCount} · {rec.completionRate}%
+                            {rec.hardCount > 0 && <> · 벅찼어요 {rec.hardCount}일</>}
+                            {rec.topReason && <> · 주요 이유: {rec.topReason.label}</>}
+                          </div>
+                        </div>
+                        {/* 추천 이유 — AI(또는 서버 규칙 템플릿) 설명. 분량 숫자는 서버가 정한다. */}
+                        <div style={{ fontSize: '13px', color: 'var(--text-main)', lineHeight: 1.6, background: 'var(--bg-card)', borderRadius: '6px', padding: '8px 10px', border: '1px solid var(--border)' }}>
+                          {rec.reason}
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
+                            {rec.aiReasonUsed ? 'AI 설명' : '규칙 기반 설명'} · 분량은 서버 규칙이 결정합니다
+                          </div>
+                        </div>
+                        {/* 선택 — 추천대로 / 기존처럼 / 직접 설정(1~5). 선택하면 서버가 초안을 생성한다. */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>다음 계획 하루 분량을 골라주세요.</div>
+                          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                            {rec.recommendedTasksPerDay !== rec.currentTasksPerDay && (
+                              <button
+                                type="button"
+                                disabled={recommendationView.draftStatus === 'generating' || recommendationView.saving}
+                                onClick={() => selectRecommendationTasks(plan.id, rec.recommendedTasksPerDay)}
+                                style={{ ...quickReplyButtonStyle, ...(selected === rec.recommendedTasksPerDay ? { border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600 } : {}) }}
+                              >
+                                추천대로 {rec.recommendedTasksPerDay}개
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              disabled={recommendationView.draftStatus === 'generating' || recommendationView.saving}
+                              onClick={() => selectRecommendationTasks(plan.id, rec.currentTasksPerDay)}
+                              style={{ ...quickReplyButtonStyle, ...(selected === rec.currentTasksPerDay ? { border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600 } : {}) }}
+                            >
+                              기존처럼 {rec.currentTasksPerDay}개
+                            </button>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>직접 설정</span>
+                            {[1, 2, 3, 4, 5].map((n) => (
+                              <button
+                                key={n}
+                                type="button"
+                                disabled={recommendationView.draftStatus === 'generating' || recommendationView.saving}
+                                onClick={() => selectRecommendationTasks(plan.id, n)}
+                                style={{
+                                  ...quickReplyButtonStyle,
+                                  padding: '4px 9px',
+                                  ...(selected === n ? { border: '1px solid var(--primary)', color: 'var(--primary)', fontWeight: 600 } : {})
+                                }}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        {/* 미리보기 — 생성된 초안(미저장). 승인해야 저장된다. */}
+                        {recommendationView.draftStatus === 'generating' && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>하루 {selected}개로 초안을 생성하는 중...</div>
+                        )}
+                        {recommendationView.draftStatus === 'error' && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            초안 생성에 실패했습니다.
+                            <button type="button" onClick={() => selectRecommendationTasks(plan.id, selected)} style={quickReplyButtonStyle}>
+                              <RefreshCw size={12} />
+                              다시 시도
+                            </button>
+                          </div>
+                        )}
+                        {draft && recommendationView.draftStatus === 'idle' && (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid var(--border)', paddingTop: '8px' }}>
+                            <div style={{ fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
+                              미리보기 · 하루 {draft.tasksPerDay}개 · {draft.duration}일
+                              <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--text-muted)' }}>
+                                {draft.aiUsed ? 'AI 생성' : '기본 템플릿'}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                              {Object.keys(draft.tasks).sort().map((date, idx) => (
+                                <div key={date} style={{ fontSize: '12px' }}>
+                                  <div style={{ fontWeight: 600, color: 'var(--text-muted)' }}>Day {idx + 1} · {formatWeekRange(date, date)}</div>
+                                  <ul style={{ listStyle: 'none', margin: '2px 0 0', padding: 0 }}>
+                                    {(Array.isArray(draft.tasks[date]) ? draft.tasks[date] : []).map((task, ti) => (
+                                      <li key={task.id || ti} style={{ color: 'var(--text-main)', paddingLeft: '8px' }}>· {task.content}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ))}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                disabled={recommendationView.saving}
+                                onClick={() => confirmRecommendationPlan(plan.id)}
+                                style={{ ...quickReplyButtonStyle, background: 'var(--primary)', border: '1px solid var(--primary)', color: '#ffffff', ...(recommendationView.saving ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }}
+                              >
+                                <Save size={12} />
+                                {recommendationView.saving ? '저장 중...' : '이 계획 저장'}
+                              </button>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>승인 전에는 저장되지 않습니다</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {/* 변경 이력 패널 — 행 바로 아래 확장. 펼칠 때마다 refetch(다른 세션 변경 반영). */}

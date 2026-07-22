@@ -120,7 +120,11 @@ public class AiPromptBuilder {
     public List<Map<String, Object>> draftMessages(AiDraftRequest request) {
         int duration = request.duration();
         String targetDatesJson = serializeJson(targetDates(duration), "[]");
-        String countRange = tasksPerDayPhrase(request.dailyHours());
+        // 추천 경로(tasksPerDay 지정)는 범위가 아니라 "정확히 N개"를 요구한다 — 서버가 응답 개수를
+        // 검증(AiService.assertExactCount)하므로 프롬프트도 정확 개수로 지시해 명중률을 높인다.
+        String countRange = request.tasksPerDay() != null
+                ? "exactly " + request.tasksPerDay()
+                : tasksPerDayPhrase(request.dailyHours());
 
         String refinementPart = "";
         if (request.refinementPrompt() != null && !request.refinementPrompt().isBlank()) {

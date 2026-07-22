@@ -86,6 +86,30 @@ public class AuditEventService {
         }
     }
 
+    // 다음 계획 분량 추천 조회 — 소스 계획의 이력에 남긴다(현재/추천 분량 값 포함, 민감 프롬프트 금지).
+    public void recordRecommendationViewed(long sourcePlanId, String owner, int currentTasksPerDay,
+                                           int recommendedTasksPerDay, String sessionId) {
+        append(sourcePlanId, owner, AuditEventType.WORKLOAD_RECOMMENDATION_VIEWED,
+                "현재 하루 " + currentTasksPerDay + "개 · 추천 하루 " + recommendedTasksPerDay + "개", sessionId);
+    }
+
+    // 추천 채택/변경 — 저장된 새 계획의 이력에 남긴다(선택 == 추천이면 채택, 아니면 변경).
+    public void recordRecommendationDecision(long newPlanId, String owner, int selectedTasksPerDay,
+                                             int recommendedTasksPerDay, boolean accepted, String sessionId) {
+        AuditEventType type = accepted
+                ? AuditEventType.WORKLOAD_RECOMMENDATION_ACCEPTED
+                : AuditEventType.WORKLOAD_RECOMMENDATION_OVERRIDDEN;
+        append(newPlanId, owner, type,
+                "선택 하루 " + selectedTasksPerDay + "개(추천 " + recommendedTasksPerDay + "개)", sessionId);
+    }
+
+    // 추천 기반 계획 생성 — 새 계획 이력에 남기고 detail로 원본 계획을 참조한다.
+    public void recordPlanCreatedFromRecommendation(long newPlanId, String owner, long sourcePlanId,
+                                                    int selectedTasksPerDay, String sessionId) {
+        append(newPlanId, owner, AuditEventType.PLAN_CREATED_FROM_RECOMMENDATION,
+                "계획 #" + sourcePlanId + " 기록 기반 · 하루 " + selectedTasksPerDay + "개", sessionId);
+    }
+
     // 이벤트에 소유자(ownerId)를 박아 두므로 계획 생존 여부와 무관하게 소유자 스코프로 조회한다 —
     // 삭제된 계획의 이력도 소유자에게는 다시 보인다("언제 삭제됐는가" 계약 복원). 남의 계획·모르는
     // planId는 404가 아니라 빈 목록(존재 여부 은닉). PlanRepository 조회가 필요 없어졌다.
