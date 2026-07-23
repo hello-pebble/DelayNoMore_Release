@@ -80,10 +80,10 @@ export default function App() {
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', minWidth: 0 }}>
           <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
-          {/* 데모 특성 안내 — 방문자가 미리 알아야 할 데모 저장소 특성(브라우저 단위 임시 보관함·
-              서버 재시작 시 초기화)만 알린다. */}
+          {/* 데모 특성 안내 — 방문자가 미리 알아야 할 특성(브라우저 단위 보관함·로그인 전이라
+              브라우저 데이터를 지우면 복구 불가)만 알린다. 서버 데이터는 DB에 영속된다(v0.12.0). */}
           <div className="header-guide" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            데모 페이지 — 계획은 이 브라우저 보관함에 저장되며, 서버 재시작 시 사라집니다
+            데모 페이지 — 계획은 이 브라우저 보관함에 저장됩니다 · 브라우저 데이터를 지우면 복구할 수 없어요(로그인 전)
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: 'var(--text-muted)' }}>

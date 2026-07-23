@@ -1803,7 +1803,7 @@ export default function ChatCoach() {
                 );
               })}
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-                이 브라우저 보관함의 데모 회고입니다 · 서버 재시작 시 초기화됩니다
+                이 브라우저 보관함의 데모 회고입니다 · 브라우저 데이터를 지우면 복구할 수 없어요
               </div>
             </div>
           )}
@@ -2141,7 +2141,7 @@ export default function ChatCoach() {
                   )}
                   {auditView.status === 'ready' && auditView.events.length === 0 && (
                     <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      기록이 없습니다 (서버 재시작 시 이력도 초기화됩니다)
+                      기록이 없습니다
                     </div>
                   )}
                   {auditView.status === 'ready' && auditView.events.length > 0 && (
@@ -2191,7 +2191,7 @@ export default function ChatCoach() {
             새 계획 만들기
           </button>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center' }}>
-            이 브라우저 보관함입니다 · 브라우저 데이터 삭제·서버 재시작 시 사라집니다
+            이 브라우저 보관함입니다 · 브라우저 데이터를 지우면 복구할 수 없어요(로그인 전)
           </div>
         </div>
       )}
