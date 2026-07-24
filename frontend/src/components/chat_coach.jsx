@@ -350,6 +350,10 @@ export default function ChatCoach() {
   // (언마운트 시에만 실행되므로, dep 변경에 대기 중 변경이 유실된다는 아래 자동 동기화 effect의
   // 우려와 충돌하지 않는다).
   useEffect(() => {
+    // 마운트 시 플래그 복구 — ref는 컴포넌트 인스턴스에 남으므로, StrictMode(개발 모드)의
+    // 마운트→cleanup→재마운트 사이클 뒤에도 false로 남아 모든 상태 갱신·서버 쓰기가
+    // 영구히 막힌다(계획 생성이 화면에 반영되지 않음). cleanup에서 내린 것은 여기서 되올린다.
+    aliveRef.current = true;
     return () => {
       aliveRef.current = false;
       if (thinkingTimerRef.current) clearInterval(thinkingTimerRef.current);
