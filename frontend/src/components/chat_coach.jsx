@@ -2181,7 +2181,7 @@ export default function ChatCoach() {
                         ))}
                       </ul>
                       <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', marginTop: '6px' }}>
-                        이 브라우저 보관함의 데모 이력입니다 · 최근 1000건만 보관됩니다
+                        이 브라우저 보관함의 데모 이력입니다 · 브라우저 데이터를 지우면 복구할 수 없어요
                       </div>
                     </>
                   )}
