@@ -259,6 +259,8 @@ DRAFT ──confirm──▶ CONFIRMED ──complete──▶ COMPLETED   (종�
   엔드포인트로만 진입할 수 있습니다. PUT 위반은 기존과 같이 409 `PLAN_LOCKED`.
 - `confirmedAt`·`completedAt`은 전이 엔드포인트에서 **서버가 발급**합니다(응답 `PlanResponse`에
   `completedAt` 필드 추가 — 미완료면 null).
+- 프론트 시연: 고정/완료/중단 버튼이 이 전이 엔드포인트를 호출합니다(E2E 캡처 —
+  완료 전이 후 "완료됨" 배지·전면 잠금 상태: [plan-status-transition-e2e.png](images/plan-status-transition-e2e.png)).
 
 ### 11-1. POST /plans/{id}/confirm — 계획 고정 (DRAFT→CONFIRMED)
 
