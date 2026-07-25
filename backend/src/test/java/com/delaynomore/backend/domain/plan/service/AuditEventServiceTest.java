@@ -168,20 +168,27 @@ class AuditEventServiceTest {
 
     @Test
     void update_고정계획_완료토글_가드통과후TASK_COMPLETED기록() {
-        // given — 고정(CONFIRMED)된 계획 (서버 가드는 완료 토글만 허용)
-        PlanResponse saved = createBasePlan();
-        planService.update(saved.id(), request("토익 900", BASE_TASKS, "CONFIRMED"), OWNER, "session-a");
+        // given — 고정(CONFIRMED)된 계획. 고정 계획의 토글은 오늘(KST)·미래만 허용되므로
+        // (지난 날짜는 PAST_TASK_LOCKED — PlanServiceTest에서 검증) 날짜를 오늘 기준으로 만든다.
+        String today = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
+        String tomorrow = LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1).toString();
+        Map<String, Object> base = Map.of(
+                today, List.of(task("t-1", "단어 암기", false), task("t-2", "문법 정리", true)),
+                tomorrow, List.of(task("t-3", "듣기 연습", false)));
+        PlanResponse saved = planService.create(
+                request("토익 900", base, null, 2, tomorrow), OWNER, "session-a");
+        planService.update(saved.id(), request("토익 900", base, "CONFIRMED", 2, tomorrow), OWNER, "session-a");
         Map<String, Object> toggled = Map.of(
-                "2026-07-16", List.of(task("t-1", "단어 암기", true), task("t-2", "문법 정리", true)),
-                "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
+                today, List.of(task("t-1", "단어 암기", true), task("t-2", "문법 정리", true)),
+                tomorrow, List.of(task("t-3", "듣기 연습", false)));
 
         // when — 토글만 있는 PUT은 가드를 통과하고 감사 흐름도 기존대로 동작해야 한다
-        planService.update(saved.id(), request("토익 900", toggled, "CONFIRMED"), OWNER, "session-b");
+        planService.update(saved.id(), request("토익 900", toggled, "CONFIRMED", 2, tomorrow), OWNER, "session-b");
 
         // then
         List<AuditEventResponse> events = events(saved.id());
         assertThat(events.get(0).type()).isEqualTo("TASK_COMPLETED");
-        assertThat(events.get(0).detail()).isEqualTo("\"단어 암기\" · 2026-07-16");
+        assertThat(events.get(0).detail()).isEqualTo("\"단어 암기\" · " + today);
     }
 
     @Test

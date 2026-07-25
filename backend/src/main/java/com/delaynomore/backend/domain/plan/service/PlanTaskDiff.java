@@ -7,7 +7,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * 계획 두 상태의 비교(diff) 유틸 — AuditEventService(이벤트 종류 복원)와
@@ -57,6 +59,29 @@ final class PlanTaskDiff {
             return true;
         }
         return !contentView(prevTasks).equals(contentView(nextTasks));
+    }
+
+    // completed 플래그가 달라진 날짜 키 집합 — 항목키→completed 뷰를 날짜별로 비교한다(contentView와
+    // 대칭). 항목 추가/삭제는 hasStructuralChange가 먼저 걸러내므로 여기서는 토글만 감지된다.
+    static Set<String> completedChangedDates(Map<String, Map<String, TaskView>> prevTasks,
+                                             Map<String, Map<String, TaskView>> nextTasks) {
+        Set<String> dates = new TreeSet<>();
+        Set<String> allKeys = new TreeSet<>(prevTasks.keySet());
+        allKeys.addAll(nextTasks.keySet());
+        for (String date : allKeys) {
+            if (!completedView(prevTasks.get(date)).equals(completedView(nextTasks.get(date)))) {
+                dates.add(date);
+            }
+        }
+        return dates;
+    }
+
+    private static Map<String, Boolean> completedView(Map<String, TaskView> day) {
+        Map<String, Boolean> view = new HashMap<>();
+        if (day != null) {
+            day.forEach((key, task) -> view.put(key, task.completed()));
+        }
+        return view;
     }
 
     static Map<String, Map<String, String>> contentView(Map<String, Map<String, TaskView>> tasks) {
