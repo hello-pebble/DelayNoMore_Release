@@ -934,8 +934,9 @@ export default function ChatCoach() {
     setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
   };
 
-  // 미완료 항목 내일로 이동 — 오늘(실행) 단계의 행동이지만 계획 구조를 바꾸므로 DRAFT 계획
-  // 전용이다(고정 계획은 버튼 자체를 숨긴다 — 계획 저장/기간 +3일 버튼과 같은 잠금 관례).
+  // 미완료 항목 내일로 이동 — 실행 단계 액션이라 고정(CONFIRMED) 계획에서도 허용한다(v0.14.1,
+  // 서버 allowsCarryOver와 같은 기준). 종결(완료/중단) 계획만 막는다. 규칙은 "오늘 → 내일"만 —
+  // 내일로 미룬 항목은 그날이 오늘이 되면 다시 미룰 수 있다(하루씩).
   // 이월 연산(오늘 KST → 내일, 기간 연장 포함)은 서버 도메인 액션이 수행하고, 프론트는
   // 확인창용 카운트와 응답 반영만 담당한다. 활성 계획은 POST 전에 대기 중 변경을 flush하고,
   // 응답 반영 시 lastSyncedRef를 먼저 갱신해 낡은 디바운스 PUT이 이월 결과를 되돌리는 경합을
@@ -943,7 +944,7 @@ export default function ChatCoach() {
   const handleCarryOver = async (planId) => {
     const isCurrent = planId === activePlanId && !!draftChecklist;
     const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
-    if (!source || !isEditableStatus(planStatusOf(source))) return;
+    if (!source || isTerminalStatus(planStatusOf(source))) return;
     const localCount = countTodayIncomplete(source.tasks, todayStr());
     if (localCount === 0) return;
     if (!window.confirm(`미완료 ${localCount}건을 내일(${todayStr(1)})로 옮길까요?`)) return;
@@ -966,8 +967,8 @@ export default function ChatCoach() {
         window.alert('이미 삭제된 계획입니다.');
         refreshPlans();
       } else if (err.code === 'PLAN_LOCKED') {
-        // 서버 가드 거부 — 이 스냅샷은 DRAFT였지만 다른 세션에서 먼저 고정한 경우.
-        window.alert('다른 세션에서 고정된 계획이라 이월할 수 없습니다.');
+        // 서버 가드 거부 — 이 스냅샷은 진행 중이었지만 다른 세션에서 먼저 종결(완료/중단)한 경우.
+        window.alert('종결된 계획이라 이월할 수 없습니다.');
         refreshPlans();
       } else {
         window.alert('미완료 항목을 옮기지 못했습니다. 잠시 후 다시 시도해 주세요.');
@@ -1062,16 +1063,25 @@ export default function ChatCoach() {
     ]);
   };
 
-  // 계획 완료 — CONFIRMED→COMPLETED 서버 전이(종결). 100% 달성이 조건은 아니며(진행률은 이력
-  // detail로 남는다), 완료 시각(completedAt)은 서버가 발급한다. 종결 후엔 모든 변경이 막힌다.
-  const handleCompletePlan = async () => {
-    if (activePlanId == null || activeStatus !== 'CONFIRMED' || isTyping) return;
-    const { done, total } = getPlanProgress(draftChecklist?.tasks);
-    if (!window.confirm(`계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n완료된 계획은 더 이상 수정하거나 체크할 수 없습니다.`)) return;
+  // 계획 완료(종결) — CONFIRMED→COMPLETED 서버 전이. 활성 계획(빠른동작 줄)과 보관함 목록 행
+  // 양쪽에서 호출한다. 노출 조건(체크 1개 이상)은 UX 가드일 뿐이고, 100% 달성이 조건은 아니며
+  // (진행률은 이력 detail로 남는다), 완료 시각(completedAt)은 서버가 발급한다. 종결 후엔 완료
+  // 체크 해제를 포함한 모든 변경이 막힌다(종결 잠금).
+  const handleCompletePlan = async (planId) => {
+    if (planId == null || isTyping) return;
+    const isCurrent = planId === activePlanId && !!draftChecklist;
+    const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
+    if (!source || planStatusOf(source) !== 'CONFIRMED') return;
+    const { done, total } = isCurrent
+      ? getPlanProgress(draftChecklist?.tasks)
+      : (source.progress ?? getPlanProgress(source.tasks));
+    if (!window.confirm(`"${source.goalName}" 계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n완료된 계획은 더 이상 수정하거나 체크할 수 없습니다.`)) return;
     try {
-      // 대기 중 완료 토글을 먼저 반영 — 이력 detail의 진행률이 마지막 체크까지 반영되게 한다.
-      await syncActivePlan({ recreateIfMissing: false });
-      const plan = await completePlan(activePlanId);
+      if (isCurrent) {
+        // 대기 중 완료 토글을 먼저 반영 — 이력 detail의 진행률이 마지막 체크까지 반영되게 한다.
+        await syncActivePlan({ recreateIfMissing: false });
+      }
+      const plan = await completePlan(planId);
       if (!aliveRef.current) return;
       applyServerPlan(plan);
       setMessages((prev) => [
@@ -1083,7 +1093,7 @@ export default function ChatCoach() {
         }
       ]);
     } catch (err) {
-      await handleTransitionError(err, activePlanId);
+      await handleTransitionError(err, planId);
     }
   };
 
@@ -1432,8 +1442,10 @@ export default function ChatCoach() {
                 <Lock size={12} />
                 고정된 계획 — 대화 수정 불가
               </span>
-              {activePlanId != null && (
-                <button type="button" onClick={handleCompletePlan} disabled={isTyping} style={quickReplyButtonStyle}>
+              {/* 종결 버튼은 체크값이 1개 이상일 때만 — "실행한 흔적이 있는 계획을 마무리한다"는
+                  UX 가드(서버 전이 조건은 아님 — 100% 미달 완료도 허용, 진행률은 이력에 남는다). */}
+              {activePlanId != null && getPlanProgress(draftChecklist?.tasks).done > 0 && (
+                <button type="button" onClick={() => handleCompletePlan(activePlanId)} disabled={isTyping} style={quickReplyButtonStyle}>
                   <CheckCircle2 size={12} />
                   계획 완료
                 </button>
@@ -1737,9 +1749,9 @@ export default function ChatCoach() {
                     </li>
                   ))}
                 </ul>
-                {/* 미완료 이월 — 계획 구조를 바꾸므로 DRAFT 계획에서만, 미완료가 있을 때만 노출.
-                    고정(locked) 계획은 숨긴다(잠금 시 수정 버튼을 숨기는 기존 관례). */}
-                {!group.locked && group.tasks.some((t) => !t.completed) && (
+                {/* 미완료 이월 — 실행 단계 액션이라 고정 계획에서도 노출(v0.14.1, 서버
+                    allowsCarryOver와 동일 기준). 종결(terminal) 계획만 숨긴다. */}
+                {!group.terminal && group.tasks.some((t) => !t.completed) && (
                   <button
                     type="button"
                     onClick={() => handleCarryOver(group.planId)}
@@ -2060,6 +2072,19 @@ export default function ChatCoach() {
                     기간 {plan.duration}일 · 하루 {plan.dailyHours}시간 · {done}/{total} 완료 · {formatSavedAt(plan.savedAt)}
                   </div>
                 </button>
+                {/* 종결(계획 완료) — 고정된 계획 중 체크값이 1개 이상 있는 행에만 노출.
+                    활성 계획이 아니어도 목록에서 바로 종결할 수 있다(handleCompletePlan이 분기). */}
+                {planStatus === 'CONFIRMED' && done > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleCompletePlan(plan.id)}
+                    disabled={isTyping}
+                    title="계획 완료(종결) — 이후 수정·체크 불가"
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: '4px', flexShrink: 0, display: 'flex' }}
+                  >
+                    <CheckCircle2 size={14} />
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => toggleWeeklySummary(plan.id)}

@@ -220,9 +220,12 @@ CONFIRMED여도 삭제는 허용합니다(잠긴 계획의 탈출구). 변경 �
 
 ### 11. POST /plans/{id}/carry-over — 미완료 이월
 
-**본문 없는 POST**(`X-Session-Id` 선택 헤더만). 이월 규칙은 서버 소유입니다: 오늘(KST)의
-미완료 항목을 내일로 옮기고(항목 ID 보존), 내일이 계획 기간 밖이면 endDate·duration을 하루
-연장합니다. 예전엔 프론트가 계산해 PUT으로 보냈지만, 연산 소유권이 서버로 이관됐습니다.
+**본문 없는 POST**(`X-Session-Id` 선택 헤더만). 이월 규칙은 서버 소유입니다: **오늘(KST)의
+미완료 항목만 내일로** 옮기고(항목 ID 보존 — 어제 이전으로 밀린 항목은 대상이 아님), 내일이
+계획 기간 밖이면 endDate·duration을 하루 연장합니다. 하루씩만 이동합니다 — 내일로 미룬 항목은
+그날이 "오늘"이 되면 다시 다음 날로 미룰 수 있습니다. 예전엔 프론트가 계산해 PUT으로 보냈지만,
+연산 소유권이 서버로 이관됐습니다. v0.14.1부터 이월은 실행 단계 액션으로 취급되어
+**고정(CONFIRMED) 계획에서도 허용**됩니다(`PlanStatus.allowsCarryOver`) — 종결 상태만 거부.
 
 ```json
 // 응답 data — movedCount 0은 "옮길 미완료 없음"의 정상 no-op(계획 불변, 이력 없음)
@@ -233,7 +236,7 @@ CONFIRMED여도 삭제는 허용합니다(잠긴 계획의 탈출구). 변경 �
 
 이동이 있으면 변경 이력에 `PLAN_UPDATED`(detail: `미완료 2건을 2026-07-21로 이동`)가 발행됩니다.
 
-오류: 404 `PLAN_NOT_FOUND`(없는 id 또는 다른 소유자), 409 `PLAN_LOCKED`(CONFIRMED·종결 계획 — 이월은 구조 변경)
+오류: 404 `PLAN_NOT_FOUND`(없는 id 또는 다른 소유자), 409 `PLAN_LOCKED`(종결(COMPLETED/CANCELLED) 계획 — 전면 잠금)
 
 ## 계획 상태 수명주기 (`PlanStatus`)
 
@@ -249,7 +252,7 @@ DRAFT ──confirm──▶ CONFIRMED ──complete──▶ COMPLETED   (종�
 | 상태 | 라벨 | 허용 동작 |
 |---|---|---|
 | `DRAFT` | 초안 | 자유 수정(PUT)·이월·confirm·cancel |
-| `CONFIRMED` | 고정 | completed 토글 PUT만·complete·cancel |
+| `CONFIRMED` | 고정 | completed 토글 PUT만·이월(v0.14.1)·complete·cancel |
 | `COMPLETED` | 완료 | 없음(종결) — 조회·회고·삭제만 |
 | `CANCELLED` | 중단 | 없음(종결) — 조회·회고·삭제만 |
 

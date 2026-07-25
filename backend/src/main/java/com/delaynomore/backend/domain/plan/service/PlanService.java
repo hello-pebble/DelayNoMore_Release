@@ -213,9 +213,11 @@ public class PlanService {
             if (!owner.equals(current.owner())) {
                 throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
             }
-            // 이월은 구조 변경(항목 이동·기간 연장)이므로 초안(allowsStructuralEdit)에서만 —
-            // 고정·종결 상태 모두 PUT 가드와 같은 판정(PLAN_LOCKED)을 적용한다.
-            if (!current.statusOrDraft().allowsStructuralEdit()) {
+            // 이월은 실행 단계 액션이라 고정(CONFIRMED) 후에도 허용한다(allowsCarryOver) —
+            // 형태는 구조 변경(항목 이동·기간 연장)이지만 내용 재협상이 아니라 서버 소유 규칙의
+            // 통제된 이동이고, PUT 가드를 거치지 않는 도메인 액션이라 고정 잠금과 충돌하지 않는다.
+            // 종결(COMPLETED·CANCELLED) 상태만 거부한다(전면 잠금과 동일 코드 PLAN_LOCKED).
+            if (!current.statusOrDraft().allowsCarryOver()) {
                 throw new BusinessException(ErrorCode.PLAN_LOCKED);
             }
             PlanCarryOver.Result result = PlanCarryOver.apply(current.tasks(), fromDate, toDate);
