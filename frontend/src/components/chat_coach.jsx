@@ -337,6 +337,10 @@ export default function ChatCoach() {
   // 최신순(date DESC) 정렬해 내려준다). 펼칠 때마다 refetch하고, 회고 저장 성공 시 캐시를 비운다.
   const [historyOpen, setHistoryOpen] = useState({});
   const [reflectionHistory, setReflectionHistory] = useState({});
+  // 회고가 저장된 날짜(YYYY-MM-DD) 목록 — 체크리스트 Day 카드의 "오늘 마무리 완료" 배지용.
+  // "전체 계획 완료"(상태 전이·헤더 칩)와 구분되는 일 단위 마무리 표시다. 활성 계획을 불러올 때
+  // 서버에서 채우고, 회고 저장 성공 시 로컬 병합한다(재요청 불필요). {planId: ['YYYY-MM-DD']}
+  const [reflectionDates, setReflectionDates] = useState({});
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -1058,24 +1062,32 @@ export default function ChatCoach() {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 다 마치면 "계획 완료" 버튼으로 마무리할 수 있어요.'
+        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
       }
     ]);
   };
 
-  // 계획 완료(종결) — CONFIRMED→COMPLETED 서버 전이. 활성 계획(빠른동작 줄)과 보관함 목록 행
-  // 양쪽에서 호출한다. 노출 조건(체크 1개 이상)은 UX 가드일 뿐이고, 100% 달성이 조건은 아니며
-  // (진행률은 이력 detail로 남는다), 완료 시각(completedAt)은 서버가 발급한다. 종결 후엔 완료
-  // 체크 해제를 포함한 모든 변경이 막힌다(종결 잠금).
-  const handleCompletePlan = async (planId) => {
-    if (planId == null || isTyping) return;
+  // 계획 소스 해석 — 활성 계획이면 라이브 상태(draftChecklist), 아니면 목록 스냅샷. 완료 전이의
+  // 두 경로(보관함 행 수동 버튼·회고 저장 연동)가 공유하는 조회 + 진행률 계산이다.
+  const resolvePlanSource = (planId) => {
     const isCurrent = planId === activePlanId && !!draftChecklist;
     const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
-    if (!source || planStatusOf(source) !== 'CONFIRMED') return;
+    if (!source) return null;
     const { done, total } = isCurrent
       ? getPlanProgress(draftChecklist?.tasks)
       : (source.progress ?? getPlanProgress(source.tasks));
-    if (!window.confirm(`"${source.goalName}" 계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n완료된 계획은 더 이상 수정하거나 체크할 수 없습니다.`)) return;
+    return { source, isCurrent, done, total };
+  };
+
+  // 전체 계획 완료(종결) 코어 — CONFIRMED→COMPLETED 서버 전이. 확인 창은 호출자 몫이다
+  // (보관함 행의 handleCompletePlan, 회고 연동의 maybeOfferPlanCompletion — 각자 한 번만 묻고
+  // 여기서는 다시 묻지 않아 이중 확인이 없다). 100% 달성이 조건은 아니며(진행률은 이력 detail로
+  // 남는다), 완료 시각(completedAt)은 서버가 발급한다. 종결 후엔 완료 체크 해제를 포함한 모든
+  // 변경이 막힌다(종결 잠금).
+  const completePlanNow = async (planId) => {
+    const resolved = resolvePlanSource(planId);
+    if (!resolved || planStatusOf(resolved.source) !== 'CONFIRMED') return;
+    const { isCurrent, done, total } = resolved;
     try {
       if (isCurrent) {
         // 대기 중 완료 토글을 먼저 반영 — 이력 detail의 진행률이 마지막 체크까지 반영되게 한다.
@@ -1095,6 +1107,18 @@ export default function ChatCoach() {
     } catch (err) {
       await handleTransitionError(err, planId);
     }
+  };
+
+  // 전체 계획 완료 — 보관함 목록 행(✓ 버튼)의 수동 경로. 1차 경로는 회고 저장 연동
+  // (maybeOfferPlanCompletion)이고, 이 버튼은 오늘 할 일이 없는 계획 등 회고 경로가 닿지 않는
+  // 계획의 탈출구다. 노출 조건(체크 1개 이상)은 UX 가드일 뿐이다.
+  const handleCompletePlan = async (planId) => {
+    if (planId == null || isTyping) return;
+    const resolved = resolvePlanSource(planId);
+    if (!resolved || planStatusOf(resolved.source) !== 'CONFIRMED') return;
+    const { source, done, total } = resolved;
+    if (!window.confirm(`"${source.goalName}" 전체 계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n완료된 계획은 더 이상 수정하거나 체크할 수 없습니다.`)) return;
+    await completePlanNow(planId);
   };
 
   // 계획 중단 — DRAFT|CONFIRMED→CANCELLED 서버 전이(종결). 계획은 보관함에 남아 기록으로
@@ -1419,38 +1443,16 @@ export default function ChatCoach() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* 계획 생성 후 빠른 동작 — 상태(PlanStatus)별로 허용된 전이·수정만 노출한다.
-          DRAFT: 저장(고정)·기간 늘리기·중단 / CONFIRMED: 완료·중단(수정 계열은 숨김) /
-          종결(COMPLETED·CANCELLED): 표시만. 전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
-      {draftChecklist && (
+      {/* 계획 상태 안내 칩 — 대화창은 "왜 대화 수정이 안 되는지"만 알려준다. 상태 전이 버튼
+          (저장·중단·다시 만들기)은 체크리스트 패널의 계획 동작 바로, 전체 계획 완료는 회고 저장
+          연동(maybeOfferPlanCompletion)·보관함 행 ✓ 버튼으로 이동했다. DRAFT는 표시할 것이 없다. */}
+      {isLocked && (
         <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
-          {activeStatus === 'DRAFT' && (
-            <>
-              <button type="button" onClick={handleSavePlan} disabled={isTyping} style={quickReplyButtonStyle}>
-                <Save size={12} />
-                계획 저장(고정)
-              </button>
-              <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={quickReplyButtonStyle}>
-                <CalendarPlus size={12} />
-                기간 +{EXTEND_DAYS}일
-              </button>
-            </>
-          )}
           {activeStatus === 'CONFIRMED' && (
-            <>
-              <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
-                <Lock size={12} />
-                고정된 계획 — 대화 수정 불가
-              </span>
-              {/* 종결 버튼은 체크값이 1개 이상일 때만 — "실행한 흔적이 있는 계획을 마무리한다"는
-                  UX 가드(서버 전이 조건은 아님 — 100% 미달 완료도 허용, 진행률은 이력에 남는다). */}
-              {activePlanId != null && getPlanProgress(draftChecklist?.tasks).done > 0 && (
-                <button type="button" onClick={() => handleCompletePlan(activePlanId)} disabled={isTyping} style={quickReplyButtonStyle}>
-                  <CheckCircle2 size={12} />
-                  계획 완료
-                </button>
-              )}
-            </>
+            <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
+              <Lock size={12} />
+              고정된 계획 — 대화 수정 불가
+            </span>
           )}
           {isTerminal && (
             <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
@@ -1458,16 +1460,6 @@ export default function ChatCoach() {
               {activeStatus === 'COMPLETED' ? '완료된 계획' : '중단된 계획'} — 수정 불가
             </span>
           )}
-          {!isTerminal && activePlanId != null && (
-            <button type="button" onClick={handleCancelPlan} disabled={isTyping} style={quickReplyButtonStyle}>
-              <XCircle size={12} />
-              계획 중단
-            </button>
-          )}
-          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>
-            <RotateCcw size={12} />
-            처음부터 다시 만들기
-          </button>
         </div>
       )}
 
@@ -1610,6 +1602,24 @@ export default function ChatCoach() {
     }));
   };
 
+  // 회고 저장 성공 직후 — "마무리 시점"이면 전체 계획 완료 전이를 함께 제안한다. 오늘 마무리
+  // (일 단위 회고)는 이미 저장이 끝난 상태고, 여기서 묻는 것은 계획 전체의 종결
+  // (CONFIRMED→COMPLETED)이다. 조건: 오늘이 종료일에 도달했거나 전체 할 일 100% 완료.
+  // 기간 중의 일반 회고 저장은 조건 미충족 → 아무것도 묻지 않는다(그날 마무리만 된 것).
+  // 확인은 여기서 한 번만 하고 확인 창 없는 코어(completePlanNow)를 호출한다(이중 확인 방지).
+  // 거절/실패해도 회고는 이미 저장돼 있다 — 완료는 언제든 보관함 행 ✓ 버튼으로 가능.
+  const maybeOfferPlanCompletion = async (planId) => {
+    const resolved = resolvePlanSource(planId);
+    if (!resolved || planStatusOf(resolved.source) !== 'CONFIRMED') return;
+    const { source, done, total } = resolved;
+    const periodEnded = !!source.endDate && todayStr() >= source.endDate;
+    const allDone = total > 0 && done === total;
+    if (!periodEnded && !allDone) return;
+    const reason = periodEnded ? '계획 기간이 끝났으니' : '모든 할 일을 마쳤으니';
+    if (!window.confirm(`오늘 회고를 저장했습니다(오늘 마무리 완료). ${reason} "${source.goalName}" 전체 계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n전체 계획을 완료하면 더 이상 수정하거나 체크할 수 없습니다.`)) return;
+    await completePlanNow(planId);
+  };
+
   // 회고 저장(업서트) — 완료 개수는 보내지 않는다(서버가 계획의 오늘 할 일에서 재계산).
   // 성공 응답을 reflections에 반영하면 저장 뷰가 서버 계산 수치로 갱신된다.
   const saveReflection = async (planId) => {
@@ -1621,6 +1631,7 @@ export default function ChatCoach() {
         difficulty: draft.difficulty,
         reason: draft.reason
       });
+      if (!aliveRef.current) return;
       setReflections((prev) => ({ ...prev, [planId]: saved }));
       setReflectionDrafts((prev) => {
         const next = { ...prev };
@@ -1634,6 +1645,14 @@ export default function ChatCoach() {
         return next;
       });
       setHistoryOpen((prev) => ({ ...prev, [planId]: false }));
+      // 일 단위 마무리 배지(체크리스트 Day 카드) 로컬 병합 — 재요청 없이 즉시 반영.
+      const savedDate = saved?.date || todayStr();
+      setReflectionDates((prev) => {
+        const dates = prev[planId] || [];
+        return dates.includes(savedDate) ? prev : { ...prev, [planId]: [...dates, savedDate] };
+      });
+      // 마무리 시점(종료일 도달 또는 100% 완료)이면 전체 계획 완료 전이를 함께 제안한다.
+      await maybeOfferPlanCompletion(planId);
     } catch (err) {
       setReflectionDrafts((prev) => ({ ...prev, [planId]: { ...prev[planId], saving: false } }));
       if (err.code === 'PLAN_NOT_FOUND') {
@@ -1644,6 +1663,26 @@ export default function ChatCoach() {
       }
     }
   };
+
+  // 활성 계획의 회고 저장 날짜 목록을 채운다 — 체크리스트 Day 카드의 일 단위 마무리 배지용.
+  // 배지는 보조 표시라 실패해도 화면을 막지 않는다(이후 회고 저장 성공 시 로컬 병합으로 채워짐).
+  useEffect(() => {
+    if (activePlanId == null) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await fetchReflections(activePlanId);
+        if (cancelled || !aliveRef.current) return;
+        setReflectionDates((prev) => ({
+          ...prev,
+          [activePlanId]: (Array.isArray(list) ? list : []).map((r) => r.date).filter(Boolean)
+        }));
+      } catch {
+        // 무시 — 배지 없이 렌더
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activePlanId]);
 
   // === 오늘 할 일 패널 (가운데 칸 · 항상 표시) ===
   // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
@@ -2441,6 +2480,37 @@ export default function ChatCoach() {
         )}
       </div>
 
+      {/* 계획 동작 바 — 상태(PlanStatus)별로 허용된 전이·수정만 노출한다(구 대화창 빠른동작 줄에서
+          이동). DRAFT: 저장(고정)·기간 늘리기 / 종결 전: 중단 / 항상: 처음부터 다시 만들기.
+          전체 계획 완료 버튼은 여기 없다 — 1차 경로는 회고 저장 연동, 수동 경로는 보관함 행 ✓.
+          전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
+      {draftChecklist && (
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
+          {activeStatus === 'DRAFT' && (
+            <>
+              <button type="button" onClick={handleSavePlan} disabled={isTyping} style={exportButtonStyle}>
+                <Save size={13} />
+                계획 저장(고정)
+              </button>
+              <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={exportButtonStyle}>
+                <CalendarPlus size={13} />
+                기간 +{EXTEND_DAYS}일
+              </button>
+            </>
+          )}
+          {!isTerminal && activePlanId != null && (
+            <button type="button" onClick={handleCancelPlan} disabled={isTyping} style={exportButtonStyle}>
+              <XCircle size={13} />
+              계획 중단
+            </button>
+          )}
+          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={exportButtonStyle}>
+            <RotateCcw size={13} />
+            처음부터 다시 만들기
+          </button>
+        </div>
+      )}
+
       {planListBar}
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
@@ -2491,8 +2561,27 @@ export default function ChatCoach() {
                   animationFillMode: 'backwards'
                 }}
               >
-                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--primary)', marginBottom: '8px' }}>
+                <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--primary)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                   Day {idx + 1} · {date}
+                  {/* 일 단위 마무리 배지 — 그 날짜의 회고가 저장됐다는 표시. 헤더의 상태 칩
+                      ("완료됨" = 전체 계획 종결)과는 별개다: 계획이 진행 중이어도 그날의 회고를
+                      저장하면 그날은 마무리된 것이고, 전체 종결 후에도 일별 기록으로 남는다. */}
+                  {activePlanId != null && (reflectionDates[activePlanId] || []).includes(date) && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '3px',
+                      fontSize: '10px',
+                      fontWeight: 600,
+                      color: 'var(--text-muted)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '999px',
+                      padding: '1px 7px'
+                    }}>
+                      <CheckCircle2 size={10} />
+                      {date === today ? '오늘 마무리 완료' : '회고 완료'}
+                    </span>
+                  )}
                 </div>
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '6px', margin: 0, padding: 0 }}>
                   {(Array.isArray(taskList) ? taskList : []).map((task) => (
