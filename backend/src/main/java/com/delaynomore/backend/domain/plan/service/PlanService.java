@@ -100,12 +100,14 @@ public class PlanService {
         // 고정·소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
         // 쓰기(예: 다른 브라우저의 고정)가 끼어들 수 없어 check-then-act 레이스가 없다.
         // (위 requireOwnedPlan은 startDate를 읽기 위한 사전 조회일 뿐, 판정은 이 원자 구간이 최종이다.)
+        // "오늘"은 원자 구간 밖에서 한 번만 판정한다 — 콜백 재실행·자정 경계에서 기준이 흔들리지 않도록.
+        String today = KstDates.today().toString();
         Plan previous = planRepository.update(updated,
                 c -> {
                     if (!owner.equals(c.owner())) {
                         throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
                     }
-                    assertUnlockedOrToggleOnly(c, updated);
+                    assertUnlockedOrToggleOnly(c, updated, today);
                 });
         if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -122,11 +124,14 @@ public class PlanService {
     //    (레거시 경로 — 프론트가 전이 엔드포인트로 이전하기 전까지 유지).
     //  · CONFIRMED: completed 토글만(allowsCompletionToggle) — 구조 변경 판정은 변경 이력과 같은
     //    기준(PlanTaskDiff.hasStructuralChange: 스칼라 6종 + 날짜별 항목키→content 뷰, completed 제외).
+    //    토글도 오늘(KST)·미래 날짜만 — 이월이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친
+    //    것으로 확정되며, 지난 날짜는 체크·해제 모두 거부해 완료율 소급 조작을 막는다(PAST_TASK_LOCKED).
     //  · COMPLETED·CANCELLED(종결): 모든 PUT 거부 — 상태 자체가 DRAFT|CONFIRMED 외로는 요청
     //    바디에 실릴 수 없어(@Pattern) 상태 불일치로 걸러진다.
-    // 위반은 모두 기존 PLAN_LOCKED(409) — 프론트가 error.code로 분기하므로 코드 호환을 유지한다.
+    // 위반은 기존 PLAN_LOCKED(409) — 프론트가 error.code로 분기하므로 코드 호환을 유지한다.
+    // 지난 날짜 토글만 별도 코드(PAST_TASK_LOCKED, 409)로 구분한다(안내 문구가 달라야 하므로).
     // createdAt은 표시용 메타라 가드 대상이 아니다. 삭제는 계속 허용한다(프론트 탈출구).
-    private static void assertUnlockedOrToggleOnly(Plan current, Plan incoming) {
+    private static void assertUnlockedOrToggleOnly(Plan current, Plan incoming, String today) {
         PlanStatus from = current.statusOrDraft();
         PlanStatus to = incoming.statusOrDraft();
         // 상태 변경을 동반한 PUT은 전이표가 허용하면서 목적지가 CONFIRMED인 경우(레거시 고정)만
@@ -141,10 +146,16 @@ public class PlanService {
             throw new BusinessException(ErrorCode.PLAN_LOCKED); // 종결 상태는 전면 잠금.
         }
         boolean confirmedAtChanged = !Objects.equals(current.confirmedAt(), incoming.confirmedAt());
-        if (confirmedAtChanged || PlanTaskDiff.hasStructuralChange(
-                current, incoming,
-                PlanTaskDiff.parseTasks(current.tasks()), PlanTaskDiff.parseTasks(incoming.tasks()))) {
+        var prevTasks = PlanTaskDiff.parseTasks(current.tasks());
+        var nextTasks = PlanTaskDiff.parseTasks(incoming.tasks());
+        if (confirmedAtChanged || PlanTaskDiff.hasStructuralChange(current, incoming, prevTasks, nextTasks)) {
             throw new BusinessException(ErrorCode.PLAN_LOCKED);
+        }
+        // 날짜 키는 YYYY-MM-DD라 사전순 == 시간순 — 오늘보다 작은 키의 토글은 소급 변경이다.
+        for (String date : PlanTaskDiff.completedChangedDates(prevTasks, nextTasks)) {
+            if (date.compareTo(today) < 0) {
+                throw new BusinessException(ErrorCode.PAST_TASK_LOCKED);
+            }
         }
     }
 

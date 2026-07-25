@@ -47,6 +47,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `REFLECTION_NOT_FOUND` | 404 | 해당 날짜 회고 없음 |
 | `PLAN_LOCKED` | 409 | CONFIRMED·종결(COMPLETED/CANCELLED) 계획에 허용 외 변경 (v0.8.0) |
 | `INVALID_STATUS_TRANSITION` | 409 | 상태 전이 엔드포인트(confirm·complete·cancel)에서 전이표에 없는 전이 |
+| `PAST_TASK_LOCKED` | 409 | CONFIRMED 계획의 **지난 날짜(KST)** 완료 체크/해제 PUT (v0.14.2) |
 | `PLAN_STORE_FULL` | 503 | 전역 저장소 상한 초과(서버 메모리 보호, 최대 200개) |
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
@@ -197,6 +198,9 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 
 - CONFIRMED 계획은 **completed 토글과 완전 동일(no-op) PUT만 허용**
 - 그 외 변경(goalName·duration·항목 내용/구조·DRAFT 롤백·confirmedAt 변경)은 409
+- 토글도 **오늘(KST)·미래 날짜만** 허용(v0.14.2) — 이월이 "오늘 → 내일"뿐이라 미루지 않은 지난
+  항목은 놓친 것으로 확정되며, 지난 날짜는 체크·해제 모두 409 `PAST_TASK_LOCKED`(완료율 소급
+  조작 방지). DRAFT는 자유 수정 단계라 적용되지 않는다.
 
 ```json
 // 409 응답

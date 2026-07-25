@@ -170,6 +170,10 @@ const planStatusOf = (source) => source?.status || 'DRAFT';
 const isEditableStatus = (status) => status === 'DRAFT';
 // 종결 상태 — 완료 토글을 포함한 모든 변경 PUT을 서버가 거부하므로 프론트도 입력을 막는다.
 const isTerminalStatus = (status) => status === 'COMPLETED' || status === 'CANCELLED';
+// 지난 날짜 잠금 — 고정(CONFIRMED) 계획의 완료 체크는 오늘·미래만(서버 PAST_TASK_LOCKED와 같은
+// 기준). 이월이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친 것으로 확정된다(체크·해제 불가).
+// 날짜 키는 YYYY-MM-DD라 문자열 비교로 충분하다. DRAFT는 자유 수정 단계라 제외.
+const isPastLockedDate = (status, date) => status === 'CONFIRMED' && date < todayStr();
 // 상태 코드 → 화면 라벨 폴백 사본 — 소스오브트루스는 GET /meta/plan-statuses(서버 enum 라벨).
 const DEFAULT_PLAN_STATUS_LABELS = {
   DRAFT: '초안',
@@ -411,6 +415,24 @@ export default function ChatCoach() {
     archivePendingRef.current = false;
   };
 
+  // 서버 도메인 액션 응답(PlanResponse)을 화면 상태에 반영한다 — 전이(confirm/complete/cancel)와
+  // 이월(carry-over), 지난 날짜 잠금 되돌리기(syncActivePlan)가 공유한다. setState 전에 "이미
+  // 동기화됨"(lastSyncedRef)으로 기록해, 낡은 디바운스 PUT이 서버 결과를 되돌리는 경합을
+  // 차단한다(restorePlan의 "방금 서버에서 읽은 상태" 처리와 같은 패턴). 활성 계획이 아니면
+  // 목록 스냅샷만 갱신한다.
+  const applyServerPlan = (plan) => {
+    if (plan.id === activePlanId) {
+      const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
+      lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
+      dirtyRef.current = null;
+      setDraftChecklist(nextDraft);
+      // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
+      setSlots(nextSlots);
+    }
+    // 목록 스냅샷에도 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
+    setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
+  };
+
   // 대기 중인 변경을 즉시 서버에 반영한다(디바운스를 기다리지 않고). 계획 전환·리셋 직전에
   // 호출해, 아직 PUT되지 않은 완료 토글/수정이 유실되지 않게 한다.
   // recreateIfMissing=false: 떠나는 계획이 이미 삭제됐어도 새로 만들지 않는다(orphan 방지).
@@ -431,6 +453,19 @@ export default function ChatCoach() {
         // 경우다. 재시도해도 계속 409이므로 대기 변경을 버린다(서버가 진실 원천 — 계획을
         // 다시 불러오면 고정 상태로 재동기화된다).
         console.warn('고정된 계획이라 서버가 수정 반영을 거부했습니다 — 대기 중 변경을 폐기합니다.');
+        return;
+      }
+      if (err.code === 'PAST_TASK_LOCKED') {
+        // 지난 날짜 토글 소급 거부 — 체크박스 disabled를 뚫고 온 경우(자정 경계에 열려 있던
+        // 화면 등). 재시도해도 계속 409이므로 대기 변경을 버리고, 서버 상태로 화면을 되돌려
+        // 낙관 반영된 체크가 남지 않게 한다.
+        window.alert('지난 날짜의 완료 체크는 변경할 수 없어요. 화면을 서버 상태로 되돌립니다.');
+        try {
+          const fresh = await fetchPlan(pending.id);
+          if (aliveRef.current) applyServerPlan(fresh);
+        } catch {
+          /* 되돌리기 실패 — 다음 조회 때 재동기화된다 */
+        }
         return;
       }
       if (err.code !== 'PLAN_NOT_FOUND') {
@@ -868,9 +903,12 @@ export default function ChatCoach() {
 
   // 할 일 완료 토글 — 상태 변경은 자동 동기화 effect가 서버에 반영한다.
   // 종결(COMPLETED/CANCELLED) 계획은 서버가 모든 변경 PUT을 거부하므로 토글 자체를 막는다.
+  // 고정(CONFIRMED) 계획의 지난 날짜도 서버가 거부(PAST_TASK_LOCKED)하므로 여기서 막는다(방어 —
+  // 체크박스 disabled가 1차 차단이지만, 자정 경계에 열린 화면 등에서 새어 들어올 수 있다).
   const toggleTask = (date, taskId) => {
     setDraftChecklist((prev) => {
       if (!prev || isTerminalStatus(planStatusOf(prev))) return prev;
+      if (isPastLockedDate(planStatusOf(prev), date)) return prev;
       const dayTasks = prev.tasks?.[date];
       if (!Array.isArray(dayTasks)) return prev;
       return {
@@ -919,23 +957,6 @@ export default function ChatCoach() {
         window.alert('완료 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.');
       }
     }
-  };
-
-  // 서버 도메인 액션 응답(PlanResponse)을 화면 상태에 반영한다 — 전이(confirm/complete/cancel)와
-  // 이월(carry-over)이 공유한다. setState 전에 "이미 동기화됨"(lastSyncedRef)으로 기록해, 낡은
-  // 디바운스 PUT이 서버 결과를 되돌리는 경합을 차단한다(restorePlan의 "방금 서버에서 읽은 상태"
-  // 처리와 같은 패턴). 활성 계획이 아니면 목록 스냅샷만 갱신한다.
-  const applyServerPlan = (plan) => {
-    if (plan.id === activePlanId) {
-      const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
-      lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
-      dirtyRef.current = null;
-      setDraftChecklist(nextDraft);
-      // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
-      setSlots(nextSlots);
-    }
-    // 목록 스냅샷에도 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
-    setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
   };
 
   // 미완료 항목 내일로 이동 — 실행 단계 액션이라 고정(CONFIRMED) 계획에서도 허용한다(v0.14.1,
@@ -2590,18 +2611,20 @@ export default function ChatCoach() {
                     // onKeyDown/role 불필요), 스크린리더도 체크박스로 인식한다.
                     <li key={task.id} style={{ fontSize: '14px' }}>
                       <label
+                        title={isPastLockedDate(activeStatus, date) ? '지난 날짜는 변경할 수 없어요' : undefined}
                         style={{
                           display: 'flex',
                           gap: '8px',
                           alignItems: 'flex-start',
-                          cursor: 'pointer',
+                          cursor: isTerminal || isPastLockedDate(activeStatus, date) ? 'default' : 'pointer',
                           userSelect: 'none'
                         }}
                       >
                         <input
                           type="checkbox"
                           checked={!!task.completed}
-                          disabled={isTerminal} /* 종결(완료/중단) 계획 — 서버가 토글 PUT도 거부(전면 잠금) */
+                          /* 종결 계획은 전면 잠금, 고정 계획의 지난 날짜는 소급 잠금(서버 PAST_TASK_LOCKED와 동일 기준) */
+                          disabled={isTerminal || isPastLockedDate(activeStatus, date)}
                           onChange={() => toggleTask(date, task.id)}
                           style={{
                             marginTop: '2px',
@@ -2609,7 +2632,7 @@ export default function ChatCoach() {
                             width: '15px',
                             height: '15px',
                             accentColor: 'var(--primary)',
-                            cursor: isTerminal ? 'default' : 'pointer'
+                            cursor: isTerminal || isPastLockedDate(activeStatus, date) ? 'default' : 'pointer'
                           }}
                         />
                         <span

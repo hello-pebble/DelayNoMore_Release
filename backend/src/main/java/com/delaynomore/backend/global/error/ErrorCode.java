@@ -24,6 +24,10 @@ public enum ErrorCode {
     // 프론트가 error.code로 분기하므로 유지), 이 코드는 "상태 전이 자체가 전이표(PlanStatus)에
     // 없음"(전이 엔드포인트 confirm·complete·cancel 전용).
     INVALID_STATUS_TRANSITION(HttpStatus.CONFLICT, "현재 계획 상태에서는 요청한 상태로 변경할 수 없습니다."),
+    // 고정(CONFIRMED) 계획의 완료 체크는 오늘(KST)·미래 날짜만 — 지난 날짜는 체크·해제 모두 불가.
+    // 이월 규칙이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친 것으로 확정되며, 사후 체크로
+    // 완료율을 소급 조작할 수 없다. 리소스 상태(날짜 경과)와의 충돌이므로 409.
+    PAST_TASK_LOCKED(HttpStatus.CONFLICT, "지난 날짜의 완료 체크는 변경할 수 없습니다."),
     REFLECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 날짜의 회고가 아직 없습니다."),
     REFLECTION_DATE_INVALID(HttpStatus.BAD_REQUEST, "날짜 형식이 올바르지 않습니다(YYYY-MM-DD)."),
     REFLECTION_DATE_NOT_TODAY(HttpStatus.BAD_REQUEST, "회고는 오늘(한국 시간 기준) 날짜에만 저장할 수 있습니다."),
