@@ -391,16 +391,16 @@ class PlanServiceTest {
 
     @Test
     void update_고정계획_완료토글만_정상반영() {
-        // given
-        PlanResponse confirmed = createConfirmedPlan();
+        // given — 오늘 날짜 항목(지난 날짜는 PAST_TASK_LOCKED로 별도 잠금 — 아래 섹션)
+        PlanResponse confirmed = confirmedPlanWithTask(TODAY, false);
 
         // when — completed만 플립한 전체 PUT (프론트 완료 체크 경로)
         PlanResponse updated = planService.update(confirmed.id(),
-                confirmedRequest("토익 900", tasksOf(true), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), OWNER, null);
+                toggleRequest(confirmed, TODAY, true), OWNER, null);
 
         // then
         assertThat(updated.status()).isEqualTo("CONFIRMED");
-        assertThat(updated.tasks()).isEqualTo(tasksOf(true));
+        assertThat(updated.tasks()).isEqualTo(taskMapOf(TODAY, true));
     }
 
     @Test
@@ -490,6 +490,88 @@ class PlanServiceTest {
 
         // then
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    // === 지난 날짜 완료 체크 잠금 — 이월이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친 것으로
+    // 확정된다. 고정(CONFIRMED) 계획의 지난 날짜는 체크·해제 모두 거부(PAST_TASK_LOCKED)해
+    // 완료율("N/M 완료" 이력 포함) 소급 조작을 막는다. 오늘·미래는 양방향 허용. ===
+
+    private static final String YESTERDAY = KstDates.today().minusDays(1).toString();
+
+    private static Map<String, Object> taskMapOf(String date, boolean completed) {
+        return Map.of(date, List.of(Map.of("id", "t-1", "content", "단어 암기", "completed", completed)));
+    }
+
+    // date 하루짜리 항목을 가진 CONFIRMED 계획 — 전이 엔드포인트로 고정한다(confirmedAt 서버 발급).
+    private PlanResponse confirmedPlanWithTask(String date, boolean completed) {
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", null, 2, "완전 초보",
+                taskMapOf(date, completed), null, null, date, TOMORROW, date + "T00:00:00Z");
+        PlanResponse saved = planService.create(request, OWNER, null);
+        return planService.confirm(saved.id(), OWNER, null);
+    }
+
+    // completed만 플립한 전체 PUT — 상태·confirmedAt·기간은 현재값 그대로 실어 토글-only로 만든다.
+    private static PlanSaveRequest toggleRequest(PlanResponse plan, String date, boolean completed) {
+        return new PlanSaveRequest(plan.goalName(), plan.duration(), plan.dailyHours(), plan.currentLevel(),
+                taskMapOf(date, completed), plan.status(), plan.confirmedAt(),
+                plan.startDate(), plan.endDate(), plan.createdAt());
+    }
+
+    @Test
+    void update_고정계획_지난날짜체크_PAST_TASK_LOCKED예외_저장소원상태유지() {
+        // given — 어제 미완료 항목(어제 미루지도 않았다 — 놓친 항목)
+        PlanResponse confirmed = confirmedPlanWithTask(YESTERDAY, false);
+
+        // when — 오늘 와서 사후 체크 시도
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        toggleRequest(confirmed, YESTERDAY, true), OWNER, null));
+
+        // then — 거부되고 저장소는 원상태(완료율 소급 조작 불가)
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAST_TASK_LOCKED);
+        assertThat(planService.getPlan(confirmed.id(), OWNER).tasks()).isEqualTo(taskMapOf(YESTERDAY, false));
+    }
+
+    @Test
+    void update_고정계획_지난날짜체크해제_PAST_TASK_LOCKED예외() {
+        // given — 어제 체크된 항목: 지난 기록은 방향 불문 확정(해제도 금지)
+        PlanResponse confirmed = confirmedPlanWithTask(YESTERDAY, true);
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(confirmed.id(),
+                        toggleRequest(confirmed, YESTERDAY, false), OWNER, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PAST_TASK_LOCKED);
+    }
+
+    @Test
+    void update_고정계획_내일미리체크_허용() {
+        // given — 미래는 조작이 아니라 앞서 나가는 것: 미리 체크 허용(확정 규칙)
+        PlanResponse confirmed = confirmedPlanWithTask(TOMORROW, false);
+
+        // when
+        PlanResponse updated = planService.update(confirmed.id(),
+                toggleRequest(confirmed, TOMORROW, true), OWNER, null);
+
+        // then
+        assertThat(updated.tasks()).isEqualTo(taskMapOf(TOMORROW, true));
+    }
+
+    @Test
+    void update_DRAFT계획_지난날짜체크_허용() {
+        // given — DRAFT는 자유 수정 단계라 날짜 잠금 미적용(구조 변경도 되는데 토글만 막는 건 무의미)
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", null, 2, "완전 초보",
+                taskMapOf(YESTERDAY, false), null, null, YESTERDAY, TOMORROW, YESTERDAY + "T00:00:00Z");
+        PlanResponse saved = planService.create(request, OWNER, null);
+
+        // when
+        PlanResponse updated = planService.update(saved.id(),
+                toggleRequest(saved, YESTERDAY, true), OWNER, null);
+
+        // then
+        assertThat(updated.tasks()).isEqualTo(taskMapOf(YESTERDAY, true));
     }
 
     @Test
