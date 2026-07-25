@@ -14,6 +14,45 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.14.0]
+
+**계획 상태 전이(state machine) 패턴 도입.** 계획 수명주기를 `DRAFT → CONFIRMED → COMPLETED`
+(+ `DRAFT|CONFIRMED → CANCELLED`)로 확장하고, 5곳에 흩어져 있던 상태 문자열·if-체인 정책을
+**`PlanStatus` enum의 선언적 전이표** 하나로 일원화했다. 상태 변경은 PUT 전체 교체의 부수효과가
+아니라 **명시적 전이 명령**(confirm/complete/cancel)이 되고, 시각 발급·이력 발행·잠금 판정을
+전부 서버가 소유한다(상품권 선발행→활성, 배달 다단계 흐름과 같은 실무 상태 관리 패턴의 시연).
+
+### Added
+- **`PlanStatus` enum(전이표)** — 상태 집합·허용 전이(`canTransitionTo`)·종결 판정(`isTerminal`)·
+  상태별 능력 플래그(`allowsStructuralEdit`/`allowsCompletionToggle`)의 단일 소스오브트루스.
+  self-loop 없음(같은 상태로의 전이는 409). 4×4 전수 매트릭스 단위 테스트로 간선을 고정.
+- **전이 엔드포인트 3종** — `POST /plans/{id}/confirm`(DRAFT→CONFIRMED),
+  `POST /plans/{id}/complete`(CONFIRMED→COMPLETED), `POST /plans/{id}/cancel`(DRAFT|CONFIRMED→
+  CANCELLED). 본문 없는 POST(carry-over 관례), `confirmedAt`/`completedAt`은 **서버 발급**
+  (클라이언트 시각을 믿지 않음). 전이표에 없는 전이는 새 오류코드 `INVALID_STATUS_TRANSITION`(409).
+- **전이명 그대로의 감사 이력** — 전이 엔드포인트가 `PLAN_CONFIRMED`/`PLAN_COMPLETED`(detail:
+  "N/M 완료")/`PLAN_CANCELLED`를 diff 역추론 없이 직접 발행(carry-over의 직접 발행 관례 확장).
+- **`GET /meta/plan-statuses`** — 상태 코드+라벨 메타 API(기존 audit-event-types 패턴).
+- **Flyway V2** — `plans.completed_at` 컬럼 + `status` CHECK 제약(규칙 소유권은 `PlanStatus`,
+  DB는 최후 안전망). `PlanResponse`에 `completedAt` 추가(additive).
+- **프론트 전이 UI(시연 수준)** — "계획 저장(고정)"이 로컬 플립+PUT 대신 `POST /confirm` 호출,
+  완료/중단 버튼 신설, 종결 상태 전면 잠금(체크박스 비활성·이월/수정 차단), 보관함·헤더 상태
+  배지(라벨은 `/meta/plan-statuses` 수신, 폴백 사본 유지). 세션 경합(409) 시 최신 상태 재조회.
+
+### Changed
+- **PUT 가드·이월 가드가 전이표 참조로 재작성** — `assertUnlockedOrToggleOnly`의 if-체인 정책이
+  `PlanStatus` 능력 플래그 기반이 됐다. 정책 자체는 보존: DRAFT 자유 수정, CONFIRMED는 완료
+  토글만, 종결 상태는 전면 잠금(추가). PUT 위반 오류코드는 `PLAN_LOCKED` 유지(프론트 분기 호환).
+- **레거시 PUT 고정 경로 유지(하위 호환)** — 바디 `status`는 여전히 `DRAFT|CONFIRMED`만 허용
+  (@Pattern + drift-guard 테스트)되고 PUT DRAFT→CONFIRMED 고정도 계속 동작한다. 종결 상태는
+  전이 엔드포인트로만 진입 가능(저장 요청으로 밀어 넣기 차단).
+- `WorkloadRecommendation.isEligible`의 이름 없는 "끝난 계획" 파생 판정에 명시적 `COMPLETED`
+  상태 인정을 추가(레거시 파생 판정도 병행 유지).
+
+### Notes
+- Playwright E2E 캡처: `docs/images/plan-status-transition-e2e.png`(완료 전이 후 배지·전면 잠금).
+- v0.13.1 Notes에서 예고한 구조적 계보(`source_plan_id`)는 이 버전에 포함되지 않았다(추후 버전).
+
 ## [0.13.1]
 
 **추천을 같은 목표 최근 3건으로 합산(스키마 변경 없음).** v0.13.0 추천은 ✨ 버튼을 누른 단 한
