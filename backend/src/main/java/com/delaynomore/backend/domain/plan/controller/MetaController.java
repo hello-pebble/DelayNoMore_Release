@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.MetaOptionResponse;
 import com.delaynomore.backend.domain.plan.dto.ReflectionOptionsResponse;
 import com.delaynomore.backend.domain.plan.entity.AuditEventType;
+import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,6 +37,14 @@ public class MetaController {
     public ApiResponse<List<MetaOptionResponse>> getAuditEventTypes() {
         return ApiResponse.ok(Arrays.stream(AuditEventType.values())
                 .map(t -> new MetaOptionResponse(t.name(), t.getLabel()))
+                .toList());
+    }
+
+    @Operation(summary = "계획 상태 종류 조회 (코드+라벨 · 수명주기는 PlanStatus 전이표 소유)")
+    @GetMapping("/plan-statuses")
+    public ApiResponse<List<MetaOptionResponse>> getPlanStatuses() {
+        return ApiResponse.ok(Arrays.stream(PlanStatus.values())
+                .map(s -> new MetaOptionResponse(s.name(), s.getLabel()))
                 .toList());
     }
 }

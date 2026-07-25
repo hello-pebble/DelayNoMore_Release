@@ -20,6 +20,10 @@ public enum ErrorCode {
     PLAN_STORE_FULL(HttpStatus.SERVICE_UNAVAILABLE, "데모 서버 보관함이 가득 찼습니다. 잠시 후 다시 시도해주세요."),
     // 요청 형식 오류(400)가 아니라 "리소스의 현재 상태와 충돌"이므로 409.
     PLAN_LOCKED(HttpStatus.CONFLICT, "고정(CONFIRMED)된 계획은 완료 체크 외에는 수정할 수 없습니다."),
+    // 같은 409지만 용도가 다르다 — PLAN_LOCKED는 "내용 수정이 상태에 막힘"(레거시 PUT 경로,
+    // 프론트가 error.code로 분기하므로 유지), 이 코드는 "상태 전이 자체가 전이표(PlanStatus)에
+    // 없음"(전이 엔드포인트 confirm·complete·cancel 전용).
+    INVALID_STATUS_TRANSITION(HttpStatus.CONFLICT, "현재 계획 상태에서는 요청한 상태로 변경할 수 없습니다."),
     REFLECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 날짜의 회고가 아직 없습니다."),
     REFLECTION_DATE_INVALID(HttpStatus.BAD_REQUEST, "날짜 형식이 올바르지 않습니다(YYYY-MM-DD)."),
     REFLECTION_DATE_NOT_TODAY(HttpStatus.BAD_REQUEST, "회고는 오늘(한국 시간 기준) 날짜에만 저장할 수 있습니다."),

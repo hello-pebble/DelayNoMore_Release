@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.plan.dto.AuditEventResponse;
 import com.delaynomore.backend.domain.plan.entity.AuditEvent;
 import com.delaynomore.backend.domain.plan.entity.AuditEventType;
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -52,6 +53,24 @@ public class AuditEventService {
     public void recordCarryOver(long planId, String owner, int movedCount, String targetDate, String sessionId) {
         append(planId, owner, AuditEventType.PLAN_UPDATED,
                 "미완료 " + movedCount + "건을 " + targetDate + "로 이동", sessionId);
+    }
+
+    // 상태 전이 이벤트 — 전이 엔드포인트(PlanService.transition)가 전이 직후 직접 발행한다.
+    // diff 역추론과 달리 전이명이 곧 이벤트명이다. detail 규칙: 고정은 null(레거시 PUT diff 경로의
+    // PLAN_CONFIRMED와 형식 통일), 완료는 진행률, 중단은 목표명(recordPlanDeleted와 같은 관례).
+    public void recordTransition(Plan updated, PlanStatus target, String sessionId) {
+        switch (target) {
+            case CONFIRMED -> append(updated.id(), updated.owner(), AuditEventType.PLAN_CONFIRMED, null, sessionId);
+            case COMPLETED -> {
+                Plan.TaskCounts counts = updated.countAllTasks();
+                append(updated.id(), updated.owner(), AuditEventType.PLAN_COMPLETED,
+                        counts.completed() + "/" + counts.total() + " 완료", sessionId);
+            }
+            case CANCELLED -> append(updated.id(), updated.owner(), AuditEventType.PLAN_CANCELLED,
+                    "\"" + updated.goalName() + "\" 중단", sessionId);
+            // DRAFT는 전이 목적지가 아니다(전이표에 들어오는 간선이 없음) — 호출되면 프로그래밍 오류.
+            case DRAFT -> throw new IllegalArgumentException("DRAFT는 전이 대상 상태가 아닙니다.");
+        }
     }
 
     // 갱신 diff 분류 — 한 PUT에서 0..n건을 발행한다(디바운스 배칭으로 토글 여러 개가 한 번에 올 수 있다).

@@ -518,6 +518,184 @@ class PlanServiceTest {
         assertThat(updated.status()).isEqualTo("CONFIRMED");
     }
 
+    // === 상태 전이 도메인 액션(confirm·complete·cancel) — 전이 규칙은 PlanStatus 전이표 소유 ===
+
+    @Test
+    void confirm_DRAFT계획_CONFIRMED전환_서버시각발급_이력발행() {
+        // given
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+
+        // when
+        PlanResponse confirmed = planService.confirm(saved.id(), OWNER, "session-a");
+
+        // then — 상태 전환, confirmedAt은 서버 발급(클라이언트가 보낸 적 없음), 전이명 이력 발행
+        assertThat(confirmed.status()).isEqualTo("CONFIRMED");
+        assertThat(confirmed.confirmedAt()).isNotNull();
+        assertThat(confirmed.completedAt()).isNull();
+        assertThat(auditEventService.getEvents(saved.id(), OWNER).get(0).type()).isEqualTo("PLAN_CONFIRMED");
+    }
+
+    @Test
+    void confirm_이미CONFIRMED_INVALID_STATUS_TRANSITION예외() {
+        // given — self-loop는 전이표에 없다
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.confirm(saved.id(), OWNER, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_STATUS_TRANSITION);
+    }
+
+    @Test
+    void complete_CONFIRMED계획_COMPLETED전환_완료시각과진행률이력발행() {
+        // given
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
+
+        // when
+        PlanResponse completed = planService.complete(saved.id(), OWNER, null);
+
+        // then — 종결 상태 + completedAt 서버 발급 + 진행률 detail의 PLAN_COMPLETED
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        assertThat(completed.completedAt()).isNotNull();
+        assertThat(completed.confirmedAt()).isNotNull(); // 고정 시각은 보존
+        var latest = auditEventService.getEvents(saved.id(), OWNER).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_COMPLETED");
+        assertThat(latest.detail()).isEqualTo("0/1 완료");
+    }
+
+    @Test
+    void complete_DRAFT계획_INVALID_STATUS_TRANSITION예외() {
+        // given — DRAFT→COMPLETED 간선은 없다(고정을 거쳐야 완료할 수 있다)
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.complete(saved.id(), OWNER, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_STATUS_TRANSITION);
+    }
+
+    @Test
+    void cancel_DRAFT계획_CANCELLED전환_이력발행() {
+        // given
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+
+        // when
+        PlanResponse cancelled = planService.cancel(saved.id(), OWNER, null);
+
+        // then — 시각 필드는 건드리지 않는다(중단 시각은 이력이 담당)
+        assertThat(cancelled.status()).isEqualTo("CANCELLED");
+        assertThat(cancelled.confirmedAt()).isNull();
+        assertThat(cancelled.completedAt()).isNull();
+        var latest = auditEventService.getEvents(saved.id(), OWNER).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_CANCELLED");
+        assertThat(latest.detail()).isEqualTo("\"토익 900\" 중단");
+    }
+
+    @Test
+    void cancel_CONFIRMED계획_CANCELLED전환() {
+        // given — 실행 중(고정) 계획도 중단할 수 있다
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
+
+        // when
+        PlanResponse cancelled = planService.cancel(saved.id(), OWNER, null);
+
+        // then
+        assertThat(cancelled.status()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void 종결상태_모든전이거부_저장소원상태유지() {
+        // given — COMPLETED는 나가는 간선이 없다
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
+        planService.complete(saved.id(), OWNER, null);
+        int eventCountBefore = auditEventService.getEvents(saved.id(), OWNER).size();
+
+        // when·then — confirm·complete·cancel 전부 409, 저장소·이력 불변
+        for (var action : List.<Runnable>of(
+                () -> planService.confirm(saved.id(), OWNER, null),
+                () -> planService.complete(saved.id(), OWNER, null),
+                () -> planService.cancel(saved.id(), OWNER, null))) {
+            BusinessException exception = catchThrowableOfType(BusinessException.class, action::run);
+            assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.INVALID_STATUS_TRANSITION);
+        }
+        assertThat(planService.getPlan(saved.id(), OWNER).status()).isEqualTo("COMPLETED");
+        assertThat(auditEventService.getEvents(saved.id(), OWNER)).hasSize(eventCountBefore);
+    }
+
+    @Test
+    void update_종결계획_완료토글PUT도_PLAN_LOCKED예외() {
+        // given — COMPLETED는 전면 잠금: CONFIRMED에서 허용되던 토글-only PUT도 거부된다
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
+        String confirmedAt = planService.complete(saved.id(), OWNER, null).confirmedAt();
+
+        // when — 상태/confirmedAt을 현재값 그대로 싣고 completed만 플립한 PUT
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.update(saved.id(),
+                        new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasksOf(true),
+                                "CONFIRMED", confirmedAt, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z"),
+                        OWNER, null));
+
+        // then — 상태 불일치(COMPLETED≠CONFIRMED)로 걸러진다(레거시 PUT 호환 코드 PLAN_LOCKED 유지)
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+        assertThat(planService.getPlan(saved.id(), OWNER).status()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void carryOver_종결계획_PLAN_LOCKED예외() {
+        // given — 이월은 구조 변경이므로 종결 상태에도 고정과 같은 판정
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        planService.cancel(saved.id(), OWNER, null);
+
+        // when
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.carryOver(saved.id(), OWNER, null));
+
+        // then
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+    }
+
+    @Test
+    void confirm_다른소유자또는없는ID_PLAN_NOT_FOUND예외() {
+        // given — 전이도 소유자 스코프: 남의 계획은 존재 자체를 숨긴다
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+
+        // when·then
+        assertThat(catchThrowableOfType(BusinessException.class,
+                () -> planService.confirm(saved.id(), OTHER_OWNER, null)).getErrorCode())
+                .isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+        assertThat(catchThrowableOfType(BusinessException.class,
+                () -> planService.confirm(MISSING_ID, OWNER, null)).getErrorCode())
+                .isEqualTo(ErrorCode.PLAN_NOT_FOUND);
+        assertThat(planService.getPlan(saved.id(), OWNER).status()).isEqualTo("DRAFT");
+    }
+
+    @Test
+    void planSaveRequest_status패턴_PlanStatus이름과정합_driftGuard() throws NoSuchFieldException {
+        // PlanSaveRequest의 @Pattern은 컴파일 상수 제약으로 리터럴을 쓴다 — 그 값이 PlanStatus의
+        // 실제 이름(비종결 상태 DRAFT|CONFIRMED)과 어긋나면 여기서 깨진다. 종결 상태는 저장 요청으로
+        // 들어올 수 없어야 하므로 regex에 포함되면 안 된다.
+        jakarta.validation.constraints.Pattern pattern = PlanSaveRequest.class
+                .getDeclaredField("status")
+                .getAnnotation(jakarta.validation.constraints.Pattern.class);
+        assertThat(pattern).isNotNull();
+        java.util.Set<String> allowed = java.util.Set.of(pattern.regexp().split("\\|"));
+        java.util.Set<String> nonTerminal = java.util.Arrays.stream(
+                        com.delaynomore.backend.domain.plan.entity.PlanStatus.values())
+                .filter(s -> !s.isTerminal())
+                .map(Enum::name)
+                .collect(java.util.stream.Collectors.toSet());
+        assertThat(allowed).isEqualTo(nonTerminal);
+    }
+
     // === 미완료 이월(carry-over) 도메인 액션 — 날짜 규칙(오늘 KST → 내일)은 서버 소유 ===
 
     private static final String TODAY = KstDates.today().toString();

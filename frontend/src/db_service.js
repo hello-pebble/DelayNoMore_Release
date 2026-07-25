@@ -117,6 +117,12 @@ export const updatePlan = (id, payload) => requestJson(`/plans/${id}`, payload, 
 // 하루 연장)은 서버 소유라 클라이언트는 날짜를 지정하지 않는다.
 // 응답: { movedCount, targetDate, plan } — movedCount 0은 "옮길 게 없음"의 정상 no-op.
 export const carryOverPlan = (id) => requestJson(`/plans/${id}/carry-over`, null);
+// 상태 전이 도메인 액션 — 본문 없는 POST. 전이 규칙(전이표)·시각 발급(confirmedAt/completedAt)·
+// 이력 발행(PLAN_CONFIRMED 등)은 전부 서버 소유이고, 응답은 전이 후의 PlanResponse다.
+// 전이표에 없는 전이는 409 INVALID_STATUS_TRANSITION(err.code로 분기).
+export const confirmPlan = (id) => requestJson(`/plans/${id}/confirm`, null);
+export const completePlan = (id) => requestJson(`/plans/${id}/complete`, null);
+export const cancelPlan = (id) => requestJson(`/plans/${id}/cancel`, null);
 export const fetchPlans = () => requestJson('/plans', null, 'GET');
 export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
@@ -148,6 +154,7 @@ export const putReflection = (planId, date, payload) => requestJson(`/plans/${pl
 // 프론트는 마운트 시 한 번 받아 쓰고, 실패하면 하드코딩 폴백(DEFAULT_*)으로 화면을 지킨다.
 export const fetchReflectionOptions = () => requestJson('/meta/reflection-options', null, 'GET');
 export const fetchAuditEventTypes = () => requestJson('/meta/audit-event-types', null, 'GET');
+export const fetchPlanStatuses = () => requestJson('/meta/plan-statuses', null, 'GET');
 
 // 계획 변경 이력(최신순) — 이벤트는 서버가 변경 서비스 안에서 직접 발행하므로 읽기만 있다.
 // 삭제된 계획 id도 404가 아니라 과거 이력(또는 빈 목록)으로 응답한다.

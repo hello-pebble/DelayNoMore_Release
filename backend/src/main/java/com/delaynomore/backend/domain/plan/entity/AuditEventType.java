@@ -12,6 +12,10 @@ public enum AuditEventType {
     PLAN_CREATED("계획 생성"),
     PLAN_UPDATED("계획 수정"),
     PLAN_CONFIRMED("계획 고정"),
+    // 상태 전이 엔드포인트(POST /plans/{id}/complete·cancel)가 전이명 그대로 직접 발행한다 —
+    // PUT diff 역추론이 아니라 전이 명령 자체가 이벤트의 이름이 된다(PlanStatus 수명주기 참고).
+    PLAN_COMPLETED("계획 완료"),
+    PLAN_CANCELLED("계획 중단"),
     TASK_COMPLETED("할 일 완료"),
     TASK_REOPENED("완료 해제"),
     REFLECTION_SAVED("회고 저장"),

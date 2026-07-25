@@ -48,9 +48,9 @@ public class JdbcPlanRepository implements PlanRepository {
     public Plan save(Plan plan) {
         String sql = """
                 INSERT INTO plans (owner, goal_name, duration, daily_hours, current_level,
-                                   tasks, status, confirmed_at, start_date, end_date, created_at, saved_at)
+                                   tasks, status, confirmed_at, completed_at, start_date, end_date, created_at, saved_at)
                 VALUES (:owner, :goalName, :duration, :dailyHours, :currentLevel,
-                        CAST(:tasks AS jsonb), :status, :confirmedAt, :startDate, :endDate, :createdAt, :savedAt)
+                        CAST(:tasks AS jsonb), :status, :confirmedAt, :completedAt, :startDate, :endDate, :createdAt, :savedAt)
                 RETURNING id
                 """;
         Long id = jdbc.queryForObject(sql, planParams(plan), Long.class);
@@ -90,6 +90,7 @@ public class JdbcPlanRepository implements PlanRepository {
                 UPDATE plans SET owner = :owner, goal_name = :goalName, duration = :duration,
                                  daily_hours = :dailyHours, current_level = :currentLevel,
                                  tasks = CAST(:tasks AS jsonb), status = :status, confirmed_at = :confirmedAt,
+                                 completed_at = :completedAt,
                                  start_date = :startDate, end_date = :endDate, created_at = :createdAt,
                                  saved_at = :savedAt
                 WHERE id = :id
@@ -111,6 +112,7 @@ public class JdbcPlanRepository implements PlanRepository {
                 UPDATE plans SET owner = :owner, goal_name = :goalName, duration = :duration,
                                  daily_hours = :dailyHours, current_level = :currentLevel,
                                  tasks = CAST(:tasks AS jsonb), status = :status, confirmed_at = :confirmedAt,
+                                 completed_at = :completedAt,
                                  start_date = :startDate, end_date = :endDate, created_at = :createdAt,
                                  saved_at = :savedAt
                 WHERE id = :id
@@ -155,6 +157,7 @@ public class JdbcPlanRepository implements PlanRepository {
                 .addValue("tasks", writeTasks(plan.tasks()))
                 .addValue("status", plan.status())
                 .addValue("confirmedAt", plan.confirmedAt())
+                .addValue("completedAt", plan.completedAt())
                 .addValue("startDate", plan.startDate())
                 .addValue("endDate", plan.endDate())
                 .addValue("createdAt", plan.createdAt())
@@ -172,6 +175,7 @@ public class JdbcPlanRepository implements PlanRepository {
                 readTasks(rs.getString("tasks")),
                 rs.getString("status"),
                 rs.getString("confirmed_at"),
+                rs.getString("completed_at"),
                 rs.getString("start_date"),
                 rs.getString("end_date"),
                 rs.getString("created_at"),

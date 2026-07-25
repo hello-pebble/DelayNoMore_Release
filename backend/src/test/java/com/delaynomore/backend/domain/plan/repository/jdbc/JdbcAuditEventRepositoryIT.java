@@ -49,7 +49,7 @@ class JdbcAuditEventRepositoryIT extends AbstractPostgresIntegrationTest {
     @Test
     void auditSurvivesPlanDeletion() {
         Plan plan = planRepository.save(new Plan(null, "guest-1", "삭제될 계획", 1, 1, "초급",
-                Map.of(), "DRAFT", null, "2026-07-21", "2026-07-21", "t", 1L));
+                Map.of(), "DRAFT", null, null, "2026-07-21", "2026-07-21", "t", 1L));
         auditEventRepository.append(event(plan.id(), "guest-1", "PLAN_CREATED"));
         auditEventRepository.append(event(plan.id(), "guest-1", "PLAN_DELETED"));
 

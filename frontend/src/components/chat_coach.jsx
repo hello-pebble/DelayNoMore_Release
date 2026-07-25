@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2, History, BarChart3, Sparkles
+  CheckCircle2, History, BarChart3, Sparkles, XCircle
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -18,7 +18,8 @@ import {
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
   fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
-  fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation
+  fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
+  confirmPlan, completePlan, cancelPlan, fetchPlanStatuses
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { getGuestId } from '../guest_id';
@@ -161,12 +162,30 @@ function countTodayIncomplete(tasks, date) {
   return dayTasks.filter((t) => !t.completed).length;
 }
 
+// === 계획 상태(PlanStatus) 헬퍼 — 상태 집합·전이 규칙의 소스오브트루스는 서버 PlanStatus
+// enum(선언적 전이표)이다. 프론트는 전이를 판정하지 않고(전이는 confirm/complete/cancel API가
+// 수행·거부한다) 버튼 노출·잠금 표시용 분류만 한다.
+const planStatusOf = (source) => source?.status || 'DRAFT';
+// 구조 변경(대화 수정·이월·기간 연장) 허용 여부 — 서버 allowsStructuralEdit와 같은 기준(DRAFT만).
+const isEditableStatus = (status) => status === 'DRAFT';
+// 종결 상태 — 완료 토글을 포함한 모든 변경 PUT을 서버가 거부하므로 프론트도 입력을 막는다.
+const isTerminalStatus = (status) => status === 'COMPLETED' || status === 'CANCELLED';
+// 상태 코드 → 화면 라벨 폴백 사본 — 소스오브트루스는 GET /meta/plan-statuses(서버 enum 라벨).
+const DEFAULT_PLAN_STATUS_LABELS = {
+  DRAFT: '초안',
+  CONFIRMED: '고정',
+  COMPLETED: '완료',
+  CANCELLED: '중단'
+};
+
 // 변경 이력 이벤트 타입 → 화면 라벨. 알 수 없는 타입은 코드 그대로 노출(회고 라벨과 같은 방어).
 // 소스오브트루스는 서버 enum(메타 API로 수신)이고, 이 상수는 백엔드 미가용 시 폴백 사본이다.
 const DEFAULT_AUDIT_EVENT_LABELS = {
   PLAN_CREATED: '계획 생성',
   PLAN_UPDATED: '계획 수정',
   PLAN_CONFIRMED: '계획 고정',
+  PLAN_COMPLETED: '계획 완료',
+  PLAN_CANCELLED: '계획 중단',
   TASK_COMPLETED: '할 일 완료',
   TASK_REOPENED: '완료 해제',
   REFLECTION_SAVED: '회고 저장',
@@ -301,7 +320,8 @@ export default function ChatCoach() {
   const [metaOptions, setMetaOptions] = useState({
     difficulties: DEFAULT_DIFFICULTY_OPTIONS,
     reasons: DEFAULT_REASON_OPTIONS,
-    auditEventLabels: DEFAULT_AUDIT_EVENT_LABELS
+    auditEventLabels: DEFAULT_AUDIT_EVENT_LABELS,
+    planStatusLabels: DEFAULT_PLAN_STATUS_LABELS
   });
 
   // 오늘 마무리(회고) 상태 — 회고는 계획별·오늘 날짜 1건(서버 업서트, 계획 보관함과 같은
@@ -332,9 +352,12 @@ export default function ChatCoach() {
                                  // 전환을 도입하면 이 가드가 전환 경계도 지킨다. AbortController를 db_service에
                                  // 스레딩하는 방식은 이 코드베이스엔 과하다고 판단해 두지 않는다.)
 
-  // 계획 고정 여부 — "계획 저장"을 누르면 CONFIRMED가 되어, 이후에는 대화로 계획을
-  // 수정할 수 없다(강제성 부여: 확정한 계획은 실행만, 재협상 없음). 완료 체크는 계속 가능.
-  const isLocked = draftChecklist?.status === 'CONFIRMED';
+  // 계획 상태 — "계획 저장(고정)"을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
+  // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
+  // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
+  const activeStatus = planStatusOf(draftChecklist);
+  const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
+  const isTerminal = !!draftChecklist && isTerminalStatus(activeStatus);
 
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
@@ -433,7 +456,9 @@ export default function ChatCoach() {
   const restorePlan = (plan, kind) => {
     const { slots: restoredSlots, draftChecklist: restoredDraft } = fromPlanResponse(plan);
     const goalName = plan.goalName || '계획';
-    const locked = restoredDraft.status === 'CONFIRMED';
+    const restoredStatus = planStatusOf(restoredDraft);
+    const locked = !isEditableStatus(restoredStatus);
+    const terminal = isTerminalStatus(restoredStatus);
     // 방금 서버에서 읽은 상태이므로 "이미 동기화됨"으로 기록 — 복원 직후 no-op PUT을 막는다.
     lastSyncedRef.current = JSON.stringify(toPlanPayload(restoredDraft));
     dirtyRef.current = null;
@@ -449,7 +474,9 @@ export default function ChatCoach() {
       {
         id: generateUniqueId(kind === 'restored' ? 'bot-restored' : 'bot-switched'),
         sender: 'bot',
-        text: kind === 'restored'
+        text: terminal
+          ? `${restoredStatus === 'COMPLETED' ? '완료' : '중단'}된 "${goalName}" 계획을 불러왔습니다. 종결된 계획은 더 이상 수정하거나 완료 체크할 수 없어요 — 기록 확인과 질문만 가능합니다.`
+          : kind === 'restored'
           ? (locked
             ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요.`
             : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
@@ -492,9 +519,10 @@ export default function ChatCoach() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [reflection, auditTypes] = await Promise.allSettled([
+      const [reflection, auditTypes, planStatuses] = await Promise.allSettled([
         fetchReflectionOptions(),
-        fetchAuditEventTypes()
+        fetchAuditEventTypes(),
+        fetchPlanStatuses()
       ]);
       if (cancelled) return;
       setMetaOptions((prev) => ({
@@ -506,7 +534,10 @@ export default function ChatCoach() {
           : prev.reasons,
         auditEventLabels: auditTypes.status === 'fulfilled' && Array.isArray(auditTypes.value)
           ? Object.fromEntries(auditTypes.value.map((t) => [t.code, t.label]))
-          : prev.auditEventLabels
+          : prev.auditEventLabels,
+        planStatusLabels: planStatuses.status === 'fulfilled' && Array.isArray(planStatuses.value)
+          ? Object.fromEntries(planStatuses.value.map((s) => [s.code, s.label]))
+          : prev.planStatusLabels
       }));
     })();
     return () => {
@@ -831,10 +862,11 @@ export default function ChatCoach() {
     sendMessage(String(value));
   };
 
-  // 할 일 완료 토글 — 상태 변경은 자동 저장 effect가 localStorage에 반영한다(서버 저장 없음).
+  // 할 일 완료 토글 — 상태 변경은 자동 동기화 effect가 서버에 반영한다.
+  // 종결(COMPLETED/CANCELLED) 계획은 서버가 모든 변경 PUT을 거부하므로 토글 자체를 막는다.
   const toggleTask = (date, taskId) => {
     setDraftChecklist((prev) => {
-      if (!prev) return prev;
+      if (!prev || isTerminalStatus(planStatusOf(prev))) return prev;
       const dayTasks = prev.tasks?.[date];
       if (!Array.isArray(dayTasks)) return prev;
       return {
@@ -858,6 +890,7 @@ export default function ChatCoach() {
       return;
     }
     const plan = savedPlans.find((p) => p.id === planId);
+    if (isTerminalStatus(planStatusOf(plan))) return; // 종결 계획 — 서버가 PUT을 거부(전면 잠금)
     const today = todayStr();
     const dayTasks = plan?.tasks?.[today];
     if (!Array.isArray(dayTasks)) return;
@@ -884,6 +917,23 @@ export default function ChatCoach() {
     }
   };
 
+  // 서버 도메인 액션 응답(PlanResponse)을 화면 상태에 반영한다 — 전이(confirm/complete/cancel)와
+  // 이월(carry-over)이 공유한다. setState 전에 "이미 동기화됨"(lastSyncedRef)으로 기록해, 낡은
+  // 디바운스 PUT이 서버 결과를 되돌리는 경합을 차단한다(restorePlan의 "방금 서버에서 읽은 상태"
+  // 처리와 같은 패턴). 활성 계획이 아니면 목록 스냅샷만 갱신한다.
+  const applyServerPlan = (plan) => {
+    if (plan.id === activePlanId) {
+      const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
+      lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
+      dirtyRef.current = null;
+      setDraftChecklist(nextDraft);
+      // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
+      setSlots(nextSlots);
+    }
+    // 목록 스냅샷에도 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
+    setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
+  };
+
   // 미완료 항목 내일로 이동 — 오늘(실행) 단계의 행동이지만 계획 구조를 바꾸므로 DRAFT 계획
   // 전용이다(고정 계획은 버튼 자체를 숨긴다 — 계획 저장/기간 +3일 버튼과 같은 잠금 관례).
   // 이월 연산(오늘 KST → 내일, 기간 연장 포함)은 서버 도메인 액션이 수행하고, 프론트는
@@ -893,7 +943,7 @@ export default function ChatCoach() {
   const handleCarryOver = async (planId) => {
     const isCurrent = planId === activePlanId && !!draftChecklist;
     const source = isCurrent ? draftChecklist : savedPlans.find((p) => p.id === planId);
-    if (!source || source.status === 'CONFIRMED') return;
+    if (!source || !isEditableStatus(planStatusOf(source))) return;
     const localCount = countTodayIncomplete(source.tasks, todayStr());
     if (localCount === 0) return;
     if (!window.confirm(`미완료 ${localCount}건을 내일(${todayStr(1)})로 옮길까요?`)) return;
@@ -910,18 +960,7 @@ export default function ChatCoach() {
         window.alert('서버 기준 오늘 날짜에는 옮길 미완료 항목이 없습니다.');
         return;
       }
-      if (isCurrent) {
-        const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
-        // setState 전에 "이미 동기화됨"으로 기록 — 자동 동기화 effect가 이 상태를 서버와
-        // 동일로 판정해 대기 타이머까지 취소하므로, 디바운스 PUT이 이월 결과를 덮지 않는다.
-        lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
-        dirtyRef.current = null;
-        setDraftChecklist(nextDraft);
-        // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
-        setSlots(nextSlots);
-      }
-      // 목록에도 이월 결과 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
-      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? plan : p)));
+      applyServerPlan(plan); // 활성 계획이면 라이브 상태까지, 아니면 목록 스냅샷만 갱신
     } catch (err) {
       if (err.code === 'PLAN_NOT_FOUND') {
         window.alert('이미 삭제된 계획입니다.');
@@ -969,22 +1008,106 @@ export default function ChatCoach() {
     URL.revokeObjectURL(url);
   };
 
-  // 계획 저장 = 고정(CONFIRMED) — 이후 대화로는 계획을 수정할 수 없게 된다.
+  // 전이 API 공통 오류 처리 — 전이는 다른 세션과 경합할 수 있어(먼저 고정/완료됨) 서버가 진실
+  // 원천이다. INVALID_STATUS_TRANSITION이면 최신 상태를 다시 불러와 화면을 맞춘다.
+  const handleTransitionError = async (err, planId) => {
+    if (err.code === 'PLAN_NOT_FOUND') {
+      window.alert('이미 삭제된 계획입니다.');
+      refreshPlans();
+      return;
+    }
+    if (err.code === 'INVALID_STATUS_TRANSITION') {
+      window.alert('다른 세션에서 이미 계획 상태가 바뀌어 처리할 수 없습니다. 최신 상태로 갱신합니다.');
+      try {
+        const fresh = await fetchPlan(planId);
+        if (aliveRef.current) applyServerPlan(fresh);
+      } catch {
+        refreshPlans();
+      }
+      return;
+    }
+    window.alert('계획 상태를 변경하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+  };
+
+  // 계획 저장 = 고정(DRAFT→CONFIRMED 전이) — 이후 대화로는 계획을 수정할 수 없게 된다.
   // 단순 보관이 아니라 "이 계획대로 실행하겠다"는 확정 행위라, 실수 방지 확인 창을 띄운다.
-  // (영속화는 서버 자동 동기화 effect가 담당하므로 여기서는 상태 전환만 한다 — 고정 상태도
-  //  서버 보관함에 반영되어 다른 방문자 목록에 🔒로 표시된다.)
-  const handleSavePlan = () => {
+  // 보관된 계획은 서버 전이 API(POST /confirm)를 호출한다 — 고정 시각(confirmedAt)은 서버가
+  // 발급하고 이력(PLAN_CONFIRMED)도 전이명 그대로 발행된다. 미보관 초안(서버 미가용 등으로
+  // activePlanId가 없는 경우)만 예전처럼 로컬로 상태를 바꾼다 — 보관 재시도(archiveNewPlan)가
+  // CONFIRMED 상태 그대로 POST하는 것은 서버가 허용한다(API 일관성).
+  const handleSavePlan = async () => {
     if (!draftChecklist || isLocked || isTyping) return;
     if (!window.confirm('계획을 저장하면 고정되어 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
-    setDraftChecklist((prev) => (prev ? { ...prev, status: 'CONFIRMED', confirmedAt: new Date().toISOString() } : prev));
+    if (activePlanId == null) {
+      setDraftChecklist((prev) => (prev ? { ...prev, status: 'CONFIRMED', confirmedAt: new Date().toISOString() } : prev));
+    } else {
+      try {
+        // 대기 중 변경(대화 수정·완료 토글)을 먼저 반영 — 마지막 편집이 고정 전에 저장되게 한다.
+        await syncActivePlan({ recreateIfMissing: true });
+        const plan = await confirmPlan(activePlanId);
+        if (!aliveRef.current) return;
+        applyServerPlan(plan);
+      } catch (err) {
+        await handleTransitionError(err, activePlanId);
+        return;
+      }
+    }
     setMessages((prev) => [
       ...prev,
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 궁금한 점은 계속 물어보셔도 됩니다.'
+        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 다 마치면 "계획 완료" 버튼으로 마무리할 수 있어요.'
       }
     ]);
+  };
+
+  // 계획 완료 — CONFIRMED→COMPLETED 서버 전이(종결). 100% 달성이 조건은 아니며(진행률은 이력
+  // detail로 남는다), 완료 시각(completedAt)은 서버가 발급한다. 종결 후엔 모든 변경이 막힌다.
+  const handleCompletePlan = async () => {
+    if (activePlanId == null || activeStatus !== 'CONFIRMED' || isTyping) return;
+    const { done, total } = getPlanProgress(draftChecklist?.tasks);
+    if (!window.confirm(`계획을 완료 처리할까요? (현재 ${done}/${total} 완료)\n완료된 계획은 더 이상 수정하거나 체크할 수 없습니다.`)) return;
+    try {
+      // 대기 중 완료 토글을 먼저 반영 — 이력 detail의 진행률이 마지막 체크까지 반영되게 한다.
+      await syncActivePlan({ recreateIfMissing: false });
+      const plan = await completePlan(activePlanId);
+      if (!aliveRef.current) return;
+      applyServerPlan(plan);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUniqueId('bot'),
+          sender: 'bot',
+          text: `🎉 "${plan.goalName}" 계획을 완료했습니다! (${done}/${total} 완료) 수고하셨어요 — 보관함의 ✨ 버튼으로 다음 계획 분량을 추천받을 수 있어요.`
+        }
+      ]);
+    } catch (err) {
+      await handleTransitionError(err, activePlanId);
+    }
+  };
+
+  // 계획 중단 — DRAFT|CONFIRMED→CANCELLED 서버 전이(종결). 계획은 보관함에 남아 기록으로
+  // 조회할 수 있지만 더 이상 수정·체크할 수 없다(완전 제거는 삭제 버튼이 담당).
+  const handleCancelPlan = async () => {
+    if (activePlanId == null || draftChecklist == null || isTerminal || isTyping) return;
+    if (!window.confirm('계획을 중단할까요? 중단된 계획은 보관함에 기록으로 남지만 더 이상 수정하거나 체크할 수 없습니다.')) return;
+    try {
+      await syncActivePlan({ recreateIfMissing: false });
+      const plan = await cancelPlan(activePlanId);
+      if (!aliveRef.current) return;
+      applyServerPlan(plan);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUniqueId('bot'),
+          sender: 'bot',
+          text: `⏹️ "${plan.goalName}" 계획을 중단했습니다. 기록은 보관함에 남아 있어요 — "처음부터 다시 만들기"로 새 계획을 시작할 수 있습니다.`
+        }
+      ]);
+    } catch (err) {
+      await handleTransitionError(err, activePlanId);
+    }
   };
 
   // 처음부터 다시 만들기 — 새 계획의 슬롯필링을 시작한다. 현재 계획은 서버 보관함에 그대로
@@ -1286,16 +1409,12 @@ export default function ChatCoach() {
         <div ref={chatEndRef} />
       </div>
 
-      {/* 계획 생성 후 빠른 동작 — 저장(고정) / 전체 기간 늘리기 / 처음부터 다시 만들기.
-          고정 후에는 수정 계열 버튼(저장·기간 늘리기)을 숨기고 고정 표시만 남긴다. */}
+      {/* 계획 생성 후 빠른 동작 — 상태(PlanStatus)별로 허용된 전이·수정만 노출한다.
+          DRAFT: 저장(고정)·기간 늘리기·중단 / CONFIRMED: 완료·중단(수정 계열은 숨김) /
+          종결(COMPLETED·CANCELLED): 표시만. 전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
       {draftChecklist && (
         <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
-          {isLocked ? (
-            <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
-              <Lock size={12} />
-              고정된 계획 — 대화 수정 불가
-            </span>
-          ) : (
+          {activeStatus === 'DRAFT' && (
             <>
               <button type="button" onClick={handleSavePlan} disabled={isTyping} style={quickReplyButtonStyle}>
                 <Save size={12} />
@@ -1306,6 +1425,32 @@ export default function ChatCoach() {
                 기간 +{EXTEND_DAYS}일
               </button>
             </>
+          )}
+          {activeStatus === 'CONFIRMED' && (
+            <>
+              <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
+                <Lock size={12} />
+                고정된 계획 — 대화 수정 불가
+              </span>
+              {activePlanId != null && (
+                <button type="button" onClick={handleCompletePlan} disabled={isTyping} style={quickReplyButtonStyle}>
+                  <CheckCircle2 size={12} />
+                  계획 완료
+                </button>
+              )}
+            </>
+          )}
+          {isTerminal && (
+            <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
+              {activeStatus === 'COMPLETED' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+              {activeStatus === 'COMPLETED' ? '완료된 계획' : '중단된 계획'} — 수정 불가
+            </span>
+          )}
+          {!isTerminal && activePlanId != null && (
+            <button type="button" onClick={handleCancelPlan} disabled={isTyping} style={quickReplyButtonStyle}>
+              <XCircle size={12} />
+              계획 중단
+            </button>
           )}
           <button type="button" onClick={handleResetPlan} disabled={isTyping} style={quickReplyButtonStyle}>
             <RotateCcw size={12} />
@@ -1382,10 +1527,12 @@ export default function ChatCoach() {
         const isCurrent = plan.id === activePlanId && !!draftChecklist;
         const source = isCurrent ? draftChecklist : plan;
         const dayTasks = source.tasks?.[today];
+        const status = planStatusOf(source);
         return {
           planId: plan.id,
           goalName: source.goalName || plan.goalName,
-          locked: (source.status || 'DRAFT') === 'CONFIRMED',
+          locked: !isEditableStatus(status),   // 이월 버튼 숨김(구조 변경은 DRAFT만)
+          terminal: isTerminalStatus(status),  // 종결 — 완료 체크박스까지 비활성
           isCurrent,
           tasks: Array.isArray(dayTasks) ? dayTasks : []
         };
@@ -1574,8 +1721,9 @@ export default function ChatCoach() {
                         <input
                           type="checkbox"
                           checked={!!task.completed}
+                          disabled={group.terminal} /* 종결 계획 — 서버가 토글 PUT도 거부(전면 잠금) */
                           onChange={() => toggleTodayTask(group.planId, task.id)}
-                          style={{ marginTop: '2px', flexShrink: 0, width: '14px', height: '14px', accentColor: 'var(--primary)', cursor: 'pointer' }}
+                          style={{ marginTop: '2px', flexShrink: 0, width: '14px', height: '14px', accentColor: 'var(--primary)', cursor: group.terminal ? 'default' : 'pointer' }}
                         />
                         <span
                           style={{
@@ -1866,7 +2014,9 @@ export default function ChatCoach() {
             const { done, total } = isCurrent
               ? getPlanProgress(draftChecklist?.tasks)
               : (plan.progress ?? getPlanProgress(plan.tasks));
-            const isPlanConfirmed = plan.status === 'CONFIRMED';
+            const planStatus = planStatusOf(plan);
+            // 상태 라벨의 소스오브트루스는 서버(/meta/plan-statuses) — 폴백은 사본, 미지 코드는 원문.
+            const planStatusLabel = metaOptions.planStatusLabels[planStatus] || planStatus;
             const isAuditOpen = auditView?.planId === plan.id;
             const isWeeklyOpen = weeklyView?.planId === plan.id;
             const isRecOpen = recommendationView?.planId === plan.id;
@@ -1899,8 +2049,11 @@ export default function ChatCoach() {
                   }}
                 >
                   <div style={{ fontSize: '13px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {isPlanConfirmed && <Lock size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} />}
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{plan.goalName}</span>
+                    {/* 상태 아이콘 — 고정 🔒 / 완료 ✓ / 중단 ✕ (DRAFT는 표시 없음). 라벨은 title로. */}
+                    {planStatus === 'CONFIRMED' && <Lock size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} title={planStatusLabel} />}
+                    {planStatus === 'COMPLETED' && <CheckCircle2 size={11} style={{ flexShrink: 0, color: 'var(--primary)' }} title={planStatusLabel} />}
+                    {planStatus === 'CANCELLED' && <XCircle size={11} style={{ flexShrink: 0, color: 'var(--text-muted)' }} title={planStatusLabel} />}
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', color: planStatus === 'CANCELLED' ? 'var(--text-muted)' : undefined }}>{plan.goalName}</span>
                     {isCurrent && <span style={{ color: 'var(--primary)', fontWeight: 400, flexShrink: 0 }}>· 보는 중</span>}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
@@ -2222,13 +2375,16 @@ export default function ChatCoach() {
               gap: '3px',
               fontSize: '11px',
               fontWeight: 600,
-              color: 'var(--primary)',
-              border: '1px solid var(--primary)',
+              color: isTerminal && activeStatus === 'CANCELLED' ? 'var(--text-muted)' : 'var(--primary)',
+              border: `1px solid ${isTerminal && activeStatus === 'CANCELLED' ? 'var(--text-muted)' : 'var(--primary)'}`,
               borderRadius: '999px',
               padding: '1px 8px'
             }}>
-              <Lock size={10} />
-              고정됨
+              {activeStatus === 'COMPLETED' ? <CheckCircle2 size={10} />
+                : activeStatus === 'CANCELLED' ? <XCircle size={10} />
+                : <Lock size={10} />}
+              {/* 상태 라벨 소스오브트루스는 서버(/meta/plan-statuses) — 고정됨/완료됨/중단됨 */}
+              {(metaOptions.planStatusLabels[activeStatus] || activeStatus)}{activeStatus !== 'DRAFT' ? '됨' : ''}
             </span>
           )}
         </span>
@@ -2331,6 +2487,7 @@ export default function ChatCoach() {
                         <input
                           type="checkbox"
                           checked={!!task.completed}
+                          disabled={isTerminal} /* 종결(완료/중단) 계획 — 서버가 토글 PUT도 거부(전면 잠금) */
                           onChange={() => toggleTask(date, task.id)}
                           style={{
                             marginTop: '2px',
@@ -2338,7 +2495,7 @@ export default function ChatCoach() {
                             width: '15px',
                             height: '15px',
                             accentColor: 'var(--primary)',
-                            cursor: 'pointer'
+                            cursor: isTerminal ? 'default' : 'pointer'
                           }}
                         />
                         <span

@@ -5,6 +5,7 @@ import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.domain.plan.support.PlanDates;
@@ -15,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -114,21 +116,88 @@ public class PlanService {
         return PlanResponse.from(updated);
     }
 
-    // 고정(CONFIRMED)된 계획은 완료 체크(completed 토글)만 허용한다 — 예전엔 프론트만 지키던
-    // 규칙이라 curl 등 직접 호출로 우회할 수 있었다. 구조 변경 판정은 변경 이력과 같은 기준
-    // (PlanTaskDiff.hasStructuralChange: 스칼라 6종 + 날짜별 항목키→content 뷰, completed 제외)을
-    // 공유한다. createdAt은 표시용 메타라 가드 대상이 아니다. 삭제는 계속 허용한다(프론트 탈출구).
+    // 상태별 PUT 허용 범위 — 규칙은 PlanStatus의 전이표·능력 플래그가 소유하고, 여기서는 표를
+    // 참조해 판정만 한다. 예전엔 프론트만 지키던 규칙이라 curl 등 직접 호출로 우회할 수 있었다.
+    //  · DRAFT: 자유 수정(allowsStructuralEdit) — DRAFT→CONFIRMED 고정 PUT(수정 동반 포함)도 허용
+    //    (레거시 경로 — 프론트가 전이 엔드포인트로 이전하기 전까지 유지).
+    //  · CONFIRMED: completed 토글만(allowsCompletionToggle) — 구조 변경 판정은 변경 이력과 같은
+    //    기준(PlanTaskDiff.hasStructuralChange: 스칼라 6종 + 날짜별 항목키→content 뷰, completed 제외).
+    //  · COMPLETED·CANCELLED(종결): 모든 PUT 거부 — 상태 자체가 DRAFT|CONFIRMED 외로는 요청
+    //    바디에 실릴 수 없어(@Pattern) 상태 불일치로 걸러진다.
+    // 위반은 모두 기존 PLAN_LOCKED(409) — 프론트가 error.code로 분기하므로 코드 호환을 유지한다.
+    // createdAt은 표시용 메타라 가드 대상이 아니다. 삭제는 계속 허용한다(프론트 탈출구).
     private static void assertUnlockedOrToggleOnly(Plan current, Plan incoming) {
-        if (!current.isConfirmed()) {
-            return; // DRAFT는 자유 수정 — DRAFT→CONFIRMED 고정(수정 동반 포함)도 이 분기로 허용된다.
+        PlanStatus from = current.statusOrDraft();
+        PlanStatus to = incoming.statusOrDraft();
+        // 상태 변경을 동반한 PUT은 전이표가 허용하면서 목적지가 CONFIRMED인 경우(레거시 고정)만
+        // 통과한다 — 롤백(CONFIRMED→DRAFT)·종결 상태 이탈이 전부 여기서 걸러진다.
+        if (from != to && !(from.canTransitionTo(to) && to == PlanStatus.CONFIRMED)) {
+            throw new BusinessException(ErrorCode.PLAN_LOCKED);
         }
-        boolean rolledBack = !incoming.isConfirmed();
+        if (from.allowsStructuralEdit()) {
+            return; // DRAFT는 자유 수정.
+        }
+        if (!from.allowsCompletionToggle()) {
+            throw new BusinessException(ErrorCode.PLAN_LOCKED); // 종결 상태는 전면 잠금.
+        }
         boolean confirmedAtChanged = !Objects.equals(current.confirmedAt(), incoming.confirmedAt());
-        if (rolledBack || confirmedAtChanged || PlanTaskDiff.hasStructuralChange(
+        if (confirmedAtChanged || PlanTaskDiff.hasStructuralChange(
                 current, incoming,
                 PlanTaskDiff.parseTasks(current.tasks()), PlanTaskDiff.parseTasks(incoming.tasks()))) {
             throw new BusinessException(ErrorCode.PLAN_LOCKED);
         }
+    }
+
+    // === 상태 전이 엔드포인트 (POST /plans/{id}/confirm·complete·cancel) ===
+    // PUT 전체 교체와 달리 전이 자체가 일급 명령이다 — 허용 여부는 PlanStatus 전이표가 판정하고,
+    // 시각(confirmedAt·completedAt)은 서버가 발급하며(클라이언트 시각을 믿지 않음), 이력은 diff
+    // 역추론 없이 전이명 그대로 발행된다(recordCarryOver와 같은 직접 발행 관례).
+
+    @Transactional
+    public PlanResponse confirm(long id, String owner, String sessionId) {
+        return transition(id, owner, PlanStatus.CONFIRMED, sessionId);
+    }
+
+    @Transactional
+    public PlanResponse complete(long id, String owner, String sessionId) {
+        return transition(id, owner, PlanStatus.COMPLETED, sessionId);
+    }
+
+    @Transactional
+    public PlanResponse cancel(long id, String owner, String sessionId) {
+        return transition(id, owner, PlanStatus.CANCELLED, sessionId);
+    }
+
+    // 공통 전이 실행기 — 가드·판정·교체가 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼
+    // check-then-act 레이스가 없다(carryOver와 같은 계약). 소유자 불일치·부재는 404로 존재를
+    // 숨기고(requireOwnedPlan과 같은 기준), 전이표에 없는 전이는 INVALID_STATUS_TRANSITION(409).
+    private PlanResponse transition(long id, String owner, PlanStatus target, String sessionId) {
+        Plan updated = planRepository.mutate(id, current -> {
+            if (!owner.equals(current.owner())) {
+                throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+            }
+            if (!current.statusOrDraft().canTransitionTo(target)) {
+                throw new BusinessException(ErrorCode.INVALID_STATUS_TRANSITION);
+            }
+            return applyTransition(current, target);
+        });
+        if (updated == null) {
+            throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+        }
+        auditEventService.recordTransition(updated, target, sessionId);
+        return PlanResponse.from(updated);
+    }
+
+    // 전이 결과 조립 — 상태와 해당 전이의 타임스탬프만 바꾸고 내용(tasks 등)은 그대로 둔다.
+    // CANCELLED는 시각을 남기지 않는다(언제 중단했는지는 감사 이력(PLAN_CANCELLED)이 담당).
+    private static Plan applyTransition(Plan current, PlanStatus target) {
+        String now = Instant.now().toString();
+        String confirmedAt = target == PlanStatus.CONFIRMED ? now : current.confirmedAt();
+        String completedAt = target == PlanStatus.COMPLETED ? now : current.completedAt();
+        return new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
+                current.dailyHours(), current.currentLevel(), current.tasks(),
+                target.name(), confirmedAt, completedAt, current.startDate(), current.endDate(),
+                current.createdAt(), System.currentTimeMillis());
     }
 
     // 미완료 이월 도메인 액션 — 오늘(KST) 미완료를 내일로 옮긴다. 예전엔 프론트가 계산해 PUT으로
@@ -144,8 +213,9 @@ public class PlanService {
             if (!owner.equals(current.owner())) {
                 throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
             }
-            // 이월은 구조 변경(항목 이동·기간 연장)이므로 고정 계획에는 PUT 가드와 같은 판정을 적용한다.
-            if (current.isConfirmed()) {
+            // 이월은 구조 변경(항목 이동·기간 연장)이므로 초안(allowsStructuralEdit)에서만 —
+            // 고정·종결 상태 모두 PUT 가드와 같은 판정(PLAN_LOCKED)을 적용한다.
+            if (!current.statusOrDraft().allowsStructuralEdit()) {
                 throw new BusinessException(ErrorCode.PLAN_LOCKED);
             }
             PlanCarryOver.Result result = PlanCarryOver.apply(current.tasks(), fromDate, toDate);
@@ -161,7 +231,7 @@ public class PlanService {
             return new Plan(current.id(), current.owner(), current.goalName(),
                     newDuration,
                     current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
-                    current.confirmedAt(), current.startDate(),
+                    current.confirmedAt(), current.completedAt(), current.startDate(),
                     newEndDate, current.createdAt(),
                     System.currentTimeMillis());
         });

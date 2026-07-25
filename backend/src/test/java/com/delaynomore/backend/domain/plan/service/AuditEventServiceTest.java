@@ -76,6 +76,65 @@ class AuditEventServiceTest {
         assertThat(events.get(0).planId()).isEqualTo(saved.id());
     }
 
+    // === 상태 전이 직접 발행(recordTransition) — diff 역추론이 아니라 전이명이 곧 이벤트명 ===
+
+    @Test
+    void confirm_전이_PLAN_CONFIRMED기록_detail없음() {
+        // given
+        PlanResponse saved = createBasePlan();
+
+        // when
+        planService.confirm(saved.id(), OWNER, "session-b");
+
+        // then — 레거시 PUT diff 경로의 PLAN_CONFIRMED와 형식 동일(detail null)
+        AuditEventResponse latest = events(saved.id()).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_CONFIRMED");
+        assertThat(latest.detail()).isNull();
+        assertThat(latest.sessionId()).isEqualTo("session-b");
+    }
+
+    @Test
+    void complete_전이_PLAN_COMPLETED기록_진행률detail() {
+        // given — BASE_TASKS: 완료 1 / 전체 3
+        PlanResponse saved = createBasePlan();
+        planService.confirm(saved.id(), OWNER, null);
+
+        // when
+        planService.complete(saved.id(), OWNER, null);
+
+        // then
+        AuditEventResponse latest = events(saved.id()).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_COMPLETED");
+        assertThat(latest.detail()).isEqualTo("1/3 완료");
+    }
+
+    @Test
+    void cancel_전이_PLAN_CANCELLED기록_목표명detail() {
+        // given
+        PlanResponse saved = createBasePlan();
+
+        // when
+        planService.cancel(saved.id(), OWNER, null);
+
+        // then — recordPlanDeleted와 같은 목표명 인용 관례
+        AuditEventResponse latest = events(saved.id()).get(0);
+        assertThat(latest.type()).isEqualTo("PLAN_CANCELLED");
+        assertThat(latest.detail()).isEqualTo("\"토익 900\" 중단");
+    }
+
+    @Test
+    void 전이수명주기_이력순서_생성고정완료() {
+        // given·when — DRAFT → CONFIRMED → COMPLETED 전이를 순서대로
+        PlanResponse saved = createBasePlan();
+        planService.confirm(saved.id(), OWNER, null);
+        planService.complete(saved.id(), OWNER, null);
+
+        // then — 최신순 목록에 전이 이력이 수명주기 역순으로 쌓인다
+        assertThat(events(saved.id()))
+                .extracting(AuditEventResponse::type)
+                .containsExactly("PLAN_COMPLETED", "PLAN_CONFIRMED", "PLAN_CREATED");
+    }
+
     @Test
     void update_고정PUT_PLAN_CONFIRMED기록() {
         // given

@@ -136,7 +136,7 @@ class WorkloadRecommendationTest {
         for (int i = 3; i < 5; i++) {
             tasks.put(start.plusDays(i).toString(), dayTasks(3, 0));
         }
-        Plan plan = new Plan(1L, "owner", "목표", 5, 2, "수준", tasks, "CONFIRMED", null,
+        Plan plan = new Plan(1L, "owner", "목표", 5, 2, "수준", tasks, "CONFIRMED", null, null,
                 START, start.plusDays(4).toString(), null, 0L);
         LocalDate today = start.plusDays(2); // 3일차
 
@@ -238,7 +238,7 @@ class WorkloadRecommendationTest {
             tasks.put(start.plusDays(i).toString(), dayTasks(tasksPerDay, completedPerDay));
         }
         String end = start.plusDays(days - 1).toString();
-        return new Plan(1L, "owner", "목표", days, 2, "수준", tasks, status, null, startDate, end, null, 0L);
+        return new Plan(1L, "owner", "목표", days, 2, "수준", tasks, status, null, null, startDate, end, null, 0L);
     }
 
     private static List<Map<String, Object>> dayTasks(int total, int completed) {

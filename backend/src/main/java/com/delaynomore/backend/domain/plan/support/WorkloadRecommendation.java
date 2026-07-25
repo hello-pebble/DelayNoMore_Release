@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.support;
 
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.entity.Reflection;
 
 import java.time.LocalDate;
@@ -119,10 +120,13 @@ public final class WorkloadRecommendation {
                 topReasonCode, insufficient, effectiveDelta, lineage.size());
     }
 
-    // 추천 버튼 노출 조건 — 완료(고정 + 전부 완료)했거나 3일 이상 실행한 계획. 규칙을 서버가 소유해
-    // 프론트는 이 플래그(PlanResponse.recommendationEligible)만 본다.
+    // 추천 버튼 노출 조건 — 완료했거나 3일 이상 실행한 계획. 규칙을 서버가 소유해 프론트는 이
+    // 플래그(PlanResponse.recommendationEligible)만 본다. "완료"는 두 갈래다: 명시적 완료 상태
+    // (COMPLETED — 전이 엔드포인트가 만든 이름 있는 상태), 또는 레거시 파생 판정(고정 + 전부 완료 —
+    // 프론트가 완료 전이로 이전하기 전까지의 CONFIRMED 계획을 계속 인정한다).
     public static boolean isEligible(Plan plan, LocalDate today, Plan.TaskCounts counts) {
-        boolean completed = plan.isConfirmed() && counts.total() > 0 && counts.completed() == counts.total();
+        boolean completed = plan.statusOrDraft() == PlanStatus.COMPLETED
+                || (plan.isConfirmed() && counts.total() > 0 && counts.completed() == counts.total());
         return completed || observedBucketCount(plan, today.toString()) >= MIN_OBSERVED_DAYS;
     }
 

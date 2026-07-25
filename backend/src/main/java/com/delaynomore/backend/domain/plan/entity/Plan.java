@@ -13,8 +13,9 @@ public record Plan(
         Integer dailyHours,
         String currentLevel,
         Map<String, Object> tasks, // {날짜: [{id, content, completed}]}
-        String status,             // DRAFT | CONFIRMED(고정) — 프론트 상태 그대로 왕복
-        String confirmedAt,        // 고정 시각(ISO 문자열, 미고정이면 null)
+        String status,             // PlanStatus 이름(DRAFT|CONFIRMED|COMPLETED|CANCELLED) — 전이 규칙은 PlanStatus 소유
+        String confirmedAt,        // 고정 시각(ISO 문자열, 미고정이면 null) — 전이 엔드포인트에서는 서버가 발급
+        String completedAt,        // 완료 시각(ISO 문자열, 미완료면 null) — 서버 전용(POST /complete만 기록)
         String startDate,
         String endDate,
         String createdAt,          // 프론트가 만든 ISO 문자열 그대로
@@ -23,11 +24,16 @@ public record Plan(
 
     public Plan withId(long newId) {
         return new Plan(newId, owner, goalName, duration, dailyHours, currentLevel, tasks,
-                status, confirmedAt, startDate, endDate, createdAt, savedAt);
+                status, confirmedAt, completedAt, startDate, endDate, createdAt, savedAt);
+    }
+
+    // 저장된 status 문자열을 상태로 파싱 — 상태 판정은 전부 이 경유로(문자열 비교 금지).
+    public PlanStatus statusOrDraft() {
+        return PlanStatus.fromStored(status);
     }
 
     public boolean isConfirmed() {
-        return "CONFIRMED".equals(status);
+        return statusOrDraft() == PlanStatus.CONFIRMED;
     }
 
     // {완료, 전체} 개수 묶음 — 진행률(PlanResponse.progress)과 회고 완료 개수 재계산이 공유한다.

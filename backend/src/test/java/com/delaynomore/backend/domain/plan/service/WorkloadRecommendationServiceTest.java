@@ -174,7 +174,7 @@ class WorkloadRecommendationServiceTest {
         }
         String end = start.plusDays(days - 1).toString();
         return planRepository.save(new Plan(null, owner, goalName, days, 2, "수준", tasks,
-                "CONFIRMED", null, START, end, null, 0L));
+                "CONFIRMED", null, null, START, end, null, 0L));
     }
 
     // 확정 요청용 tasks({날짜:[{id,content,completed}]}) — days일 × perDay개, 2월 날짜(원본과 분리).
