@@ -18,6 +18,7 @@ public record PlanResponse(
         Map<String, Object> tasks,
         String status,
         String confirmedAt,
+        String completedAt,        // 완료 시각(POST /plans/{id}/complete가 서버 발급) — additive 필드
         String startDate,
         String endDate,
         String createdAt,
@@ -36,7 +37,7 @@ public record PlanResponse(
         Plan.TaskCounts counts = plan.countAllTasks();
         boolean eligible = WorkloadRecommendation.isEligible(plan, KstDates.today(), counts);
         return new PlanResponse(plan.id(), plan.goalName(), plan.duration(), plan.dailyHours(),
-                plan.currentLevel(), plan.tasks(), plan.status(), plan.confirmedAt(),
+                plan.currentLevel(), plan.tasks(), plan.status(), plan.confirmedAt(), plan.completedAt(),
                 plan.startDate(), plan.endDate(), plan.createdAt(), plan.savedAt(),
                 new Progress(counts.completed(), counts.total()), eligible);
     }

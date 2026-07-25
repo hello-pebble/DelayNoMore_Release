@@ -27,7 +27,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
                 "2026-07-21", List.of(Map.of("id", "t1", "content", "1강 수강", "completed", true)),
                 "2026-07-22", List.of(Map.of("id", "t2", "content", "2강 수강", "completed", false)));
         return new Plan(null, owner, goal, 2, 3, "초급", tasks,
-                "DRAFT", null, "2026-07-21", "2026-07-22", "2026-07-21T09:00:00Z", savedAt);
+                "DRAFT", null, null, "2026-07-21", "2026-07-22", "2026-07-21T09:00:00Z", savedAt);
     }
 
     @Test
@@ -78,7 +78,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     void update_returnsPreviousRow_andPersistsNewValues() {
         Plan saved = planRepository.save(draft("guest-1", "원래 목표", 1L));
         Plan updated = new Plan(saved.id(), "guest-1", "바뀐 목표", 2, 3, "중급",
-                saved.tasks(), "DRAFT", null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
+                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
 
         Plan previous = planRepository.update(updated, current -> { /* no guard */ });
 
@@ -90,7 +90,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     void update_whenGuardThrows_rollsBackAndRowUnchanged() {
         Plan saved = planRepository.save(draft("guest-1", "원래 목표", 1L));
         Plan attempted = new Plan(saved.id(), "guest-1", "침범 시도", 2, 3, "중급",
-                saved.tasks(), "DRAFT", null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
+                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
 
         assertThatThrownBy(() -> planRepository.update(attempted, current -> {
             throw new IllegalStateException("가드 거부");
@@ -103,7 +103,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     @Test
     void update_returnsNull_whenAbsent() {
         Plan ghost = new Plan(9999L, "guest-1", "없음", 1, 1, "초급", Map.of(),
-                "DRAFT", null, "2026-07-21", "2026-07-21", "x", 1L);
+                "DRAFT", null, null, "2026-07-21", "2026-07-21", "x", 1L);
         assertThat(planRepository.update(ghost, current -> { })).isNull();
     }
 
@@ -114,11 +114,39 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
         Plan result = planRepository.mutate(saved.id(), current -> new Plan(
                 current.id(), current.owner(), current.goalName(), 3, current.dailyHours(),
                 current.currentLevel(), current.tasks(), current.status(), current.confirmedAt(),
-                current.startDate(), "2026-07-23", current.createdAt(), 5L));
+                current.completedAt(), current.startDate(), "2026-07-23", current.createdAt(), 5L));
 
         assertThat(result.duration()).isEqualTo(3);
         assertThat(result.endDate()).isEqualTo("2026-07-23");
         assertThat(planRepository.findById(saved.id()).orElseThrow().endDate()).isEqualTo("2026-07-23");
+    }
+
+    @Test
+    void save_completedAt_roundtrips() {
+        // V2 마이그레이션이 추가한 completed_at 컬럼의 왕복 — 확장 상태(COMPLETED)와 함께 저장·복원.
+        Map<String, Object> tasks = Map.of(
+                "2026-07-21", List.of(Map.of("id", "t1", "content", "1강 수강", "completed", true)));
+        Plan completed = new Plan(null, "guest-1", "완료된 계획", 1, 3, "초급", tasks,
+                "COMPLETED", "2026-07-21T09:00:00Z", "2026-07-22T09:00:00Z",
+                "2026-07-21", "2026-07-21", "2026-07-21T09:00:00Z", 1L);
+
+        Plan saved = planRepository.save(completed);
+
+        Plan found = planRepository.findById(saved.id()).orElseThrow();
+        assertThat(found.status()).isEqualTo("COMPLETED");
+        assertThat(found.confirmedAt()).isEqualTo("2026-07-21T09:00:00Z");
+        assertThat(found.completedAt()).isEqualTo("2026-07-22T09:00:00Z");
+    }
+
+    @Test
+    void save_unknownStatus_rejectedByCheckConstraint() {
+        // 상태 규칙 소유권은 PlanStatus enum이지만, DB CHECK 제약(V2)이 최후 안전망으로
+        // 알 수 없는 상태 문자열을 거부하는지 확인한다.
+        Plan bogus = new Plan(null, "guest-1", "이상 상태", 1, 1, "초급", Map.of(),
+                "ACTIVE", null, null, "2026-07-21", "2026-07-21", "x", 1L);
+
+        assertThatThrownBy(() -> planRepository.save(bogus))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     @Test

@@ -45,7 +45,8 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `REFLECTION_DATE_NOT_TODAY` | 400 | 회고 날짜가 KST 오늘이 아님 |
 | `PLAN_NOT_FOUND` | 404 | 계획 단건 조회·수정·삭제·회고 저장 시 없는 id 또는 다른 소유자 |
 | `REFLECTION_NOT_FOUND` | 404 | 해당 날짜 회고 없음 |
-| `PLAN_LOCKED` | 409 | CONFIRMED 계획에 완료 토글 외 변경 (v0.8.0) |
+| `PLAN_LOCKED` | 409 | CONFIRMED·종결(COMPLETED/CANCELLED) 계획에 허용 외 변경 (v0.8.0) |
+| `INVALID_STATUS_TRANSITION` | 409 | 상태 전이 엔드포인트(confirm·complete·cancel)에서 전이표에 없는 전이 |
 | `PLAN_STORE_FULL` | 503 | 전역 저장소 상한 초과(서버 메모리 보호, 최대 200개) |
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
@@ -232,7 +233,58 @@ CONFIRMED여도 삭제는 허용합니다(잠긴 계획의 탈출구). 변경 �
 
 이동이 있으면 변경 이력에 `PLAN_UPDATED`(detail: `미완료 2건을 2026-07-21로 이동`)가 발행됩니다.
 
-오류: 404 `PLAN_NOT_FOUND`(없는 id 또는 다른 소유자), 409 `PLAN_LOCKED`(CONFIRMED 계획 — 이월은 구조 변경)
+오류: 404 `PLAN_NOT_FOUND`(없는 id 또는 다른 소유자), 409 `PLAN_LOCKED`(CONFIRMED·종결 계획 — 이월은 구조 변경)
+
+## 계획 상태 수명주기 (`PlanStatus`)
+
+계획 상태의 집합·전이 규칙·상태별 허용 동작은 서버의 `PlanStatus` enum(선언적 전이표)이
+단일 소유합니다. DB의 CHECK 제약은 최후 안전망일 뿐입니다.
+
+```
+DRAFT ──confirm──▶ CONFIRMED ──complete──▶ COMPLETED   (종결)
+  │                    │
+  └──────cancel────────┴──────────────────▶ CANCELLED   (종결)
+```
+
+| 상태 | 라벨 | 허용 동작 |
+|---|---|---|
+| `DRAFT` | 초안 | 자유 수정(PUT)·이월·confirm·cancel |
+| `CONFIRMED` | 고정 | completed 토글 PUT만·complete·cancel |
+| `COMPLETED` | 완료 | 없음(종결) — 조회·회고·삭제만 |
+| `CANCELLED` | 중단 | 없음(종결) — 조회·회고·삭제만 |
+
+- self-loop 없음: 같은 상태로의 전이(예: CONFIRMED에 confirm)는 409 `INVALID_STATUS_TRANSITION`.
+- **PUT 하위 호환**: 저장 요청 바디의 `status`는 여전히 `DRAFT|CONFIRMED`만 허용되고, PUT을 통한
+  DRAFT→CONFIRMED 고정도 계속 동작합니다(기존 프론트 무변경). 종결 상태는 아래 전이
+  엔드포인트로만 진입할 수 있습니다. PUT 위반은 기존과 같이 409 `PLAN_LOCKED`.
+- `confirmedAt`·`completedAt`은 전이 엔드포인트에서 **서버가 발급**합니다(응답 `PlanResponse`에
+  `completedAt` 필드 추가 — 미완료면 null).
+
+### 11-1. POST /plans/{id}/confirm — 계획 고정 (DRAFT→CONFIRMED)
+
+**본문 없는 POST**(`X-Session-Id` 선택). 성공 시 계획 전체(`PlanResponse`)를 돌려주고 변경
+이력에 `PLAN_CONFIRMED`가 발행됩니다.
+
+```json
+// 응답 data (일부)
+{ "id": 1, "status": "CONFIRMED", "confirmedAt": "2026-07-25T09:00:00Z", "completedAt": null }
+```
+
+오류: 404 `PLAN_NOT_FOUND`, 409 `INVALID_STATUS_TRANSITION`(DRAFT가 아닌 상태에서 호출)
+
+### 11-2. POST /plans/{id}/complete — 계획 완료 (CONFIRMED→COMPLETED · 종결)
+
+**본문 없는 POST**. 100% 달성이 조건은 아니며, 진행률은 이력 detail로 남습니다
+(`PLAN_COMPLETED`, detail: `3/5 완료`). 성공 시 `completedAt`이 서버 발급됩니다.
+
+오류: 404 `PLAN_NOT_FOUND`, 409 `INVALID_STATUS_TRANSITION`(DRAFT·종결 상태에서 호출)
+
+### 11-3. POST /plans/{id}/cancel — 계획 중단 (DRAFT|CONFIRMED→CANCELLED · 종결)
+
+**본문 없는 POST**. 이력에 `PLAN_CANCELLED`(detail: `"목표명" 중단`)가 발행됩니다. 시각 필드는
+바꾸지 않습니다(중단 시각은 이력의 createdAt이 담당).
+
+오류: 404 `PLAN_NOT_FOUND`, 409 `INVALID_STATUS_TRANSITION`(종결 상태에서 호출)
 
 ### 12. GET /plans/{id}/summary/weekly — 주간 완료율 요약 (v0.10.0)
 
@@ -425,6 +477,8 @@ detail의 실제 형식(type별):
 [ { "code": "PLAN_CREATED", "label": "계획 생성" },
   { "code": "PLAN_UPDATED", "label": "계획 수정" },
   { "code": "PLAN_CONFIRMED", "label": "계획 고정" },
+  { "code": "PLAN_COMPLETED", "label": "계획 완료" },
+  { "code": "PLAN_CANCELLED", "label": "계획 중단" },
   { "code": "TASK_COMPLETED", "label": "할 일 완료" },
   { "code": "TASK_REOPENED", "label": "완료 해제" },
   { "code": "REFLECTION_SAVED", "label": "회고 저장" },
@@ -433,6 +487,18 @@ detail의 실제 형식(type별):
   { "code": "WORKLOAD_RECOMMENDATION_ACCEPTED", "label": "추천 분량 채택" },
   { "code": "WORKLOAD_RECOMMENDATION_OVERRIDDEN", "label": "추천 분량 변경" },
   { "code": "PLAN_CREATED_FROM_RECOMMENDATION", "label": "추천 기반 계획 생성" } ]
+```
+
+### 19. GET /meta/plan-statuses — 계획 상태 종류 (코드+라벨)
+
+계획 상태 수명주기(`PlanStatus`)의 코드·라벨 소스오브트루스. 전이 규칙은 "계획 상태 수명주기"
+섹션 참고.
+
+```json
+[ { "code": "DRAFT", "label": "초안" },
+  { "code": "CONFIRMED", "label": "고정" },
+  { "code": "COMPLETED", "label": "완료" },
+  { "code": "CANCELLED", "label": "중단" } ]
 ```
 
 ---
@@ -444,5 +510,6 @@ detail의 실제 형식(type별):
 | 필드 | 형식 | 생성 주체 |
 |---|---|---|
 | `savedAt` (계획) | epoch millis 숫자 (`1784856600000`) | 서버 |
-| `createdAt` · `confirmedAt` (계획) | 프론트가 보낸 ISO 문자열 그대로 왕복 | 프론트 |
+| `createdAt` · `confirmedAt` (계획) | 프론트가 보낸 ISO 문자열 그대로 왕복 (confirmedAt은 전이 엔드포인트 사용 시 서버 발급) | 프론트/서버 |
+| `completedAt` (계획) | 서버 `Instant.now().toString()` — POST /plans/{id}/complete만 기록 | 서버 |
 | `createdAt` · `updatedAt` (회고·이력) | 서버 `Instant.now().toString()` (`2026-07-19T13:05:22.123456Z`) | 서버 |

@@ -105,6 +105,37 @@ public class PlanController {
         return ApiResponse.ok(planService.carryOver(id, OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
+    // === 상태 전이 도메인 액션 — 계획 수명주기(PlanStatus 전이표)의 명시적 명령 ===
+    // PUT 전체 교체로 상태를 실어 보내는 대신 전이 자체를 호출한다. 허용 전이·시각 발급·이력
+    // 발행 규칙은 전부 서버 소유(PlanService.transition). 전이표에 없는 전이는 409
+    // INVALID_STATUS_TRANSITION.
+    @Operation(summary = "계획 고정 — DRAFT→CONFIRMED (고정 시각은 서버 발급)")
+    @PostMapping("/{id}/confirm")
+    public ApiResponse<PlanResponse> confirm(@PathVariable long id,
+                                             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to confirm plan {}", id);
+        return ApiResponse.ok(planService.confirm(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
+    @Operation(summary = "계획 완료 — CONFIRMED→COMPLETED (종결 · 완료 시각은 서버 발급)")
+    @PostMapping("/{id}/complete")
+    public ApiResponse<PlanResponse> complete(@PathVariable long id,
+                                              @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                              @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to complete plan {}", id);
+        return ApiResponse.ok(planService.complete(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
+    @Operation(summary = "계획 중단 — DRAFT|CONFIRMED→CANCELLED (종결)")
+    @PostMapping("/{id}/cancel")
+    public ApiResponse<PlanResponse> cancel(@PathVariable long id,
+                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        log.info("Received request to cancel plan {}", id);
+        return ApiResponse.ok(planService.cancel(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
     // === 다음 계획 분량 추천(로드맵 4·5번) ===
     // 계산(수행 기록)+AI 이유+VIEWED 기록을 유발하므로 GET이 아니라 POST. 분량 숫자는 서버 규칙이
     // 결정하고 AI는 이유 설명만 한다.

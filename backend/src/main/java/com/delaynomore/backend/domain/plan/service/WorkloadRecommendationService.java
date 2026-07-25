@@ -9,6 +9,7 @@ import com.delaynomore.backend.domain.plan.dto.RecommendationConfirmRequest;
 import com.delaynomore.backend.domain.plan.dto.RecommendationDraftResponse;
 import com.delaynomore.backend.domain.plan.dto.RecommendationResponse;
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.domain.plan.support.PlanDates;
@@ -113,7 +114,7 @@ public class WorkloadRecommendationService {
         String endDate = PlanDates.maxTaskKey(body.tasks());
         PlanSaveRequest request = new PlanSaveRequest(
                 source.goalName(), source.duration(), source.dailyHours(), source.currentLevel(),
-                body.tasks(), "DRAFT", null, null, endDate, Instant.now().toString());
+                body.tasks(), PlanStatus.DRAFT.name(), null, null, endDate, Instant.now().toString());
         // 한도 검사·synchronized·PLAN_CREATED는 PlanService.create를 그대로 재사용(수정 없음).
         PlanResponse saved = planService.create(request, owner, sessionId);
         auditEventService.recordRecommendationDecision(saved.id(), owner,

@@ -47,6 +47,10 @@ public record PlanSaveRequest(
         // 아래는 선택 필드 — 프론트 상태를 그대로 왕복시킨다(status 미지정(null) 시 DRAFT).
         // @Pattern은 null을 통과시키므로 기본값 보정과 충돌하지 않는다. POST로 CONFIRMED를
         // 바로 만드는 것은 허용한다(API 일관성 — 고정 가드는 update에만 걸린다).
+        // [의도적으로 PlanStatus 전체가 아니라 DRAFT|CONFIRMED만 허용] 확장 상태(COMPLETED·
+        // CANCELLED)는 전이 엔드포인트(POST /plans/{id}/complete·cancel)로만 진입할 수 있다 —
+        // 저장 요청 바디로 종결 상태를 밀어 넣는 것을 형식 검증 단계에서 차단한다. 어노테이션은
+        // 컴파일 상수만 받으므로 리터럴을 쓴다(PlanStatus와의 정합은 drift-guard 테스트가 고정).
         @Pattern(regexp = "DRAFT|CONFIRMED", message = "status는 DRAFT 또는 CONFIRMED만 허용됩니다.")
         String status,
         String confirmedAt,
@@ -64,7 +68,9 @@ public record PlanSaveRequest(
     // owner는 요청 바디가 아니라 X-Guest-Id 헤더에서만 온다(전송 경로 단일화). PlanService가 사용한다.
     public Plan toPlan(Long id, long savedAt, String resolvedStartDate, int resolvedDuration, String owner) {
         String resolvedStatus = (status == null || status.isBlank()) ? DEFAULT_STATUS : status;
+        // completedAt은 서버 전용 필드(POST /plans/{id}/complete만 기록) — 요청 바디로는 받지 않고,
+        // 이 DTO가 만들 수 있는 상태(DRAFT|CONFIRMED)에서는 불변식상 항상 null이다.
         return new Plan(id, owner, goalName, resolvedDuration, dailyHours, currentLevel, tasks,
-                resolvedStatus, confirmedAt, resolvedStartDate, endDate, createdAt, savedAt);
+                resolvedStatus, confirmedAt, null, resolvedStartDate, endDate, createdAt, savedAt);
     }
 }

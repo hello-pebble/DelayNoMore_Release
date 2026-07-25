@@ -105,6 +105,67 @@ class PlanControllerTest {
                 .andExpect(jsonPath("$.data.length()").value(1));
     }
 
+    // === 상태 전이 엔드포인트 배선 — 200 정상 경로와 409 error.code가 우리 형식으로 나가는지 ===
+
+    private long createPlan() throws Exception {
+        String response = mvc.perform(post("/api/v1/plans")
+                        .header("X-Guest-Id", VALID_GUEST_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY))
+                .andReturn().getResponse().getContentAsString();
+        return com.jayway.jsonpath.JsonPath.parse(response).read("$.data.id", Long.class);
+    }
+
+    @Test
+    void confirm_DRAFT계획_200_CONFIRMED와서버confirmedAt() throws Exception {
+        long id = createPlan();
+
+        mvc.perform(post("/api/v1/plans/{id}/confirm", id).header("X-Guest-Id", VALID_GUEST_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CONFIRMED"))
+                .andExpect(jsonPath("$.data.confirmedAt").isNotEmpty());
+    }
+
+    @Test
+    void confirm_재호출_409_INVALID_STATUS_TRANSITION() throws Exception {
+        long id = createPlan();
+        mvc.perform(post("/api/v1/plans/{id}/confirm", id).header("X-Guest-Id", VALID_GUEST_ID));
+
+        mvc.perform(post("/api/v1/plans/{id}/confirm", id).header("X-Guest-Id", VALID_GUEST_ID))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("INVALID_STATUS_TRANSITION"));
+    }
+
+    @Test
+    void complete_CONFIRMED계획_200_COMPLETED와completedAt() throws Exception {
+        long id = createPlan();
+        mvc.perform(post("/api/v1/plans/{id}/confirm", id).header("X-Guest-Id", VALID_GUEST_ID));
+
+        mvc.perform(post("/api/v1/plans/{id}/complete", id).header("X-Guest-Id", VALID_GUEST_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.completedAt").isNotEmpty());
+    }
+
+    @Test
+    void cancel_DRAFT계획_200_CANCELLED() throws Exception {
+        long id = createPlan();
+
+        mvc.perform(post("/api/v1/plans/{id}/cancel", id).header("X-Guest-Id", VALID_GUEST_ID))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("CANCELLED"));
+    }
+
+    @Test
+    void 전이엔드포인트_헤더없음_400_GUEST_ID_REQUIRED() throws Exception {
+        long id = createPlan();
+
+        mvc.perform(post("/api/v1/plans/{id}/confirm", id))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("GUEST_ID_REQUIRED"));
+    }
+
     @Test
     void createPlan_유효본문_헤더없음_400_GUEST_ID_REQUIRED() throws Exception {
         // 본문은 @Valid를 통과하므로, 실패 원인은 헤더 누락이어야 한다(검증이 헤더 해석보다 먼저 도는 순서 확인).

@@ -33,7 +33,7 @@ class PersistenceRestartIT extends AbstractPostgresIntegrationTest {
         Map<String, Object> tasks = Map.of(
                 "2026-07-21", List.of(Map.of("id", "t1", "content", "복원 확인", "completed", true)));
         Plan saved = planRepository.save(new Plan(null, "guest-restart", "재시작 후 복원", 1, 2, "초급",
-                tasks, "CONFIRMED", "2026-07-21T09:00:00Z", "2026-07-21", "2026-07-21",
+                tasks, "CONFIRMED", "2026-07-21T09:00:00Z", null, "2026-07-21", "2026-07-21",
                 "2026-07-21T09:00:00Z", 42L));
 
         // "재시작" — 상태를 전혀 담지 않은 새 저장소 인스턴스(새 빈 상당).
