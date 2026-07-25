@@ -797,16 +797,50 @@ class PlanServiceTest {
     }
 
     @Test
-    void carryOver_고정계획_PLAN_LOCKED예외() {
-        // given — 이월은 구조 변경이므로 고정 계획에는 PUT 가드와 같은 판정이 걸린다
-        PlanResponse confirmed = createConfirmedPlan();
+    void carryOver_고정계획_정상이월_상태유지() {
+        // given — 이월은 실행 단계 액션이라 고정(CONFIRMED) 후에도 허용된다(v0.14.1).
+        // 고정 상태에서 오늘 미완료 1건을 만든다(기간은 오늘 하루 → 이월 시 하루 연장).
+        Map<String, Object> tasks = Map.of(TODAY, List.of(
+                Map.of("id", "t-1", "content", "총정리", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
+                null, null, TODAY, TODAY, TODAY + "T00:00:00Z");
+        PlanResponse saved = planService.create(request, OWNER, null);
+        planService.confirm(saved.id(), OWNER, null);
 
         // when
-        BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.carryOver(confirmed.id(), OWNER, null));
+        CarryOverResponse result = planService.carryOver(saved.id(), OWNER, null);
 
-        // then
-        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LOCKED);
+        // then — 미완료가 내일로 이동, 기간 하루 연장, 상태는 CONFIRMED 그대로, 이력 발행
+        assertThat(result.movedCount()).isEqualTo(1);
+        assertThat(result.plan().tasks().get(TOMORROW)).isEqualTo(List.of(
+                Map.of("id", "t-1", "content", "총정리", "completed", false)));
+        assertThat(result.plan().endDate()).isEqualTo(TOMORROW);
+        assertThat(result.plan().status()).isEqualTo("CONFIRMED");
+        assertThat(auditEventService.getEvents(saved.id(), OWNER).get(0).detail())
+                .isEqualTo("미완료 1건을 " + TOMORROW + "로 이동");
+    }
+
+    @Test
+    void carryOver_어제미완료_이동대상아님() {
+        // given — 이월 규칙은 "오늘 → 내일"만이다. 어제로 밀린 미완료는 건드리지 않는다.
+        String yesterday = KstDates.today().minusDays(1).toString();
+        Map<String, Object> tasks = Map.of(
+                yesterday, List.of(Map.of("id", "t-0", "content", "어제 미완료", "completed", false)),
+                TODAY, List.of(Map.of("id", "t-1", "content", "오늘 미완료", "completed", false)));
+        PlanSaveRequest request = new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
+                null, null, yesterday, TOMORROW, yesterday + "T00:00:00Z");
+        PlanResponse saved = planService.create(request, OWNER, null);
+
+        // when
+        CarryOverResponse result = planService.carryOver(saved.id(), OWNER, null);
+
+        // then — 오늘 것만 내일로 이동하고, 어제 키는 그대로 남는다
+        assertThat(result.movedCount()).isEqualTo(1);
+        assertThat(result.plan().tasks().get(yesterday)).isEqualTo(List.of(
+                Map.of("id", "t-0", "content", "어제 미완료", "completed", false)));
+        assertThat(result.plan().tasks()).doesNotContainKey(TODAY);
+        assertThat(result.plan().tasks().get(TOMORROW)).isEqualTo(List.of(
+                Map.of("id", "t-1", "content", "오늘 미완료", "completed", false)));
     }
 
     @Test

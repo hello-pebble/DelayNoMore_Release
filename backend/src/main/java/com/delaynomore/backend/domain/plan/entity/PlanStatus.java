@@ -53,6 +53,13 @@ public enum PlanStatus {
         return !isTerminal();
     }
 
+    // 이월(오늘 KST 미완료 → 내일)은 실행 단계 액션 — 내용 재협상이 아니라 서버 소유 규칙의
+    // 통제된 이동(오늘→내일만, 필요 시 기간 하루 연장)이므로 고정(CONFIRMED) 후에도 허용한다.
+    // 어제로 밀린 항목은 대상이 아니고, 내일로 미룬 항목은 그날이 "오늘"이 되면 다시 미룰 수 있다.
+    public boolean allowsCarryOver() {
+        return !isTerminal();
+    }
+
     // 저장값 → 상태 파싱. null/blank는 DRAFT로 본다(PlanSaveRequest의 status 기본값 규칙과 동일).
     // 알 수 없는 값은 IllegalArgumentException — DB CHECK 제약이 있어 정상 경로에선 나올 수 없다.
     public static PlanStatus fromStored(String raw) {

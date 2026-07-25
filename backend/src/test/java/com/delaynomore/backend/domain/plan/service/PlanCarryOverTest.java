@@ -36,6 +36,25 @@ class PlanCarryOverTest {
     }
 
     @Test
+    void apply_연속이월_다음날다시하루씩만이동() {
+        // 이월 규칙: "오늘 → 내일"만. 25일에 26일로 미룬 항목은 26일이 "오늘"이 되면
+        // 다시 27일로 미룰 수 있다 — 하루씩만, 며칠을 건너뛰지 않는다. 날짜를 인자로 받는
+        // 순수 함수라 "다음 날"을 시계 조작 없이 시뮬레이션할 수 있다.
+        Map<String, Object> day1 = Map.of(FROM, List.of(task("t-1", "단어 암기", false)));
+
+        // 1일차(07-16): 오늘 → 내일(07-17)
+        PlanCarryOver.Result first = PlanCarryOver.apply(day1, FROM, TO);
+        assertThat(first.movedCount()).isEqualTo(1);
+        assertThat(first.tasks().get(TO)).isEqualTo(List.of(task("t-1", "단어 암기", false)));
+
+        // 2일차(07-17이 "오늘"): 같은 항목을 다시 내일(07-18)로 — ID 보존, 하루만 이동
+        PlanCarryOver.Result second = PlanCarryOver.apply(first.tasks(), TO, "2026-07-18");
+        assertThat(second.movedCount()).isEqualTo(1);
+        assertThat(second.tasks()).doesNotContainKey(TO);
+        assertThat(second.tasks().get("2026-07-18")).isEqualTo(List.of(task("t-1", "단어 암기", false)));
+    }
+
+    @Test
     void apply_이동후_날짜키오름차순() {
         // given — 목적지 키가 없던 경우, 끝에 붙지 않고 날짜순 위치에 들어가야 한다(Day 순서 보존)
         Map<String, Object> tasks = Map.of(

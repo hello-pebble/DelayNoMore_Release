@@ -62,6 +62,15 @@ class PlanStatusTest {
     }
 
     @Test
+    void allowsCarryOver_실행단계액션_종결전까지허용() {
+        // 이월은 고정(CONFIRMED) 후에도 허용 — 실행 중 "내일로 미루기"가 핵심 사용처다.
+        assertThat(PlanStatus.DRAFT.allowsCarryOver()).isTrue();
+        assertThat(PlanStatus.CONFIRMED.allowsCarryOver()).isTrue();
+        assertThat(PlanStatus.COMPLETED.allowsCarryOver()).isFalse();
+        assertThat(PlanStatus.CANCELLED.allowsCarryOver()).isFalse();
+    }
+
+    @Test
     void fromStored_null과blank는DRAFT() {
         // PlanSaveRequest의 status 기본값 규칙과 동일해야 한다(미지정 → DRAFT).
         assertThat(PlanStatus.fromStored(null)).isEqualTo(PlanStatus.DRAFT);
