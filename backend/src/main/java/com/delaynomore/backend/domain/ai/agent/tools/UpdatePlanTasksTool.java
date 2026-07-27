@@ -80,10 +80,18 @@ public class UpdatePlanTasksTool implements AgentTool {
 
         context.applyTasks(merged);
 
+        // 이 payload의 유일한 독자는 모델이다. 그래서 두 수를 이름으로 갈라놓는다 —
+        // 예전의 단일 dayCount는 값이 merged.size()(병합 후 계획 전체 길이)인데 changedDates
+        // 옆에 놓여 "바뀐 날짜 수"로 읽혔고, 두 수가 다를 때(2일만 고친 계획 등) 모델이
+        // 사용자에게 틀린 개수를 말할 여지가 있었다. carry_over의 movedCount와 결도 맞춘다.
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("changedDates", List.copyOf(patch.keySet()));
-        payload.put("dayCount", merged.size());
-        payload.put("note", "계획이 갱신됐습니다. 사용자에게 어느 날짜가 어떻게 바뀌었는지 구체적으로 알려주세요.");
+        payload.put("changedCount", patch.size());
+        payload.put("totalDayCount", merged.size());
+        // 날짜별 할 일을 전부 나열시키면 바로 아래 계획 UI가 이미 보여주는 것을 산문으로 중복한다.
+        // 지켜지지 않을 지시를 넣어두면 정말 지켜져야 할 노트(carry_over 등)의 무게까지 같이
+        // 떨어지므로, 모델이 실제로 따를 수 있는 선까지만 요구한다.
+        payload.put("note", "계획이 갱신됐습니다. 바뀐 날짜를 짚어 알려주고, 할 일 전체를 나열하지는 마세요.");
         return ToolResult.ok(payload);
     }
 }
