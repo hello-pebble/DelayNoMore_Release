@@ -13,6 +13,9 @@ public enum ErrorCode {
     GUEST_ID_INVALID(HttpStatus.BAD_REQUEST, "게스트 식별자 형식이 올바르지 않습니다(영문·숫자·하이픈 8~64자)."),
     AI_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY, "AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해주세요."),
     AI_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "AI 응답을 해석하지 못했습니다. 잠시 후 다시 시도해주세요."),
+    // 에이전트 루프가 도구 호출 상한(MAX_TOOL_TURNS)까지 가고도 최종 답을 못 낸 경우.
+    // 폭주 방어라 사용자 잘못이 아니고, 프론트는 기존 자유 대화 경로로 폴백한다.
+    AI_TOOL_LOOP_EXCEEDED(HttpStatus.BAD_GATEWAY, "AI가 답을 정리하지 못했습니다. 다시 한 번 물어봐 주세요."),
     PLAN_NOT_FOUND(HttpStatus.NOT_FOUND, "계획을 찾을 수 없습니다. 이미 삭제되었을 수 있어요."),
     // 소유자당 한도 초과 — 사용자가 직접 해소할 수 있으므로 400 + 액션 가능한 메시지.
     PLAN_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "내 보관함이 가득 찼습니다(최대 10개). 기존 계획을 삭제한 뒤 다시 저장해주세요."),

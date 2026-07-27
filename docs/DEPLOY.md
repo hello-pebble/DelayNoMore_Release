@@ -11,6 +11,10 @@ OPENROUTER_API_KEY=<your_key> ./gradlew bootRun   # Windows: gradlew.bat bootRun
 
 - `OPENROUTER_API_KEY`를 주지 않아도 서버는 기동됩니다(이 경우 프론트가 mock 폴백).
 - 모델은 `OPENROUTER_MODEL` 환경변수로 바꿀 수 있습니다(기본: `qwen/qwen3.7-plus`).
+- 코치의 에이전트(도구 호출) 경로는 기본으로 켜져 있습니다. **도구 호출을 지원하지 않는 모델로
+  바꿨다면** `OPENROUTER_TOOL_CALLING=false`로 끄세요 — 코드 배포 없이 기존 자유 대화 경로로
+  되돌아갑니다(끄지 않아도 실패 시 자동 폴백하지만, 매 요청마다 헛된 왕복이 한 번 더 생깁니다).
+  모델의 도구 지원 확인 방법은 [에이전트 문서](AGENT.md#모델-스위치)를 보세요.
 
 ### 2. 프론트엔드 (포트 5173)
 
@@ -47,5 +51,6 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 | :--- | :--- | :--- |
 | `OPENROUTER_API_KEY` | backend | OpenRouter API 키(서버에만 보관). 미설정 시 프론트 mock 폴백. |
 | `OPENROUTER_MODEL` | backend | 사용할 모델 ID (선택). |
+| `OPENROUTER_TOOL_CALLING` | backend | 에이전트(도구 호출) 경로 on/off (선택, 기본 `true`). 도구 미지원 모델로 바꿀 때 `false`. |
 
 관련 문서: [배포 회고](DEPLOY_RETROSPECTIVE.md) · [구조](ARCHITECTURE.md)

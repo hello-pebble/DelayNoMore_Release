@@ -1,5 +1,5 @@
 // AI Slot-Filling 및 계획 생성 엔진
-import { postAiDraft, postAiChat, streamAiChat, streamAiDraft, getAiHealth } from "./db_service";
+import { postAiDraft, postAiChat, streamAiChat, streamAiAgentChat, streamAiDraft, getAiHealth } from "./db_service";
 import { todayStr, formatLocalDate, parseLocalDate } from "./date_utils";
 
 
@@ -268,6 +268,96 @@ function draftWithTasks(draft, tasks) {
   if (!tasks || Object.keys(tasks).length === 0) return null;
   const dates = Object.keys(tasks).sort();
   return { ...draft, tasks, duration: dates.length, endDate: dates[dates.length - 1] || draft.endDate };
+}
+
+/**
+ * 에이전트 대화(스트리밍) — 계획 변경이 산문 규약(===PLAN===)이 아니라 서버가 실행하는 도구
+ * 호출로 일어난다. 도구 호출·결과는 onStep(steps 배열)으로 흘려보내 화면의 추적 패널이 그린다.
+ *
+ * 반환: { reply, updatedDraft, refreshPlanId, steps }
+ *  - updatedDraft : 아직 저장되지 않은 계획 변경(update_plan_tasks) — 호출부가 초안으로 채택한다.
+ *  - refreshPlanId: 서버가 이미 저장한 변경(carry_over_tasks) — 호출부가 서버에서 다시 읽는다.
+ *    둘을 구분하지 않고 초안으로 채택하면, 고정된 계획에서 뒤따르는 PUT이 409로 튕긴다.
+ *
+ * 폴백: 에이전트 경로가 실패하면(도구 미지원 모델·업스트림 오류·루프 상한) 기존 자유 대화
+ * 스트리밍으로 넘긴다. 그쪽도 실패하면 비스트리밍 → mock으로 이어져 총 4단이 된다.
+ * 이미 산문을 일부 받았다면 폴백하지 않고 그걸로 마감한다 — 답이 두 번 갱신되면 더 어색하다.
+ */
+export async function streamAgentChat(slots, draft, history, message, planId, onToken, onStep) {
+  let replyText = '';
+  let tasks = null;
+  let refreshPlanId = null;
+  let streamError = null;
+  const steps = [];
+
+  const pushStep = (step) => {
+    steps.push(step);
+    if (onStep) onStep([...steps]);
+  };
+
+  try {
+    await streamAiAgentChat(
+      {
+        goalName: slots.goalName,
+        duration: slots.duration,
+        dailyHours: slots.dailyHours,
+        currentLevel: slots.currentLevel,
+        tasks: draft?.tasks || {},
+        history,
+        message,
+        planId: planId ?? null
+      },
+      (evt) => {
+        if (evt.type === 'tool_call') {
+          pushStep({ id: evt.id, name: evt.name, args: evt.args, status: 'running' });
+        } else if (evt.type === 'tool_result') {
+          const target = steps.find((s) => s.id === evt.id);
+          if (target) {
+            target.status = evt.ok ? 'ok' : 'error';
+            target.summary = evt.summary;
+            if (onStep) onStep([...steps]);
+          }
+        } else if (evt.type === 'token') {
+          replyText += evt.t || '';
+          if (onToken) onToken(replyText);
+        } else if (evt.type === 'plan') {
+          tasks = evt.tasks || null;
+        } else if (evt.type === 'plan_refresh') {
+          refreshPlanId = evt.planId ?? null;
+        } else if (evt.type === 'error') {
+          streamError = evt.m || 'agent stream error';
+        }
+        // 'step'(턴 시작)과 'done'은 화면에 따로 그리지 않는다 — 도구 호출이 곧 진행 표시다.
+      }
+    );
+
+    if (streamError && !replyText.trim() && !tasks && !refreshPlanId) {
+      throw new Error(streamError);
+    }
+
+    const updatedDraft = tasks ? draftWithTasks(draft, tasks) : null;
+    if (replyText.trim() || updatedDraft || refreshPlanId) {
+      return {
+        reply: replyText.trim() || "요청하신 내용을 반영했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+        updatedDraft,
+        refreshPlanId,
+        steps
+      };
+    }
+    throw new Error("empty agent reply");
+  } catch (error) {
+    console.error("Agent chat failed, falling back to plain chat:", error);
+    if (replyText.trim()) {
+      return {
+        reply: replyText.trim(),
+        updatedDraft: tasks ? draftWithTasks(draft, tasks) : null,
+        refreshPlanId,
+        steps
+      };
+    }
+    const fallback = await streamChatWithCoach(slots, draft, history, message, onToken);
+    return { ...fallback, refreshPlanId: null, steps: [] };
+  }
 }
 
 // 초안 생성 이후의 자유 대화(스트리밍) — 산문 reply는 토큰이 오는 대로 onToken(누적 텍스트)으로

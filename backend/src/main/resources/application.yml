@@ -25,6 +25,11 @@ openrouter:
     url: https://openrouter.ai/api/v1
     key: ${OPENROUTER_API_KEY:YOUR_OPENROUTER_API_KEY_HERE}
     model: ${OPENROUTER_MODEL:qwen/qwen3.7-plus}
+    # 에이전트(function calling) 경로 스위치. OpenRouter는 모델마다 도구 지원 여부가 달라서,
+    # 도구를 지원하지 않는 모델로 OPENROUTER_MODEL을 바꿨을 때 코드 배포 없이 예전 자유 대화
+    # 경로로 되돌릴 수 있게 환경변수로 뺐다. false면 /ai/health가 toolCalling=false를 내리고
+    # 프론트는 에이전트 엔드포인트를 호출하지 않는다.
+    tool-calling: ${OPENROUTER_TOOL_CALLING:true}
 
 # postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
 # 기본(프로필 미지정) 기동은 datasource 설정이 없고 Flyway도 위에서 꺼뒀으므로 DataSource가

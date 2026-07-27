@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2, History, BarChart3, Sparkles, XCircle
+  CheckCircle2, History, BarChart3, Sparkles, XCircle, Wrench
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -11,6 +11,7 @@ import {
   parseUserMessage,
   streamChecklistDraft,
   streamChatWithCoach,
+  streamAgentChat,
   formatChecklistAsText,
   isPlanModificationRequest,
   INITIAL_SLOTS
@@ -56,6 +57,100 @@ const DEFAULT_REASON_OPTIONS = [
   { code: 'HARD_TO_FOCUS', label: '집중이 잘 안 됐어요' },
   { code: 'HARDER_THAN_EXPECTED', label: '생각보다 어려웠어요' }
 ];
+
+// 에이전트 도구 이름 → 화면 라벨. 서버가 내려주는 이름은 모델용 영문 snake_case라 그대로
+// 노출하면 읽기 어렵다. 모르는 이름(서버에 도구가 추가됐는데 프론트가 아직 모르는 경우)은
+// 이름 그대로 보여준다 — 추적 패널이 빈칸이 되는 것보다 낫다.
+const AGENT_TOOL_LABELS = {
+  get_today_tasks: '오늘 할 일 조회',
+  get_weekly_summary: '주간 완료율 조회',
+  get_reflection_history: '회고 기록 조회',
+  get_workload_recommendation: '다음 분량 추천 조회',
+  update_plan_tasks: '계획 수정',
+  carry_over_tasks: '미완료 이월'
+};
+
+const agentToolLabel = (name) => AGENT_TOOL_LABELS[name] || name;
+
+/**
+ * 에이전트 실행 추적 패널 — "코치가 무엇을 근거로 답했는가"를 보여준다.
+ * 기본은 접힌 한 줄 요약이고, 펼치면 도구별 인자와 서버가 돌려준 결과 요약을 볼 수 있다.
+ * 실행 중(running)에는 결과가 아직 없으므로 상태 점만 다르게 찍는다.
+ */
+function AgentTrace({ steps, expanded, onToggle }) {
+  if (!steps || steps.length === 0) return null;
+
+  const running = steps.some((s) => s.status === 'running');
+  const failed = steps.filter((s) => s.status === 'error').length;
+  const summary = running
+    ? `도구 실행 중… (${steps.length})`
+    : `도구 ${steps.length}개 실행${failed > 0 ? ` · ${failed}개 거부됨` : ''}`;
+
+  return (
+    <div style={{
+      marginBottom: '6px',
+      border: '1px solid var(--border)',
+      borderRadius: '10px',
+      background: 'var(--bg-card)',
+      fontSize: '12px',
+      overflow: 'hidden'
+    }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 10px',
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--text-muted)',
+          cursor: 'pointer',
+          textAlign: 'left'
+        }}
+      >
+        <Wrench size={13} />
+        <span style={{ flex: 1 }}>{summary}</span>
+        {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+      </button>
+
+      {expanded && (
+        <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {steps.map((step, index) => (
+            <div key={step.id || index} style={{ borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--text-main)' }}>
+                <span aria-hidden="true">
+                  {step.status === 'running' ? '⏳' : step.status === 'ok' ? '✅' : '⛔'}
+                </span>
+                {agentToolLabel(step.name)}
+                <code style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '11px' }}>{step.name}</code>
+              </div>
+              {step.args && Object.keys(step.args).length > 0 && (
+                <pre style={traceCodeStyle}>인자 {JSON.stringify(step.args)}</pre>
+              )}
+              {step.summary && <pre style={traceCodeStyle}>{step.summary}</pre>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const traceCodeStyle = {
+  margin: '4px 0 0',
+  padding: '5px 7px',
+  background: 'var(--bubble-bot)',
+  borderRadius: '6px',
+  fontSize: '11px',
+  lineHeight: '1.45',
+  color: 'var(--text-muted)',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all'
+};
 
 // 저장된 회고의 enum 코드 → 화면 라벨. 알 수 없는 코드는 그대로 노출(화면이 죽지 않게).
 function reflectionLabel(options, code) {
@@ -291,11 +386,19 @@ const exportButtonStyle = {
   cursor: 'pointer'
 };
 
-export default function ChatCoach() {
+// agentEnabled: 서버 헬스체크가 알려준 에이전트(도구 호출) 경로 가용 여부. false면 대화가
+// 기존 자유 대화 경로로만 돈다 — 도구를 지원하지 않는 모델로 배포한 경우다.
+export default function ChatCoach({ agentEnabled = false }) {
   // 지연 초기화 함수 하나로 최초 상태(저장된 계획 복원 또는 첫 질문)를 한 번만 계산한다.
   const [initial] = useState(buildInitialState);
   const [slots, setSlots] = useState(initial.slots);
   const [messages, setMessages] = useState(initial.messages);
+  // 응답이 오는 동안의 라이브 도구 실행 목록 — 봇 말풍선이 생기기 전에도 진행을 보여준다.
+  // 응답이 끝나면 해당 봇 메시지의 steps로 옮겨 붙고 여기는 비운다.
+  const [activeSteps, setActiveSteps] = useState([]);
+  // 추적 패널 펼침 상태(메시지 id별). 기본은 접힘 — 평소엔 답변만 읽히게 하고,
+  // 근거가 궁금할 때만 펼쳐 보게 한다.
+  const [expandedTrace, setExpandedTrace] = useState({});
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [draftChecklist, setDraftChecklist] = useState(initial.draftChecklist);
@@ -724,10 +827,11 @@ export default function ChatCoach() {
       // 초안 생성 이후에는 자유 대화 모드 — LLM이 의도(수정/질문/불명확)를 직접 판단한다.
       // 무조건 재생성하고 "반영했습니다"라고 답하던 이전 방식을 대체한다.
       if (draftChecklist) {
-        // 고정(CONFIRMED) 계획의 수정 요청은 AI를 호출하기 전에 막는다 — 예전엔 AI를 먼저
-        // 부르고 답변을 스트리밍한 뒤에야 🔒 안내를 띄워 호출이 낭비되고 답변과 안내가
-        // 뒤섞였다. 확실한 수정 요청("주말은 빼줘" 등)만 차단하고, 질문은 그대로 통과시킨다.
-        if (isLocked && isPlanModificationRequest(userText)) {
+        // 고정(CONFIRMED) 계획의 수정 요청 차단 — 키워드 휴리스틱이라 오탐·미탐이 있는
+        // 임시 방편이었다. 에이전트 경로에서는 필요 없다: 고정된 계획에는 수정 도구가 아예
+        // 노출되지 않아 모델이 계획을 바꿀 수단이 없고, 코치가 그 사실을 직접 설명한다.
+        // 그래서 이 가드는 폴백(비에이전트) 경로에서만 유지한다.
+        if (!agentEnabled && isLocked && isPlanModificationRequest(userText)) {
           setMessages((prev) => [
             ...prev,
             {
@@ -762,18 +866,41 @@ export default function ChatCoach() {
           }
         };
 
-        const { reply, updatedDraft } = await streamChatWithCoach(
-          slots, draftChecklist, history, userText, onToken
-        );
+        // 에이전트 경로는 도구 호출 진행을 onStep으로 흘려보낸다(추적 패널이 실시간으로 그린다).
+        // 도구를 지원하지 않는 배포에서는 기존 자유 대화 경로를 그대로 쓴다.
+        setActiveSteps([]);
+        const onStep = (steps) => {
+          if (aliveRef.current) setActiveSteps(steps);
+        };
+
+        const { reply, updatedDraft, refreshPlanId, steps } = agentEnabled
+          ? await streamAgentChat(
+              slots, draftChecklist, history, userText, activePlanId, onToken, onStep
+            )
+          : await streamChatWithCoach(slots, draftChecklist, history, userText, onToken);
         if (!aliveRef.current) return; // 응답이 늦게 와도 떠난 화면을 갱신하지 않는다
 
         stopThinking();
+        setActiveSteps([]);
         // 최종 reply로 말풍선을 확정한다(스트림 미사용 mock 폴백이거나, 마지막에 기본 문구로
-        // 대체된 경우까지 일관되게 반영).
+        // 대체된 경우까지 일관되게 반영). 실행된 도구 목록은 그 말풍선에 붙여 남긴다 —
+        // 대화를 거슬러 올라가도 "이 답변의 근거"를 다시 펼쳐 볼 수 있게.
+        const botMessage = { id: botMsgId, sender: 'bot', text: reply, steps: steps?.length ? steps : undefined };
         if (!botCreated) {
-          setMessages((prev) => [...prev, { id: botMsgId, sender: 'bot', text: reply }]);
+          setMessages((prev) => [...prev, botMessage]);
         } else {
-          setMessages((prev) => prev.map((m) => (m.id === botMsgId ? { ...m, text: reply } : m)));
+          setMessages((prev) => prev.map((m) => (m.id === botMsgId ? { ...m, ...botMessage } : m)));
+        }
+
+        // 서버가 이미 저장한 변경(이월) — 초안으로 덮어쓰지 않고 저장본을 다시 읽는다.
+        // 버튼으로 이월했을 때와 똑같은 경로(applyServerPlan)를 타므로 동기화 규칙이 하나다.
+        if (refreshPlanId != null) {
+          try {
+            const fresh = await fetchPlan(refreshPlanId);
+            if (aliveRef.current) applyServerPlan(fresh);
+          } catch (err) {
+            console.error('이월 후 계획을 다시 불러오지 못했습니다:', err);
+          }
         }
 
         if (updatedDraft) {
@@ -887,8 +1014,12 @@ export default function ChatCoach() {
       stopThinking();
     } finally {
       setIsTyping(false);
+      setActiveSteps([]); // 실패 경로에서도 라이브 추적이 화면에 남지 않게
     }
   };
+
+  const toggleTrace = (messageId) =>
+    setExpandedTrace((prev) => ({ ...prev, [messageId]: !prev[messageId] }));
 
   const handleSendMessage = (e) => {
     e.preventDefault();
@@ -1399,9 +1530,20 @@ export default function ChatCoach() {
             className="animate-fade-in"
             style={{
               display: 'flex',
-              justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start'
+              flexDirection: 'column',
+              alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start'
             }}
           >
+            {/* 이 답변을 만들 때 코치가 호출한 도구들 — 기본 접힘, 펼치면 인자와 결과가 보인다. */}
+            {msg.steps && (
+              <div style={{ maxWidth: '80%', width: '100%' }}>
+                <AgentTrace
+                  steps={msg.steps}
+                  expanded={!!expandedTrace[msg.id]}
+                  onToggle={() => toggleTrace(msg.id)}
+                />
+              </div>
+            )}
             <div
               style={{
                 maxWidth: '80%',
@@ -1418,6 +1560,18 @@ export default function ChatCoach() {
             </div>
           </div>
         ))}
+
+        {/* 응답 대기 중의 라이브 추적 — 봇 말풍선이 생기기 전에도 무슨 일이 벌어지는지 보인다.
+            응답이 끝나면 위 메시지의 steps로 옮겨 붙고 여기서는 사라진다(중복 표시 없음). */}
+        {activeSteps.length > 0 && (
+          <div className="animate-fade-in" style={{ maxWidth: '80%' }}>
+            <AgentTrace
+              steps={activeSteps}
+              expanded={!!expandedTrace.__active}
+              onToggle={() => toggleTrace('__active')}
+            />
+          </div>
+        )}
 
         {/* AI 생각 중 표시 */}
         {isThinking && (
