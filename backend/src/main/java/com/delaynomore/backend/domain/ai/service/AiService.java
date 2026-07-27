@@ -5,6 +5,7 @@ import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.domain.ai.dto.AiHealthResponse;
+import com.delaynomore.backend.domain.ai.usage.AiCallSite;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
@@ -63,7 +64,7 @@ public class AiService {
     // (배열·"Day N" 키)을 줘도 프롬프트의 targetDates와 같은 기준(KST 오늘부터)으로 날짜를 합성한다.
     public Object createDraft(AiDraftRequest request) {
         List<Map<String, Object>> messages = promptBuilder.draftMessages(request);
-        String raw = openRouterClient.complete(messages, NO_TOKEN_LIMIT);
+        String raw = openRouterClient.complete(AiCallSite.DRAFT, messages, NO_TOKEN_LIMIT);
         Map<String, Object> plan = responseParser.normalizeDraftPlan(responseParser.parsePlan(raw), KstDates.today());
         // 추천 경로(tasksPerDay 지정)는 "날짜마다 정확히 N개"를 강제한다 — 어긋나면 잘라내거나
         // 재시도하지 않고 실패로 처리해(AI_RESPONSE_INVALID) 호출부가 서버 템플릿 생성으로 폴백하게 한다.
@@ -102,7 +103,7 @@ public class AiService {
     // (request.tasks)에 병합해 정규화된 전체 tasks를 응답에 담는다 — 병합 규칙의 소유권은 서버.
     public AiChatResponse chat(AiChatRequest request) {
         List<Map<String, Object>> messages = promptBuilder.chatMessages(request);
-        String raw = openRouterClient.complete(messages, MAX_CHAT_TOKENS);
+        String raw = openRouterClient.complete(AiCallSite.CHAT, messages, MAX_CHAT_TOKENS);
         AiResponseParser.ChatParse parsed = responseParser.parseChat(raw);
         if (parsed.patch() == null || parsed.patch().isEmpty()) {
             return AiChatResponse.replyOnly(parsed.reply());
@@ -132,7 +133,7 @@ public class AiService {
     private void relayDraftStream(List<Map<String, Object>> messages, SseEmitter emitter) {
         try {
             StringBuilder lineBuf = new StringBuilder();
-            openRouterClient.streamCompletion(messages, NO_TOKEN_LIMIT, delta -> {
+            openRouterClient.streamCompletion(AiCallSite.DRAFT_STREAM, messages, NO_TOKEN_LIMIT, delta -> {
                 lineBuf.append(responseParser.stripCjk(delta)); // 비한국어 CJK는 스트림 단계에서 제거
                 emitCompleteDays(lineBuf, emitter);
             });
@@ -180,7 +181,7 @@ public class AiService {
                                   SseEmitter emitter) {
         ChatStreamBuffer buffer = new ChatStreamBuffer();
         try {
-            openRouterClient.streamCompletion(messages, MAX_CHAT_TOKENS, delta -> {
+            openRouterClient.streamCompletion(AiCallSite.CHAT_STREAM, messages, MAX_CHAT_TOKENS, delta -> {
                 // 모델이 흘리는 한자/가나 등 비한국어 CJK 문자를 스트림 단계에서 제거한다
                 // (산문 토큰·patch JSON 문자열 값 모두 커버, 구분자엔 CJK가 없어 안전).
                 String cleaned = responseParser.stripCjk(delta);
