@@ -17,6 +17,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,20 @@ public class OpenRouterClient {
     public record KeyCheck(boolean connected, String failureReason) {
     }
 
+    // 모델이 요청한 도구 호출 하나. arguments는 모델이 만든 JSON 문자열 원문이라 이 계층에서는
+    // 파싱하지 않는다(신뢰할 수 없는 입력의 해석은 도구 실행 계층의 책임).
+    public record ToolCall(String id, String name, String argumentsJson) {
+    }
+
+    // 한 번의 완료 응답. 도구 호출이 있으면 toolCalls가 비어 있지 않고, 없으면 content가 최종 답이다.
+    // 둘 다 올 수도 있다(모델이 짧은 안내와 함께 도구를 부르는 경우) — 루프는 toolCalls를 우선한다.
+    public record Completion(String content, List<ToolCall> toolCalls) {
+
+        public boolean hasToolCalls() {
+            return toolCalls != null && !toolCalls.isEmpty();
+        }
+    }
+
     public KeyCheck checkKey() {
         try {
             openRouterRestClient.get().uri(KEY_CHECK_PATH).retrieve().toBodilessEntity();
@@ -63,18 +78,31 @@ public class OpenRouterClient {
 
     // 비스트리밍 호출 — assistant content 원문을 그대로 돌려준다(정제는 호출부에서).
     public String complete(List<Map<String, Object>> messages, int maxTokens) {
+        return completeWithTools(messages, maxTokens, null).content();
+    }
+
+    /**
+     * 도구 목록을 함께 보내는 비스트리밍 호출(에이전트 루프용). tools가 null·빈 목록이면 기존
+     * complete()와 완전히 같은 요청이 나간다 — 기존 경로의 동작을 바꾸지 않기 위해서다.
+     *
+     * 스트리밍이 아닌 이유: 도구 호출 인자는 델타로 쪼개져 오고 인덱스별로 이어 붙여야 완성되는데,
+     * 어차피 인자가 다 모이기 전에는 도구를 실행할 수 없다. 루프의 중간 턴은 비스트리밍으로 받고,
+     * 사용자가 기다리는 동안의 체감은 도구 호출 진행 상황을 SSE로 흘려보내 채운다.
+     */
+    public Completion completeWithTools(List<Map<String, Object>> messages, int maxTokens,
+                                        List<Map<String, Object>> tools) {
         try {
             String responseBody = openRouterRestClient.post()
                     .uri(COMPLETIONS_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(buildBody(messages, maxTokens, false))
+                    .body(buildBody(messages, maxTokens, false, tools))
                     .retrieve()
                     .body(String.class);
             if (responseBody == null) {
                 throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
             }
-            JsonNode root = jsonMapper.readTree(responseBody);
-            return root.path("choices").path(0).path("message").path("content").asString("");
+            JsonNode message = jsonMapper.readTree(responseBody).path("choices").path(0).path("message");
+            return new Completion(message.path("content").asString(""), extractToolCalls(message));
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -83,13 +111,37 @@ public class OpenRouterClient {
         }
     }
 
+    // message.tool_calls[] → ToolCall 목록. 필드가 없거나 형식이 어긋나면 빈 목록으로 본다
+    // (도구 미지원 모델이 이 필드를 아예 안 내려주므로, 없음을 정상 경로로 다뤄야 폴백이 작동한다).
+    private static List<ToolCall> extractToolCalls(JsonNode message) {
+        JsonNode calls = message.path("tool_calls");
+        if (!calls.isArray() || calls.isEmpty()) {
+            return List.of();
+        }
+        List<ToolCall> result = new ArrayList<>();
+        for (JsonNode call : calls) {
+            JsonNode function = call.path("function");
+            String name = function.path("name").asString("");
+            if (name.isBlank()) {
+                continue;
+            }
+            // id가 없는 모델도 있다 — tool 응답 메시지를 짝지으려면 반드시 있어야 하므로 합성한다.
+            String id = call.path("id").asString("");
+            if (id.isBlank()) {
+                id = "call_" + result.size();
+            }
+            result.add(new ToolCall(id, name, function.path("arguments").asString("{}")));
+        }
+        return result;
+    }
+
     // 스트리밍 호출 — 업스트림 SSE를 라인 단위로 읽어 content 델타만 onDelta로 넘긴다.
     public void streamCompletion(List<Map<String, Object>> messages, int maxTokens, DeltaConsumer onDelta) {
         openRouterRestClient.post()
                 .uri(COMPLETIONS_PATH)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.TEXT_EVENT_STREAM)
-                .body(buildBody(messages, maxTokens, true))
+                .body(buildBody(messages, maxTokens, true, null))
                 .exchange((request, response) -> {
                     if (!response.getStatusCode().is2xxSuccessful()) {
                         throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
@@ -126,7 +178,10 @@ public class OpenRouterClient {
     }
 
     // 공통 요청 바디 조립. maxTokens<=0 이면 상한 없음, stream이면 SSE 스트리밍을 켠다.
-    private Map<String, Object> buildBody(List<Map<String, Object>> messages, int maxTokens, boolean stream) {
+    // tools가 비어 있지 않으면 function calling을 켠다 — 기존 두 경로(초안·자유 대화)는 null을
+    // 넘겨 요청 형태가 예전과 한 글자도 달라지지 않는다.
+    private Map<String, Object> buildBody(List<Map<String, Object>> messages, int maxTokens, boolean stream,
+                                          List<Map<String, Object>> tools) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", properties.model());
         body.put("messages", messages);
@@ -138,6 +193,12 @@ public class OpenRouterClient {
         }
         if (stream) {
             body.put("stream", true);
+        }
+        if (tools != null && !tools.isEmpty()) {
+            body.put("tools", tools);
+            // auto — 도구를 쓸지 말지는 모델이 정한다. 단순 인사에도 도구를 부르게 강제하면
+            // 왕복만 늘어난다. 노출 자체를 상태로 제한하고 있으므로 여기서 더 조일 필요가 없다.
+            body.put("tool_choice", "auto");
         }
         return body;
     }

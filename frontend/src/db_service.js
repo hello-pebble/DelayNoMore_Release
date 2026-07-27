@@ -64,7 +64,13 @@ export const postAiChat = (payload) => requestJson('/ai/chats', payload);
 const consumeSse = async (path, payload, onEvent) => {
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // 에이전트 경로는 도구로 소유 데이터(계획·회고·이월)를 다루므로 소유자 스코프가 필수다.
+    // 기존 AI 엔드포인트는 이 헤더를 무시하므로 경로 분기 없이 항상 붙인다(requestJson과 같은 관례).
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Guest-Id': getGuestId(),
+      'X-Session-Id': getSessionId(),
+    },
     body: JSON.stringify(payload),
   });
 
@@ -108,6 +114,18 @@ export const streamAiChat = (payload, onEvent) => consumeSse('/ai/chats/stream',
 // 초안 생성 스트리밍(SSE) — /api/v1/ai/drafts/stream. 하루(=한 줄)가 완성될 때마다 day 이벤트가 온다.
 // 이벤트: {type:'day',date,tasks:[...]} / {type:'done'} / {type:'error',m}
 export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/drafts/stream', payload, onEvent);
+
+// 에이전트 대화 스트리밍(SSE) — /api/v1/ai/agent/chats/stream. 위 자유 대화와 달리 계획 변경이
+// 산문 속 ===PLAN=== 구분자가 아니라 서버가 실행하는 도구 호출로 일어나고, 그 과정이 이벤트로 흐른다.
+// 이벤트: {type:'step',n} / {type:'tool_call',id,name,args} / {type:'tool_result',id,ok,summary}
+//        / {type:'token',t} / {type:'plan',tasks} / {type:'plan_refresh',planId} / {type:'done'} / {type:'error',m}
+// plan(미저장 변경 → 초안으로 채택)과 plan_refresh(서버가 이미 저장 → 재조회)의 구분에 주의.
+export const streamAiAgentChat = (payload, onEvent) => consumeSse('/ai/agent/chats/stream', payload, onEvent);
+
+// 에이전트 도구 카탈로그 — 해당 계획 상태에서 모델에게 실제로 노출되는 도구만 내려온다.
+// planId를 생략하면 보관 전 초안(DRAFT) 기준. 응답 data: [{name, description, mutating, parameters}]
+export const fetchAgentTools = (planId) =>
+  requestJson(`/ai/agent/tools${planId == null ? '' : `?planId=${planId}`}`, null, 'GET');
 
 // 계획 보관함 CRUD — 서버 인메모리 저장소(휘발성: 재시작 시 초기화, 게스트 ID별 격리).
 // 로그인/DB 도입 전의 원격 데모용이며, 응답/요청 형태는 PlanController(/api/v1/plans) 계약을 따른다.
@@ -163,7 +181,9 @@ export const fetchReflection = (planId, date) => requestJson(`/plans/${planId}/r
 export const fetchReflections = (planId) => requestJson(`/plans/${planId}/reflections`, null, 'GET');
 
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
-// 백엔드 data({connected, reason})를 기존 화면 계약({success, reason})으로 되돌려 준다.
+// 백엔드 data({connected, reason, toolCalling})를 기존 화면 계약({success, reason})에 맞춰 돌려주고,
+// toolCalling(에이전트 경로 가용 여부)을 additive로 덧붙인다. 서버가 이 필드를 안 내려주는
+// 구버전이면 false로 떨어져 기존 자유 대화 경로만 쓴다.
 export const getAiHealth = async () => {
   try {
     const response = await fetch(`${API_BASE}/ai/health`, {
@@ -171,12 +191,16 @@ export const getAiHealth = async () => {
       headers: { 'Content-Type': 'application/json' },
     });
     if (!response.ok) {
-      return { success: false, reason: `인증 오류 (${response.status})` };
+      return { success: false, reason: `인증 오류 (${response.status})`, toolCalling: false };
     }
     const body = await response.json();
     const data = body?.data;
-    return { success: data?.connected === true, reason: data?.reason };
+    return {
+      success: data?.connected === true,
+      reason: data?.reason,
+      toolCalling: data?.toolCalling === true,
+    };
   } catch {
-    return { success: false, reason: '네트워크 연결 오류' };
+    return { success: false, reason: '네트워크 연결 오류', toolCalling: false };
   }
 };

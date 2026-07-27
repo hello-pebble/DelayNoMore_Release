@@ -9,6 +9,9 @@ export default function App() {
   // AI 연결 상태: 'checking' | 'connected' | 'error'
   const [apiStatus, setApiStatus] = useState('checking');
   const [apiReason, setApiReason] = useState('');
+  // 에이전트(도구 호출) 경로 가용 여부 — 서버가 헬스체크에 함께 내려준다. 도구를 지원하지 않는
+  // 모델로 배포를 바꾸면 false가 되고, 대화는 기존 자유 대화 경로로만 동작한다.
+  const [agentEnabled, setAgentEnabled] = useState(false);
 
   // 닉네임(표시 이름) 게이트 — 없으면 설정 화면을 먼저 보여준다. 데이터 소유는 게스트 ID이며
   // 닉네임은 라벨일 뿐이라, 닉네임 변경은 데이터 스코프를 바꾸지 않는다(ChatCoach 리마운트 없음).
@@ -34,6 +37,7 @@ export default function App() {
       if (!active) return;
       setApiStatus(result?.success ? 'connected' : 'error');
       setApiReason(result?.reason || '');
+      setAgentEnabled(result?.success === true && result?.toolCalling === true);
     });
     return () => {
       active = false;
@@ -53,8 +57,10 @@ export default function App() {
     apiStatus === 'error' ? 'var(--warning)' :
     'var(--text-muted)';
 
+  // 연결됐을 때는 대화가 어느 경로로 도는지까지 알린다 — 에이전트 모드면 코치가 도구를 호출해
+  // 서버 데이터를 읽고 계획을 고친다(추적 패널이 그 과정을 보여준다).
   const ledLabel =
-    apiStatus === 'connected' ? 'AI 연결됨' :
+    apiStatus === 'connected' ? (agentEnabled ? 'AI 연결됨 · 에이전트 모드' : 'AI 연결됨') :
     apiStatus === 'error' ? (apiReason || 'AI 미연결 (mock 사용)') :
     '연결 확인 중...';
 
@@ -139,7 +145,7 @@ export default function App() {
       )}
 
       {/* 데이터 스코프는 게스트 ID(안정)라 닉네임이 바뀌어도 ChatCoach를 리마운트하지 않는다. */}
-      <ChatCoach />
+      <ChatCoach agentEnabled={agentEnabled} />
 
       {/* "변경"은 오버레이로 — ChatCoach가 마운트된 채 위에 얹혀, 대화·계획 상태가 유지된다. */}
       {editingNickname && (

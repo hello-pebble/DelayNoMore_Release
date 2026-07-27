@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.delaynomore'
-version = '0.14.0'
+version = '0.15.0'
 
 java {
 	toolchain {
@@ -42,7 +42,7 @@ dependencies {
 	// 필요하다(Jackson·RestClient와 같은 패턴) — 이게 없으면 flyway-core만으로는 마이그레이션이
 	// 자동 실행되지 않는다(스프링이 Flyway 빈을 아예 만들지 않음).
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
-	compileOnly 'org.projectlombok:lombok'
+compileOnly 'org.projectlombok:lombok'
 	annotationProcessor 'org.projectlombok:lombok'
 	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 	// PostgreSQL 통합 테스트 — Docker가 있는 환경(CI)에서 실제 PG 컨테이너로 JDBC 구현을 검증.

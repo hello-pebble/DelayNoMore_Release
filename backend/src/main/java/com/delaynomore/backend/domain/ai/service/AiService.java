@@ -51,7 +51,11 @@ public class AiService {
             return AiHealthResponse.down("API Key 미설정");
         }
         OpenRouterClient.KeyCheck check = openRouterClient.checkKey();
-        return check.connected() ? AiHealthResponse.up() : AiHealthResponse.down(check.failureReason());
+        // 연결됐을 때만 에이전트 가용 여부를 함께 알린다 — 프론트는 이 값으로 도구 경로와
+        // 기존 자유 대화 경로를 고른다(도구 미지원 모델로 갈아끼운 배포를 코드 변경 없이 지원).
+        return check.connected()
+                ? AiHealthResponse.up(properties.isToolCallingEnabled())
+                : AiHealthResponse.down(check.failureReason());
     }
 
     // 계획 초안 생성(비스트리밍) — 날짜맵({날짜: [할 일]}) 형태의 계획을 돌려준다.

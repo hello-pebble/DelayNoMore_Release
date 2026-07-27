@@ -33,7 +33,7 @@ class AiServiceTest {
     private final OpenRouterClient openRouterClient = mock(OpenRouterClient.class);
 
     private AiService serviceWithKey(String key) {
-        OpenRouterProperties properties = new OpenRouterProperties("https://openrouter.example", key, "test-model");
+        OpenRouterProperties properties = new OpenRouterProperties("https://openrouter.example", key, "test-model", true);
         return new AiService(openRouterClient, new AiPromptBuilder(jsonMapper), new AiResponseParser(jsonMapper),
                 properties, Executors.newSingleThreadExecutor(), jsonMapper);
     }
@@ -125,7 +125,7 @@ class AiServiceTest {
         Map<String, Object> currentTasks = Map.of(
                 "2026-07-17", List.of(Map.of("id", "t-1", "content", "듣기 연습", "completed", false)));
         AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
-                "1일차 너무 어려워요", currentTasks, List.of());
+                "1일차 너무 어려워요", currentTasks, List.of(), null);
 
         // when
         AiChatResponse response = aiService.chat(request);
@@ -147,7 +147,7 @@ class AiServiceTest {
         Map<String, Object> currentTasks = Map.of(
                 "2026-07-16", List.of(Map.of("id", "t-old", "content", "기초 단어 20개 암기", "completed", true)));
         AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
-                "정리해줘", currentTasks, List.of());
+                "정리해줘", currentTasks, List.of(), null);
 
         // when
         AiChatResponse response = aiService.chat(request);
@@ -167,7 +167,7 @@ class AiServiceTest {
         AiService aiService = serviceWithKey("sk-live-key");
         when(openRouterClient.complete(anyList(), anyInt())).thenReturn("지금 계획대로 진행하시면 충분합니다.");
         AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
-                "이대로 괜찮을까요", Map.of(), List.of());
+                "이대로 괜찮을까요", Map.of(), List.of(), null);
 
         // when
         AiChatResponse response = aiService.chat(request);
