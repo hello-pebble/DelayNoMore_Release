@@ -7,6 +7,9 @@ import com.delaynomore.backend.domain.ai.agent.AgentToolRegistry;
 import com.delaynomore.backend.domain.ai.agent.ToolResult;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
+import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiUsageLogger;
+import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.service.PlanService;
@@ -76,6 +79,7 @@ public class AgentRunner {
     private final PlanService planService;
     private final ExecutorService sseExecutor;
     private final JsonMapper jsonMapper;
+    private final AiUsageLogger usageLogger;
 
     public SseEmitter stream(AiChatRequest request, String owner, String sessionId) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
@@ -148,32 +152,52 @@ public class AgentRunner {
                 request.dailyHoursOrDefault(), request.tasks());
     }
 
-    // 루프 본체. 최종 답변 문자열을 돌려준다(정제 완료).
+    /**
+     * 루프 본체. 최종 답변 문자열을 돌려준다(정제 완료).
+     *
+     * <p>턴마다 업스트림을 다시 부르고 그때마다 <b>직전 도구 결과가 붙은 대화 전체</b>를 다시
+     * 보내므로, 입력 토큰은 턴 수에 따라 선형이 아니라 누적으로 늘어난다. 이 경로가 예전 자유
+     * 대화보다 얼마나 비싼지는 호출당 로그만으로는 보이지 않아, 요청 하나의 합계를 따로 남긴다
+     * (site=agent.total의 calls 필드가 곧 "이 요청이 업스트림을 몇 번 때렸는가"다).
+     *
+     * <p>합계는 finally에서 남긴다 — 도중에 실패한 요청도 이미 쓴 토큰은 청구되기 때문에,
+     * 성공한 요청만 세면 비용이 실제보다 적게 보인다.
+     */
     private String runLoop(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
                            AgentContext context, AgentEventSink sink) throws IOException {
-        for (int turn = 1; turn <= MAX_TOOL_TURNS; turn++) {
-            sink.emit(Map.of("type", "step", "n", turn));
-            OpenRouterClient.Completion completion =
-                    openRouterClient.completeWithTools(messages, MAX_REPLY_TOKENS, tools);
+        TokenUsage total = TokenUsage.EMPTY;
+        int calls = 0;
+        try {
+            for (int turn = 1; turn <= MAX_TOOL_TURNS; turn++) {
+                sink.emit(Map.of("type", "step", "n", turn));
+                OpenRouterClient.Completion completion =
+                        openRouterClient.completeWithTools(AiCallSite.AGENT_TURN, messages, MAX_REPLY_TOKENS, tools);
+                total = total.plus(completion.usage());
+                calls++;
 
-            if (!completion.hasToolCalls()) {
-                return responseParser.stripCjk(completion.content());
+                if (!completion.hasToolCalls()) {
+                    return responseParser.stripCjk(completion.content());
+                }
+
+                messages.add(assistantToolCallMessage(completion));
+                executeCalls(completion.toolCalls(), messages, context, sink);
             }
 
-            messages.add(assistantToolCallMessage(completion));
-            executeCalls(completion.toolCalls(), messages, context, sink);
+            // 상한까지 갔다 — 도구 없이 한 번 더 물어 "지금까지 알아낸 것으로 답하라"고 강제한다.
+            // 도구를 빼면 모델이 또 도구를 부를 수단이 없으므로 이 호출은 반드시 산문으로 끝난다.
+            log.warn("Agent loop hit MAX_TOOL_TURNS={}, forcing a final answer without tools", MAX_TOOL_TURNS);
+            OpenRouterClient.Completion forced =
+                    openRouterClient.completeWithTools(AiCallSite.AGENT_FINAL, messages, MAX_REPLY_TOKENS, null);
+            total = total.plus(forced.usage());
+            calls++;
+            String reply = responseParser.stripCjk(forced.content());
+            if (reply == null || reply.isBlank()) {
+                throw new BusinessException(ErrorCode.AI_TOOL_LOOP_EXCEEDED);
+            }
+            return reply;
+        } finally {
+            usageLogger.recordTotal(AiCallSite.AGENT_TOTAL, calls, total);
         }
-
-        // 상한까지 갔다 — 도구 없이 한 번 더 물어 "지금까지 알아낸 것으로 답하라"고 강제한다.
-        // 도구를 빼면 모델이 또 도구를 부를 수단이 없으므로 이 호출은 반드시 산문으로 끝난다.
-        log.warn("Agent loop hit MAX_TOOL_TURNS={}, forcing a final answer without tools", MAX_TOOL_TURNS);
-        OpenRouterClient.Completion forced =
-                openRouterClient.completeWithTools(messages, MAX_REPLY_TOKENS, null);
-        String reply = responseParser.stripCjk(forced.content());
-        if (reply == null || reply.isBlank()) {
-            throw new BusinessException(ErrorCode.AI_TOOL_LOOP_EXCEEDED);
-        }
-        return reply;
     }
 
     // 한 턴의 도구 호출들을 순차 실행하고, 각 결과를 tool 메시지로 messages에 붙인다.

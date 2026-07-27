@@ -97,9 +97,14 @@ graph TD
 
 ![OpenRouter 요청당 토큰·비용 기록 — 대부분의 요청이 $0.001 미만](images/token-cost-v0.3.0.png)
 
+> **v0.15.2부터는 앱이 직접 셉니다.** 위 기록은 OpenRouter 대시보드를 눈으로 옮긴 것이라 경로별
+> 구분이 안 됐습니다. 이제 모든 LLM 호출이 `ai.usage site=… prompt=… completion=… total=` 로그를
+> 남기므로, 같은 비교를 **경로별로**(에이전트 이전 `chat.stream` ↔ 에이전트 `agent.total`) 재현할
+> 수 있습니다. 형식은 [에이전트 문서 6장](AGENT.md#6-관측--토큰-사용량-로그-v0152) 참고.
+
 ## 버전 관리 정책
 
-- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.15.1**.
+- 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.15.2**.
 - 버전 규칙은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따르며, 프론트엔드(`package.json`)와 백엔드(`build.gradle`)는 **하나의 제품 버전**으로 통일합니다.
 - 버전별 변경사항은 [`CHANGELOG.md`](../CHANGELOG.md)에 기록합니다.
 - 버전별 기능 점검은 [`QA_CHECKLIST.md`](QA_CHECKLIST.md)로 확인하고, 릴리스별 수행 결과는 `QA_RESULT_vX.Y.Z.md`로 기록합니다(최신: [`QA_RESULT_v0.13.0.md`](QA_RESULT_v0.13.0.md)).

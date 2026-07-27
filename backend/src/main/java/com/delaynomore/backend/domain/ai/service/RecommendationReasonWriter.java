@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.ai.service;
 
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
+import com.delaynomore.backend.domain.ai.usage.AiCallSite;
 import com.delaynomore.backend.domain.plan.entity.ReflectionReason;
 import com.delaynomore.backend.domain.plan.support.WorkloadRecommendation.Recommendation;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
@@ -46,7 +47,8 @@ public class RecommendationReasonWriter {
             return new ReasonResult(template(rec), false);
         }
         try {
-            String raw = openRouterClient.complete(buildMessages(rec), MAX_REASON_TOKENS);
+            String raw = openRouterClient.complete(
+                    AiCallSite.RECOMMENDATION_REASON, buildMessages(rec), MAX_REASON_TOKENS);
             String cleaned = responseParser.cleanKoreanText(raw);
             if (cleaned == null || cleaned.isBlank()) {
                 return new ReasonResult(template(rec), false);

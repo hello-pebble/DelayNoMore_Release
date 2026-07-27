@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -33,7 +34,7 @@ class AiServiceTest {
     private final OpenRouterClient openRouterClient = mock(OpenRouterClient.class);
 
     private AiService serviceWithKey(String key) {
-        OpenRouterProperties properties = new OpenRouterProperties("https://openrouter.example", key, "test-model", true);
+        OpenRouterProperties properties = new OpenRouterProperties("https://openrouter.example", key, "test-model", true, true);
         return new AiService(openRouterClient, new AiPromptBuilder(jsonMapper), new AiResponseParser(jsonMapper),
                 properties, Executors.newSingleThreadExecutor(), jsonMapper);
     }
@@ -70,7 +71,7 @@ class AiServiceTest {
     void createDraft_정상업스트림응답_정제된계획반환() {
         // given
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt()))
+        when(openRouterClient.complete(any(), anyList(), anyInt()))
                 .thenReturn("```json\n{\"2026-07-16\": [\"重點 핵심 개념 정리\"]}\n```");
         AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null, null);
 
@@ -85,7 +86,7 @@ class AiServiceTest {
     void createDraft_날짜없는업스트림응답_KST오늘부터날짜합성() {
         // given — 배포 컨테이너 JVM은 UTC라, 자정~오전 9시(KST) 사이 UTC 오늘을 쓰면 하루 어긋난다.
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt()))
+        when(openRouterClient.complete(any(), anyList(), anyInt()))
                 .thenReturn("{\"Day 1\": [\"개념 정리\"], \"Day 2\": [\"기출 풀기\"]}");
         AiDraftRequest request = new AiDraftRequest("토익 900점", 2, 2, "600점대", null, null, null);
 
@@ -98,14 +99,14 @@ class AiServiceTest {
         assertThat(plan).isEqualTo(Map.of(
                 today, List.of("개념 정리"),
                 tomorrow, List.of("기출 풀기")));
-        verify(openRouterClient).complete(argThat(messages -> messages.toString().contains(today)), anyInt());
+        verify(openRouterClient).complete(any(), argThat(messages -> messages.toString().contains(today)), anyInt());
     }
 
     @Test
     void createDraft_해석불가능한업스트림응답_예외발생() {
         // given
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt())).thenReturn("계획을 만들 수 없습니다.");
+        when(openRouterClient.complete(any(), anyList(), anyInt())).thenReturn("계획을 만들 수 없습니다.");
         AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null, null);
 
         // when
@@ -120,7 +121,7 @@ class AiServiceTest {
         // given — 병합 규칙의 소유권은 서버(ChatPatchMerger). patch는 변경 날짜만이지만 응답의
         // tasks는 서버가 현재 계획(request.tasks)에 병합한 전체 계획 객체다.
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt()))
+        when(openRouterClient.complete(any(), anyList(), anyInt()))
                 .thenReturn("1일차를 더 쉽게 바꿨어요.\n===PLAN===\n{\"2026-07-16\": [\"기초 단어 20개 암기\"]}");
         Map<String, Object> currentTasks = Map.of(
                 "2026-07-17", List.of(Map.of("id", "t-1", "content", "듣기 연습", "completed", false)));
@@ -142,7 +143,7 @@ class AiServiceTest {
     void chat_변경날짜에완료항목재등장_완료체크보존() {
         // given — patch가 다시 만든 날짜에서도 같은 내용의 할 일은 완료 체크가 보존된다(날짜+content 매칭)
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt()))
+        when(openRouterClient.complete(any(), anyList(), anyInt()))
                 .thenReturn("계획을 다듬었어요.\n===PLAN===\n{\"2026-07-16\": [\"기초 단어 20개 암기\", \"새 항목\"]}");
         Map<String, Object> currentTasks = Map.of(
                 "2026-07-16", List.of(Map.of("id", "t-old", "content", "기초 단어 20개 암기", "completed", true)));
@@ -165,7 +166,7 @@ class AiServiceTest {
     void chat_구분자없는산문_reply만tasks없음() {
         // given
         AiService aiService = serviceWithKey("sk-live-key");
-        when(openRouterClient.complete(anyList(), anyInt())).thenReturn("지금 계획대로 진행하시면 충분합니다.");
+        when(openRouterClient.complete(any(), anyList(), anyInt())).thenReturn("지금 계획대로 진행하시면 충분합니다.");
         AiChatRequest request = new AiChatRequest("토익 900점", 3, 2, "600점대",
                 "이대로 괜찮을까요", Map.of(), List.of(), null);
 

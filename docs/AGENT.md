@@ -231,7 +231,55 @@ OPENROUTER_TOOL_CALLING=false   # 기본값 true
 
 ---
 
-## 6. 화면 — 실행 추적 패널
+## 6. 관측 — 토큰 사용량 로그 [v0.15.2]
+
+에이전트화는 **정확성을 위해 비용을 지불한 거래**입니다. 턴마다 직전 도구 결과가 붙은 대화
+전체를 다시 보내므로 입력 토큰이 누적으로 늘어납니다. 그 대가가 얼마인지 모르면 "구조로
+막았다"는 자랑도 반쪽이라, 모든 업스트림 호출의 사용량을 로그로 남깁니다.
+
+```
+ai.usage site=chat.stream  model=qwen/qwen3.7-plus prompt=812 completion=143 total=955
+ai.usage site=agent.turn   model=qwen/qwen3.7-plus prompt=1200 completion=30 total=1230
+ai.usage site=agent.turn   model=qwen/qwen3.7-plus prompt=1800 completion=40 total=1840
+ai.usage site=agent.total  model=qwen/qwen3.7-plus calls=2 prompt=3000 completion=70 total=3070
+```
+
+`site` 라벨이 경로를 가릅니다 — `chat.stream`(에이전트 이전 경로)과 `agent.total`을 나란히 놓고
+비교하는 것이 이 로그의 존재 이유입니다. `calls`는 **한 번의 사용자 요청이 업스트림을 몇 번
+때렸는가**로, 에이전트 경로에서만 1보다 커집니다.
+
+| 라벨 | 언제 |
+| :--- | :--- |
+| `draft` · `draft.stream` | 계획 초안 생성 |
+| `chat` · `chat.stream` | 자유 대화(에이전트 이전 경로 = 비교 기준선) |
+| `agent.turn` | 에이전트 루프의 한 턴 |
+| `agent.final` | 루프 상한에서 도구 없이 강제하는 마지막 호출 |
+| `agent.total` | 요청 하나의 합계 — 개별 호출이 아니라 집계 |
+| `recommendation.reason` | 분량 추천 이유 문장 |
+
+몇 가지 설계 판단:
+
+- **합계는 `finally`에서 남깁니다.** 도중에 실패한 요청도 이미 쓴 토큰은 청구되므로, 성공한
+  요청만 세면 비용이 실제보다 적게 보입니다.
+- **스트리밍은 `stream_options.include_usage`가 필요합니다.** 비스트리밍과 달리 사용량이 응답
+  본문에 없고 맨 끝 청크로만 옵니다. 그 청크는 `choices`가 빈 배열이라 델타 추출 경로와 겹치는데,
+  빈 문자열이 되어 화면으로는 새지 않습니다(테스트로 고정).
+- **계측은 본래 기능보다 항상 후순위입니다.** `usage`가 없거나 형식이 어긋나도 예외를 던지지
+  않고 빈 값으로 떨어집니다. 대화가 계측 때문에 깨지면 안 됩니다.
+- **`cost`는 있을 때만 찍습니다.** OpenRouter가 usage accounting을 켠 응답에서만 주는 선택
+  필드라, 없을 때 `cost=null`을 남기면 집계 스크립트가 0으로 오해합니다.
+
+```bash
+OPENROUTER_STREAM_USAGE=false   # 기본값 true — 끄면 스트리밍 경로의 사용량 로그만 사라진다
+```
+
+> **한계** — 이건 로그일 뿐 지표가 아닙니다. 집계는 `grep 'ai.usage'` 후 직접 해야 하고, 요청을
+> 가로질러 이어 볼 상관관계 ID도 없습니다. 그래도 "쓴 만큼을 안다"가 "모른다"보다는 앞이고,
+> 형식의 소유권이 `AiUsageLogger` 한 곳에 있어 지표 백엔드로 옮길 때 호출부는 그대로 둡니다.
+
+---
+
+## 7. 화면 — 실행 추적 패널
 
 봇 말풍선 위에 접이식 추적 패널이 붙습니다. 기본은 `도구 2개 실행` 같은 한 줄 요약이고,
 펼치면 도구별 인자와 서버가 돌려준 결과 요약이 보입니다.
@@ -254,7 +302,7 @@ OPENROUTER_TOOL_CALLING=false   # 기본값 true
 
 ---
 
-## 7. 보안
+## 8. 보안
 
 - **소유자 격리** — 에이전트 엔드포인트는 `X-Guest-Id`가 필수입니다(기존 AI 프록시와 달리
   도구가 소유 데이터를 만지므로). 도구는 컨텍스트의 owner만 쓰고 인자로 받지 않습니다.
@@ -268,7 +316,7 @@ OPENROUTER_TOOL_CALLING=false   # 기본값 true
 
 ---
 
-## 8. 다음 — 전문 에이전트 인계
+## 9. 다음 — 전문 에이전트 인계
 
 [로드맵의 최종 목표](ROADMAP.md#최종-목표--계획-고정-후-전문-에이전트-인계)는 "계획을 고정하면
 그 목표의 전문 에이전트가 이어받는 것"입니다.

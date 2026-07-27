@@ -52,5 +52,13 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 | `OPENROUTER_API_KEY` | backend | OpenRouter API 키(서버에만 보관). 미설정 시 프론트 mock 폴백. |
 | `OPENROUTER_MODEL` | backend | 사용할 모델 ID (선택). |
 | `OPENROUTER_TOOL_CALLING` | backend | 에이전트(도구 호출) 경로 on/off (선택, 기본 `true`). 도구 미지원 모델로 바꿀 때 `false`. |
+| `OPENROUTER_STREAM_USAGE` | backend | 스트리밍 응답 끝의 usage 청크 요청 on/off (선택, 기본 `true`). 끄면 스트리밍 경로의 토큰 사용량 로그만 사라지고 스트리밍 자체는 그대로 동작한다. |
+
+> **토큰 사용량 보기** — 모든 LLM 호출이 `ai.usage`로 시작하는 로그 한 줄을 남깁니다.
+> 경로별 비교는 `site` 라벨로 합니다(`chat.stream` = 에이전트 이전 경로, `agent.total` = 에이전트
+> 요청 하나의 합계). 자세한 형식은 [에이전트 문서 6장](AGENT.md#6-관측--토큰-사용량-로그-v0152).
+> ```bash
+> docker logs <container> 2>&1 | grep 'ai.usage site=agent.total'
+> ```
 
 관련 문서: [배포 회고](DEPLOY_RETROSPECTIVE.md) · [구조](ARCHITECTURE.md)

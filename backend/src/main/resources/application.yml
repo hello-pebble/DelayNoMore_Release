@@ -30,6 +30,10 @@ openrouter:
     # 경로로 되돌릴 수 있게 환경변수로 뺐다. false면 /ai/health가 toolCalling=false를 내리고
     # 프론트는 에이전트 엔드포인트를 호출하지 않는다.
     tool-calling: ${OPENROUTER_TOOL_CALLING:true}
+    # 스트리밍 응답 끝에 usage 청크를 요청할지(stream_options.include_usage). 끄면 스트리밍 경로의
+    # 토큰 사용량 로그(ai.usage site=chat.stream / draft.stream)만 사라지고 스트리밍은 그대로 된다.
+    # 이 필드를 무시하거나 이상 동작하는 모델로 갈아끼웠을 때의 탈출구다.
+    stream-usage: ${OPENROUTER_STREAM_USAGE:true}
 
 # postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
 # 기본(프로필 미지정) 기동은 datasource 설정이 없고 Flyway도 위에서 꺼뒀으므로 DataSource가
