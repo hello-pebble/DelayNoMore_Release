@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.delaynomore'
-version = '0.16.3'
+version = '0.16.4'
 
 java {
 	toolchain {
@@ -93,6 +93,7 @@ tasks.named('test') {
 //   ./gradlew evalAgent -Deval.repeats=3        케이스당 3회(모델 흔들림 측정)
 //   ./gradlew evalAgent -Deval.minPassRate=80   통과율 합격선(기본 없음 — 권한 위반만 무조건 실패)
 //   ./gradlew evalAgent -Deval.only=notool       케이스 id 접두사로 한 축만(쉼표로 여러 축)
+//   ./gradlew evalAgent -Deval.threads=4        병렬 실행 — 시간의 99%가 응답 대기라 그대로 나뉜다
 tasks.register('evalAgent', Test) {
 	group = 'verification'
 	description = '실제 모델로 에이전트 도구 선택 정확도를 측정하고 build/eval/report.md에 리포트를 남긴다.'

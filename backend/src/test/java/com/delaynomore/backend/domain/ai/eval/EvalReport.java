@@ -13,7 +13,12 @@ import java.util.Map;
  * <p>반복(repeat)을 지원하는 이유: 모델은 결정적이지 않아 1회 실행의 통과/실패는 잡음을 포함한다.
  * 케이스별 통과 <b>비율</b>로 보면 "가끔 틀리는 케이스"와 "항상 틀리는 케이스"가 갈린다.
  */
-public record EvalReport(String datasetName, String model, int repeats, List<EvalRunResult> results) {
+public record EvalReport(String datasetName, String model, int repeats, int threads,
+                        List<EvalRunResult> results) {
+
+    public EvalReport(String datasetName, String model, int repeats, List<EvalRunResult> results) {
+        this(datasetName, model, repeats, 1, results);
+    }
 
     public String render() {
         Map<String, List<EvalRunResult>> byCase = new LinkedHashMap<>();
@@ -25,7 +30,13 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
         out.append("# 에이전트 도구 선택 평가 — ").append(datasetName).append("\n\n");
         out.append("- 모델: `").append(model).append("`\n");
         out.append("- 케이스 ").append(byCase.size()).append("개 × ").append(repeats).append("회 = ")
-                .append(results.size()).append("회 실행\n\n");
+                .append(results.size()).append("회 실행\n");
+        if (threads > 1) {
+            // 병렬로 돌렸다는 사실은 결과 해석에 영향을 준다 — 레이트리밋으로 실행 오류가 늘 수
+            // 있어서, 같은 통과율이라도 순차 실행과 같은 값으로 읽으면 안 된다.
+            out.append("- 병렬 ").append(threads).append("스레드\n");
+        }
+        out.append("\n");
 
         out.append("| 케이스 | 통과 | 호출한 도구 | 왕복 | 토큰 |\n");
         out.append("| :--- | :---: | :--- | ---: | ---: |\n");

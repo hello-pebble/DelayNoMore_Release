@@ -69,6 +69,21 @@ class EvalReportTest {
     }
 
     @Test
+    @DisplayName("병렬로 돌렸으면 스레드 수를 리포트에 남긴다")
+    void 병렬_실행은_스레드_수를_남긴다() {
+        EvalCase testCase = anyCase();
+        EvalRunResult run = new EvalRunResult(testCase, 1,
+                new EvalVerdict(testCase.id(), true, List.of(), List.of(), false),
+                List.of("get_today_tasks"), usage(1000, 100, null), 1, null);
+
+        // 병렬은 레이트리밋으로 실행 오류를 늘릴 수 있어, 같은 통과율이라도 순차 실행과 같은
+        // 값으로 읽으면 안 된다 — 해석에 필요한 조건이므로 리포트에 남는다.
+        assertThat(new EvalReport("d", "m", 1, 4, List.of(run)).render()).contains("병렬 4스레드");
+        // 순차 실행에는 없던 줄이 생기면 릴리스 간 diff에 잡음이 된다.
+        assertThat(new EvalReport("d", "m", 1, 1, List.of(run)).render()).doesNotContain("병렬");
+    }
+
+    @Test
     @DisplayName("실행 오류는 판정 실패와 구분해 사유를 적는다")
     void 실행_오류는_사유를_적는다() {
         EvalCase testCase = anyCase();

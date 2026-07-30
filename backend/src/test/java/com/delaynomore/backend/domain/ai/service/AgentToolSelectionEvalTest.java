@@ -33,6 +33,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -49,6 +52,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent                    # 케이스당 1회
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.repeats=3   # 케이스당 3회(흔들림 측정)
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.minPassRate=80
+ *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.only=notool  # 케이스 id 접두사로 한 축만
+ *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.threads=4    # 병렬 실행(벽시계 시간 단축)
  * </pre>
  *
  * <p>합격선을 기본으로 두지 않은 것은 의도다. 모델은 결정적이지 않아 고정 임계값은 곧 무시되는
@@ -95,18 +100,40 @@ class AgentToolSelectionEvalTest {
         EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
         int repeats = Integer.getInteger("eval.repeats", 1);
 
+        // 병렬 실행. 시간의 99%가 업스트림 응답 대기라(실측: 호출당 약 8초) 스레드를 늘리면
+        // 벽시계 시간이 그대로 나뉜다 — 340회 실행이 순차로 80분이었다.
+        int threads = Math.max(1, Integer.getInteger("eval.threads", 1));
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
         List<EvalRunResult> results = new ArrayList<>();
         try {
+            List<Future<EvalRunResult>> pending = new ArrayList<>();
             for (EvalCase testCase : dataset.cases()) {
                 for (int repeat = 1; repeat <= repeats; repeat++) {
-                    results.add(runOnce(testCase, repeat, fixtures));
+                    int attempt = repeat;
+                    pending.add(pool.submit(() -> runOnce(testCase, attempt, fixtures)));
                 }
             }
+            // 제출 순서대로 걷는다 — 완료 순서로 걷으면 리포트의 행 순서가 실행마다 달라져
+            // 릴리스 간 diff가 무의미해진다. 병렬화가 결과의 재현성을 깎지 않게 하는 조건이다.
+            Exception firstFailure = null;
+            for (Future<EvalRunResult> future : pending) {
+                try {
+                    results.add(future.get());
+                } catch (Exception e) {
+                    if (firstFailure == null) {
+                        firstFailure = e;
+                    }
+                }
+            }
+            if (firstFailure != null) {
+                throw firstFailure;
+            }
         } finally {
+            pool.shutdownNow();
             // 리포트는 finally에서 쓴다 — 실행이 도중에 죽어도 그때까지의 측정은 유효하고,
             // 오히려 그럴 때 "어디까지 갔는가"가 가장 필요한 정보다. 예전엔 루프가 죽으면
             // 리포트가 아예 없어서 Gradle HTML 리포트만으로 원인을 캐야 했다.
-            writeReport(dataset, repeats, results);
+            writeReport(dataset, repeats, threads, results);
         }
 
         // 1) 모든 실행이 오류로 끝났다면 이건 모델 품질이 아니라 설정이 고장 난 것이다(키 만료·
@@ -136,11 +163,12 @@ class AgentToolSelectionEvalTest {
         }
     }
 
-    private void writeReport(EvalDataset dataset, int repeats, List<EvalRunResult> results) throws Exception {
+    private void writeReport(EvalDataset dataset, int repeats, int threads, List<EvalRunResult> results)
+            throws Exception {
         if (results.isEmpty()) {
             return;
         }
-        String rendered = new EvalReport(dataset.name(), properties.model(), repeats, results).render();
+        String rendered = new EvalReport(dataset.name(), properties.model(), repeats, threads, results).render();
         Files.createDirectories(REPORT_PATH.getParent());
         Files.writeString(REPORT_PATH, rendered);
         // 경로 안내만 ASCII로 둔다 — 콘솔 인코딩이 어긋나 본문이 깨져 보이는 상황에서
@@ -191,11 +219,18 @@ class AgentToolSelectionEvalTest {
     /**
      * 사용량을 케이스별로 걷어내기 위한 기록용 로거. 스파이 대신 서브클래스를 쓴 이유는
      * 스프링 버전별 빈 오버라이드 API에 묶이지 않기 위해서다 — 평가 하네스는 오래 살아야 한다.
+     *
+     * <p><b>스레드 로컬로 둔 이유</b>: 이 로거는 스프링 싱글턴이라 병렬 실행({@code -Deval.threads})에서
+     * 모든 케이스가 같은 인스턴스에 사용량을 쏟는다. 필드로 두면 케이스별 토큰·왕복 수가 서로
+     * 섞여 <b>비용 열이 조용히 거짓이 된다</b>(정확도는 맞는데 비용만 틀리는, 알아채기 어려운 종류다).
+     *
+     * <p>스레드 로컬이 케이스 단위와 일치하는 근거: 에이전트 루프는 호출 스레드에서 동기로 돌고
+     * ({@code RestClient.exchange}의 콜백도 같은 스레드), 한 스레드는 한 번에 한 케이스만 담당한다.
      */
     static class RecordingUsageLogger extends AiUsageLogger {
 
-        private TokenUsage total = TokenUsage.EMPTY;
-        private int upstreamCalls;
+        private final ThreadLocal<TokenUsage> total = ThreadLocal.withInitial(() -> TokenUsage.EMPTY);
+        private final ThreadLocal<Integer> upstreamCalls = ThreadLocal.withInitial(() -> 0);
 
         RecordingUsageLogger(OpenRouterProperties properties) {
             super(properties);
@@ -205,22 +240,22 @@ class AgentToolSelectionEvalTest {
         public void recordTotal(AiCallSite site, int calls, TokenUsage usage) {
             super.recordTotal(site, calls, usage);
             if (site == AiCallSite.AGENT_TOTAL) {
-                total = total.plus(usage);
-                upstreamCalls += calls;
+                total.set(total.get().plus(usage));
+                upstreamCalls.set(upstreamCalls.get() + calls);
             }
         }
 
         void reset() {
-            total = TokenUsage.EMPTY;
-            upstreamCalls = 0;
+            total.set(TokenUsage.EMPTY);
+            upstreamCalls.set(0);
         }
 
         TokenUsage total() {
-            return total;
+            return total.get();
         }
 
         int upstreamCalls() {
-            return upstreamCalls;
+            return upstreamCalls.get();
         }
     }
 
