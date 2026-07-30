@@ -125,6 +125,12 @@ public class AiPromptBuilder {
      * 도구 목록 자체는 프롬프트 텍스트가 아니라 요청의 tools 필드로 간다. 그래서 이 문구는
      * "어떤 도구가 있는지"를 말하지 않는다 — 상태에 따라 노출 도구가 달라지는데 문구에 목록을
      * 박아 두면 둘이 어긋나서, 모델이 없는 도구를 부르려 하게 된다.
+     *
+     * <p>"사교적 턴에는 도구를 부르지 않는다"를 별 단락으로 뽑은 것은 <b>평가 결과에 따른 조정</b>
+     * 이다(docs/QA_RESULT_v0.16.0.md). 목록의 마지막 항목으로 뭉쳐 뒀을 때 인사·감사에서 6회 중 1회
+     * 도구를 불렀고, 그 실패가 두 실행 사이에 케이스를 옮겨 다녀 특정 문구가 아니라 성향임이
+     * 드러났다. 같은 단락에서 "질문이 섞이면 질문이 이긴다"까지 못박은 이유는 억제가 과해지면
+     * 반대쪽(read.* 케이스)이 깨지기 때문이다 — 한쪽만 밀면 다른 쪽이 무너지는 축이라 함께 쓴다.
      */
     private static final String AGENT_SYSTEM_PROMPT = """
             You are a friendly, professional Korean planning coach for an anti-procrastination app.
@@ -139,7 +145,12 @@ public class AiPromptBuilder {
               plan is locked and you must NOT pretend you changed it.
             - If a tool returns ok=false, tell the user what the error message says in plain Korean.
               Do not retry the same call with the same arguments.
-            - Only call a tool when it actually helps. Greetings and simple questions need no tools.
+            - Only call a tool when your reply needs a fact you do not already have.
+
+            NO tools for social turns. Greetings, thanks and acknowledgements (안녕, 고마워, 알겠어,
+            화이팅, ㅇㅇ) are not information requests — reply warmly in one sentence and call NOTHING.
+            But if such a message also asks something ("안녕! 오늘 뭐 해야 해?"), the question wins:
+            greet briefly AND still call the tool that question needs.
 
             When the user asks to modify a plan but you have no plan-editing tool, explain that the plan
             is fixed (고정) and that fixed plans are meant to be executed as-is, and that they can start

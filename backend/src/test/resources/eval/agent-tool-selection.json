@@ -99,6 +99,14 @@
       "forbidTools": ["carry_over_tasks"]
     },
     {
+      "id": "read.today.after_greeting",
+      "description": "인사와 질문이 섞이면 질문이 이긴다 — 사교적 턴 억제(v0.16.2)가 과해지지 않았는지 보는 반대쪽 케이스",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CONFIRMED",
+      "message": "안녕! 오늘 뭐 해야 해?",
+      "expectTools": ["get_today_tasks"]
+    },
+    {
       "id": "notool.greeting",
       "description": "인사에 도구를 부르지 않는다 — 도구 남용은 왕복만 늘린다",
       "fixture": "NO_PLAN",
