@@ -89,7 +89,9 @@ class AgentToolSelectionEvalTest {
     @Test
     @DisplayName("agent tool-selection eval (states x tools)")
     void evaluateToolSelectionAccuracy() throws Exception {
-        EvalDataset dataset = EvalDataset.loadDefault();
+        // -Deval.only=notool,read.today 처럼 축을 골라 깊게 재는 용도. 고른 사실은 데이터셋 이름에
+        // 남아 리포트 제목에 찍힌다 — 부분집합 결과가 전체 실행처럼 보이면 안 된다.
+        EvalDataset dataset = EvalDataset.loadDefault().filter(System.getProperty("eval.only"));
         EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
         int repeats = Integer.getInteger("eval.repeats", 1);
 

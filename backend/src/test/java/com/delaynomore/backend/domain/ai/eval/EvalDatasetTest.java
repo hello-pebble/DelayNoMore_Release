@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -112,5 +113,31 @@ class EvalDatasetTest {
                             testCase.id(), testCase.status())
                     .containsAll(testCase.expectTools());
         });
+    }
+
+    @Test
+    void only_필터는_접두사로_축을_고른다() {
+        EvalDataset filtered = dataset.filter("notool,read.today");
+
+        assertThat(filtered.cases()).extracting(EvalCase::id)
+                .allSatisfy(id -> assertThat(id).matches("^(notool|read\\.today).*"))
+                .contains("notool.greeting", "notool.thanks", "read.today.draft", "read.today.after_greeting");
+        // 부분집합 결과가 전체 실행 리포트처럼 보이면 통과율이 오독된다 — 이름에 남긴다.
+        assertThat(filtered.name()).isEqualTo(dataset.name() + " (only=notool,read.today)");
+    }
+
+    @Test
+    void only_필터가_비었으면_전체를_그대로_쓴다() {
+        assertThat(dataset.filter(null)).isEqualTo(dataset);
+        assertThat(dataset.filter("   ")).isEqualTo(dataset);
+    }
+
+    @Test
+    void only_필터가_아무것도_고르지_못하면_실패한다() {
+        // 0케이스로 조용히 성공하면 "아무것도 재지 않은 실행"이 통과로 읽힌다. 오타의 대가를 즉시 치른다.
+        assertThatThrownBy(() -> dataset.filter("notoool"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("맞는 케이스가 없습니다")
+                .hasMessageContaining("notool.greeting");
     }
 }
