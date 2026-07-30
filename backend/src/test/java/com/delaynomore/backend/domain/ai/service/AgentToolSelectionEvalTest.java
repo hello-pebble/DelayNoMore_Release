@@ -100,6 +100,11 @@ class AgentToolSelectionEvalTest {
         EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
         int repeats = Integer.getInteger("eval.repeats", 1);
 
+        // 이전 실행의 리포트를 먼저 지운다. 남겨 두면 실행이 결과 하나도 못 내고 죽었을 때 옛 리포트가
+        // 그대로 있어, 그걸 이번 결과로 읽게 된다 — 실제로 그렇게 오독한 적이 있다. 리포트가 아예
+        // 없는 편이 낫다: "실행이 시작조차 못 했다"는 정보가 되기 때문이다(clean을 대신하는 장치).
+        Files.deleteIfExists(REPORT_PATH);
+
         // 병렬 실행. 시간의 99%가 업스트림 응답 대기라(실측: 호출당 약 8초) 스레드를 늘리면
         // 벽시계 시간이 그대로 나뉜다 — 340회 실행이 순차로 80분이었다.
         int threads = Math.max(1, Integer.getInteger("eval.threads", 1));
