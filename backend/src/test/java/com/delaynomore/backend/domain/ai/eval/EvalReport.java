@@ -49,7 +49,7 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
                 .append(total.totalTokens()).append("(입력 ").append(total.promptTokens())
                 .append(" / 출력 ").append(total.completionTokens()).append(")");
         if (total.cost() != null) {
-            out.append(" · 비용 $").append(total.cost());
+            out.append(" · 비용 $").append(formatCost(total.cost()));
         }
         out.append("\n");
 
@@ -97,5 +97,20 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
 
     private static long percent(long numerator, long denominator) {
         return denominator == 0 ? 0 : Math.round(numerator * 100.0 / denominator);
+    }
+
+    /**
+     * 비용을 유효숫자 4자리로 줄여 찍는다. {@code double}을 그대로 문자열화하면 부동소수점 원값이
+     * 새어 나온다($0.04795999999999999) — 여러 턴의 cost를 더한 값이라 오차가 누적되기 때문이다.
+     *
+     * <p>자릿수를 고정하지 않은 이유({@code %.5f}가 아닌 이유): 총액은 케이스 수와 반복 횟수에 따라
+     * 자릿수가 크게 달라진다. 1회 실행의 $0.0008을 소수 5자리로 찍으면 유효숫자가 한 자리만 남고,
+     * 48회 실행의 $0.048에 5자리는 과하다. 유효숫자 기준이면 규모와 무관하게 읽을 만한 값이 된다.
+     */
+    private static String formatCost(double cost) {
+        return java.math.BigDecimal.valueOf(cost)
+                .round(new java.math.MathContext(4))
+                .stripTrailingZeros()
+                .toPlainString();
     }
 }
