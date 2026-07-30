@@ -11,6 +11,14 @@ OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.minPassRate=80
 
 리포트는 콘솔과 `backend/build/eval/report.md`에 남습니다.
 
+> **Windows에서 한글이 깨지면** — 빌드 쪽은 `build.gradle`이 UTF-8로 못박아 두었습니다(`javac`는
+> `-encoding`이 없으면 플랫폼 기본, 즉 한국어 Windows에서 CP949로 소스를 읽어 **한글 리터럴을
+> 컴파일 시점에 깨뜨립니다** — 콘솔 표시 문제가 아니라 산출물이 망가지는 문제입니다).
+>
+> 그래도 콘솔만 깨져 보이면 터미널 코드페이지 문제입니다. `cmd`/PowerShell은 `chcp 65001`을 먼저
+> 실행하세요. Git Bash는 보통 UTF-8이라 그대로 됩니다. 어느 쪽이든 **`report.md` 파일이 정본**이니
+> 콘솔이 의심스러우면 파일을 에디터로 여세요.
+
 ---
 
 ## 1. 왜 이걸 먼저 만들었나
