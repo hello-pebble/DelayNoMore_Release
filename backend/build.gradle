@@ -5,12 +5,32 @@ plugins {
 }
 
 group = 'com.delaynomore'
-version = '0.16.0'
+version = '0.17.0'
 
 java {
 	toolchain {
 		languageVersion = JavaLanguageVersion.of(21)
 	}
+}
+
+// 인코딩을 플랫폼 기본값에 맡기지 않는다. JDK 18(JEP 400)부터 javac 기본이 UTF-8이라 지금
+// 툴체인(21)에서는 사실상 no-op이지만, 이 저장소의 소스는 한글 주석·문자열·테스트 메서드명이
+// 잔뜩 든 UTF-8이라 기본값에 의존할 자리가 아니다 — 더 낮은 JDK나 다른 툴체인에서 소스 해석이
+// 흔들리면 한글 리터럴이 .class에 깨진 채 박힌다(표시 문제가 아니라 산출물이 망가지는 문제).
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+}
+
+tasks.withType(Test).configureEach {
+	// 테스트 JVM이 표준출력을 UTF-8로 내보내게 한다. Gradle은 워커의 기본 charset으로 그 바이트를
+	// 해석하므로, 여기서 고정하지 않으면 플랫폼에 따라 해석이 갈린다(평가 리포트를 콘솔에 찍는
+	// evalAgent가 이 경로를 그대로 탄다).
+	//
+	// systemProperty(단수)로 하나씩 넣는다 — systemProperties = [..] 처럼 <b>맵을 통째로 대입</b>하면
+	// 여기서 넣은 인코딩 설정이 지워진다(evalAgent가 실제로 그랬다).
+	systemProperty 'file.encoding', 'UTF-8'
+	systemProperty 'stdout.encoding', 'UTF-8'
+	systemProperty 'stderr.encoding', 'UTF-8'
 }
 
 repositories {
@@ -72,6 +92,8 @@ tasks.named('test') {
 //   ./gradlew evalAgent
 //   ./gradlew evalAgent -Deval.repeats=3        케이스당 3회(모델 흔들림 측정)
 //   ./gradlew evalAgent -Deval.minPassRate=80   통과율 합격선(기본 없음 — 권한 위반만 무조건 실패)
+//   ./gradlew evalAgent -Deval.only=notool       케이스 id 접두사로 한 축만(쉼표로 여러 축)
+//   ./gradlew evalAgent -Deval.threads=4        병렬 실행 — 시간의 99%가 응답 대기라 그대로 나뉜다
 tasks.register('evalAgent', Test) {
 	group = 'verification'
 	description = '실제 모델로 에이전트 도구 선택 정확도를 측정하고 build/eval/report.md에 리포트를 남긴다.'
@@ -83,7 +105,9 @@ tasks.register('evalAgent', Test) {
 	// 평가 결과는 매번 달라질 수 있으므로 캐시된 "성공"을 재사용하면 안 된다.
 	outputs.upToDateWhen { false }
 	// -Deval.* 옵션을 테스트 JVM으로 전달한다(Gradle JVM의 시스템 프로퍼티는 자동 전파되지 않는다).
-	systemProperties = System.properties.findAll { key, value -> key.toString().startsWith('eval.') }
+	// putAll로 <b>더한다</b> — `systemProperties = [..]`로 대입하면 위 withType(Test)가 넣어둔
+	// 인코딩 설정까지 지워져 평가 리포트의 한글이 깨진다.
+	systemProperties.putAll(System.properties.findAll { key, value -> key.toString().startsWith('eval.') })
 	testLogging {
 		showStandardStreams = true  // 리포트를 콘솔에서 바로 본다
 		exceptionFormat = 'full'

@@ -66,6 +66,28 @@ public class EvalFixtures {
         return new Prepared(owner, planId, tasks);
     }
 
+    /**
+     * 케이스가 쓴 계획을 지운다. <b>반복 횟수를 올릴 수 있으려면 필수다</b> — 계획 저장소에는
+     * 전역 한도({@code MAX_PLANS_GLOBAL}=200)가 있어서, 실행마다 계획을 하나 만들고 치우지 않으면
+     * 200회를 넘기는 순간 준비 단계가 {@code PLAN_STORE_FULL}로 죽는다. 실제로
+     * {@code -Deval.repeats=20}(16케이스 = 320회)에서 그렇게 죽었다.
+     *
+     * <p>정리를 케이스마다 하는 이유: 실행이 끝난 계획은 다음 케이스에 아무 의미가 없고, 남겨 두면
+     * 한도라는 <b>측정과 무관한 제약</b>이 측정 가능한 반복 횟수를 결정하게 된다.
+     *
+     * <p>정리 실패는 삼킨다 — 이미 얻은 측정 결과를 뒷정리 때문에 버릴 이유가 없다.
+     */
+    public void release(Prepared prepared) {
+        if (prepared == null || prepared.planId() == null) {
+            return;
+        }
+        try {
+            planService.delete(prepared.planId(), prepared.owner(), "eval-session");
+        } catch (Exception ignored) {
+            // 삭제가 실패해도 측정은 유효하다. 한도에 닿으면 그때 준비 단계가 알려준다.
+        }
+    }
+
     // 전이는 반드시 전이 API로 — 상태가 도구 노출을 결정하는 구조라, 상태를 만드는 경로가
     // 실제와 다르면 평가 결과도 실제와 달라진다.
     private void moveTo(long planId, PlanStatus target, String owner) {

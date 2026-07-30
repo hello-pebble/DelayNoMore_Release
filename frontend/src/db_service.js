@@ -117,13 +117,15 @@ export const streamAiDraft = (payload, onEvent) => consumeSse('/ai/drafts/stream
 
 // 에이전트 대화 스트리밍(SSE) — /api/v1/ai/agent/chats/stream. 위 자유 대화와 달리 계획 변경이
 // 산문 속 ===PLAN=== 구분자가 아니라 서버가 실행하는 도구 호출로 일어나고, 그 과정이 이벤트로 흐른다.
-// 이벤트: {type:'step',n} / {type:'tool_call',id,name,args} / {type:'tool_result',id,ok,summary}
+// 이벤트: {type:'profile',name,label}(v0.17.0, 최초 1회 — 이번 실행의 페르소나) / {type:'step',n}
+//        / {type:'tool_call',id,name,args} / {type:'tool_result',id,ok,summary}
 //        / {type:'token',t} / {type:'plan',tasks} / {type:'plan_refresh',planId} / {type:'done'} / {type:'error',m}
 // plan(미저장 변경 → 초안으로 채택)과 plan_refresh(서버가 이미 저장 → 재조회)의 구분에 주의.
 export const streamAiAgentChat = (payload, onEvent) => consumeSse('/ai/agent/chats/stream', payload, onEvent);
 
-// 에이전트 도구 카탈로그 — 해당 계획 상태에서 모델에게 실제로 노출되는 도구만 내려온다.
-// planId를 생략하면 보관 전 초안(DRAFT) 기준. 응답 data: [{name, description, mutating, parameters}]
+// 에이전트 카탈로그 — 해당 계획 상태의 프로필과, 모델에게 실제로 노출되는 도구만 내려온다.
+// planId를 생략하면 보관 전 초안(DRAFT) 기준.
+// 응답 data: {profile:{name,label}, tools:[{name, description, mutating, parameters}]} (v0.17.0에서 래핑)
 export const fetchAgentTools = (planId) =>
   requestJson(`/ai/agent/tools${planId == null ? '' : `?planId=${planId}`}`, null, 'GET');
 

@@ -72,7 +72,8 @@
       "fixture": "WEEK_PARTIAL",
       "status": "CONFIRMED",
       "message": "마지막 날에 '모의고사 1회 풀기'를 추가해줘",
-      "forbidTools": ["update_plan_tasks"]
+      "forbidTools": ["update_plan_tasks"],
+      "avoidTools": ["carry_over_tasks"]
     },
     {
       "id": "write.update.completed_blocked",
@@ -80,6 +81,14 @@
       "fixture": "WEEK_PARTIAL",
       "status": "COMPLETED",
       "message": "마지막 날에 '모의고사 1회 풀기'를 추가하고, 남은 건 내일로 미뤄줘",
+      "forbidTools": ["update_plan_tasks", "carry_over_tasks"]
+    },
+    {
+      "id": "write.update.cancelled_blocked",
+      "description": "중단된 계획도 전면 잠금 — CANCELLED 최초 실측(v0.17.0), 회고 도우미 프로필 경로",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CANCELLED",
+      "message": "이 계획 다시 살려서 마지막 날 내용 바꿔줘",
       "forbidTools": ["update_plan_tasks", "carry_over_tasks"]
     },
     {
@@ -99,6 +108,14 @@
       "forbidTools": ["carry_over_tasks"]
     },
     {
+      "id": "read.today.after_greeting",
+      "description": "인사와 질문이 섞이면 질문이 이긴다 — 사교적 턴 억제(v0.16.2)가 과해지지 않았는지 보는 반대쪽 케이스",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CONFIRMED",
+      "message": "안녕! 오늘 뭐 해야 해?",
+      "expectTools": ["get_today_tasks"]
+    },
+    {
       "id": "notool.greeting",
       "description": "인사에 도구를 부르지 않는다 — 도구 남용은 왕복만 늘린다",
       "fixture": "NO_PLAN",
@@ -112,6 +129,14 @@
       "fixture": "WEEK_PARTIAL",
       "status": "CONFIRMED",
       "message": "고마워요, 덕분에 많이 도움이 됐어요",
+      "expectNoTools": true
+    },
+    {
+      "id": "notool.domain_question",
+      "description": "도메인 지식 질문은 전문가가 직접 답한다(v0.17.0) — 프로필 도입이 새로 만드는 위험 축: 전문가 페르소나가 지식 질문에서 불필요한 도구 호출을 유발하지 않는가",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CONFIRMED",
+      "message": "실기 시험에 나오는 SQL 조인 종류 좀 설명해줘",
       "expectNoTools": true
     },
     {

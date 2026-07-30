@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -71,6 +72,8 @@ class EvalDatasetTest {
                     .containsAll(testCase.expectTools());
             assertThat(REAL_TOOL_NAMES).as("%s.forbidTools", testCase.id())
                     .containsAll(testCase.forbidTools());
+            assertThat(REAL_TOOL_NAMES).as("%s.avoidTools", testCase.id())
+                    .containsAll(testCase.avoidTools());
         });
     }
 
@@ -80,8 +83,9 @@ class EvalDatasetTest {
         assertThat(dataset.cases()).allSatisfy(testCase ->
                 assertThat(testCase.expectNoTools()
                         || !testCase.expectTools().isEmpty()
-                        || !testCase.forbidTools().isEmpty())
-                        .as("%s: 기대·금지·expectNoTools 중 하나는 있어야 한다", testCase.id())
+                        || !testCase.forbidTools().isEmpty()
+                        || !testCase.avoidTools().isEmpty())
+                        .as("%s: 기대·금지·회피·expectNoTools 중 하나는 있어야 한다", testCase.id())
                         .isTrue());
     }
 
@@ -100,17 +104,82 @@ class EvalDatasetTest {
     void 기대한_도구는_그_상태에서_실제로_노출되는_도구다() {
         // 상태 권한 표와 데이터셋이 어긋나면(예: CONFIRMED에서 update_plan_tasks를 기대) 그 케이스는
         // 모델이 아무리 잘해도 통과할 수 없다. 데이터셋의 버그를 모델 탓으로 오독하는 걸 막는다.
-        AgentToolRegistry registry = new AgentToolRegistry(List.of(
-                new GetTodayTasksTool(mock()), new GetWeeklySummaryTool(mock()),
-                new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
-                new UpdatePlanTasksTool(), new CarryOverTool(mock())));
+        AgentToolRegistry registry = registry();
 
         assertThat(dataset.cases()).allSatisfy(testCase -> {
-            Set<String> exposed = Set.copyOf(
-                    registry.toolsFor(testCase.status()).stream().map(AgentTool::name).toList());
+            Set<String> exposed = exposedNames(registry, testCase);
             assertThat(exposed).as("%s: %s 상태에서 노출되지 않는 도구를 기대하고 있다",
                             testCase.id(), testCase.status())
                     .containsAll(testCase.expectTools());
         });
+    }
+
+    @Test
+    void forbid는_그_상태에서_노출되지_않는_도구여야_한다() {
+        // forbidTools의 실행은 "권한 표가 깨졌다"는 뜻이라 빌드를 깨뜨린다. 그런데 노출되는 도구를
+        // forbid에 넣으면 모델이 정상적으로 그걸 쓸 때마다 빌드가 깨진다 — 설계 결함이 아닌데 사고로
+        // 보고되는 것이다. 노출되지만 이 요청엔 부적절한 도구는 avoidTools 쪽이다.
+        AgentToolRegistry registry = registry();
+
+        assertThat(dataset.cases()).allSatisfy(testCase -> {
+            Set<String> exposed = exposedNames(registry, testCase);
+            assertThat(testCase.forbidTools())
+                    .as("%s: %s에서 노출되는 도구를 forbid에 뒀다 — avoidTools로 옮겨야 한다",
+                            testCase.id(), testCase.status())
+                    .noneMatch(exposed::contains);
+        });
+    }
+
+    @Test
+    void avoid는_그_상태에서_노출되는_도구여야_한다() {
+        // 반대 방향의 함정: 노출되지 않는 도구를 avoid에 넣으면 영원히 발화하지 않는다.
+        // 아무것도 재지 않는 케이스가 통과율만 부풀리는 것을 막는다.
+        AgentToolRegistry registry = registry();
+
+        assertThat(dataset.cases()).allSatisfy(testCase -> {
+            Set<String> exposed = exposedNames(registry, testCase);
+            assertThat(exposed)
+                    .as("%s: %s에서 노출되지 않는 도구를 avoid에 뒀다 — 영원히 발화하지 않는다",
+                            testCase.id(), testCase.status())
+                    .containsAll(testCase.avoidTools());
+        });
+    }
+
+    @Test
+    void only_필터는_접두사로_축을_고른다() {
+        EvalDataset filtered = dataset.filter("notool,read.today");
+
+        assertThat(filtered.cases()).extracting(EvalCase::id)
+                .allSatisfy(id -> assertThat(id).matches("^(notool|read\\.today).*"))
+                .contains("notool.greeting", "notool.thanks", "read.today.draft", "read.today.after_greeting");
+        // 부분집합 결과가 전체 실행 리포트처럼 보이면 통과율이 오독된다 — 이름에 남긴다.
+        assertThat(filtered.name()).isEqualTo(dataset.name() + " (only=notool,read.today)");
+    }
+
+    @Test
+    void only_필터가_비었으면_전체를_그대로_쓴다() {
+        assertThat(dataset.filter(null)).isEqualTo(dataset);
+        assertThat(dataset.filter("   ")).isEqualTo(dataset);
+    }
+
+    @Test
+    void only_필터가_아무것도_고르지_못하면_실패한다() {
+        // 0케이스로 조용히 성공하면 "아무것도 재지 않은 실행"이 통과로 읽힌다. 오타의 대가를 즉시 치른다.
+        assertThatThrownBy(() -> dataset.filter("notoool"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("맞는 케이스가 없습니다")
+                .hasMessageContaining("notool.greeting");
+    }
+
+    // 레지스트리를 실제로 조립한다 — 노출 표를 테스트에 다시 적으면 그 사본이 또 썩는다.
+    private static AgentToolRegistry registry() {
+        return new AgentToolRegistry(List.of(
+                new GetTodayTasksTool(mock()), new GetWeeklySummaryTool(mock()),
+                new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
+                new UpdatePlanTasksTool(), new CarryOverTool(mock())));
+    }
+
+    private static Set<String> exposedNames(AgentToolRegistry registry, EvalCase testCase) {
+        return Set.copyOf(registry.toolsFor(testCase.status()).stream().map(AgentTool::name).toList());
     }
 }

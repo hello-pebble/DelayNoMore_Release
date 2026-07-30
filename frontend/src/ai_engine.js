@@ -274,10 +274,13 @@ function draftWithTasks(draft, tasks) {
  * 에이전트 대화(스트리밍) — 계획 변경이 산문 규약(===PLAN===)이 아니라 서버가 실행하는 도구
  * 호출로 일어난다. 도구 호출·결과는 onStep(steps 배열)으로 흘려보내 화면의 추적 패널이 그린다.
  *
- * 반환: { reply, updatedDraft, refreshPlanId, steps }
+ * 반환: { reply, updatedDraft, refreshPlanId, steps, profile }
  *  - updatedDraft : 아직 저장되지 않은 계획 변경(update_plan_tasks) — 호출부가 초안으로 채택한다.
  *  - refreshPlanId: 서버가 이미 저장한 변경(carry_over_tasks) — 호출부가 서버에서 다시 읽는다.
  *    둘을 구분하지 않고 초안으로 채택하면, 고정된 계획에서 뒤따르는 PUT이 409로 튕긴다.
+ *  - profile      : 이번 실행이 실제로 쓴 프로필 { name, label } (v0.17.0). 서버 저장 상태에서
+ *    파생된 값이라 프론트의 로컬 상태 추측과 어긋날 수 있고, 어긋나면 이쪽이 맞다.
+ *    폴백 경로(자유 대화)는 프로필 개념이 없어 null이다 — 호출부는 부재를 허용해야 한다.
  *
  * 폴백: 에이전트 경로가 실패하면(도구 미지원 모델·업스트림 오류·루프 상한) 기존 자유 대화
  * 스트리밍으로 넘긴다. 그쪽도 실패하면 비스트리밍 → mock으로 이어져 총 4단이 된다.
@@ -288,6 +291,7 @@ export async function streamAgentChat(slots, draft, history, message, planId, on
   let tasks = null;
   let refreshPlanId = null;
   let streamError = null;
+  let profile = null;
   const steps = [];
 
   const pushStep = (step) => {
@@ -308,7 +312,9 @@ export async function streamAgentChat(slots, draft, history, message, planId, on
         planId: planId ?? null
       },
       (evt) => {
-        if (evt.type === 'tool_call') {
+        if (evt.type === 'profile') {
+          profile = { name: evt.name, label: evt.label };
+        } else if (evt.type === 'tool_call') {
           pushStep({ id: evt.id, name: evt.name, args: evt.args, status: 'running' });
         } else if (evt.type === 'tool_result') {
           const target = steps.find((s) => s.id === evt.id);
@@ -341,7 +347,8 @@ export async function streamAgentChat(slots, draft, history, message, planId, on
         reply: replyText.trim() || "요청하신 내용을 반영했습니다. 오른쪽 체크리스트를 확인해 주세요.",
         updatedDraft,
         refreshPlanId,
-        steps
+        steps,
+        profile
       };
     }
     throw new Error("empty agent reply");
@@ -352,11 +359,13 @@ export async function streamAgentChat(slots, draft, history, message, planId, on
         reply: replyText.trim(),
         updatedDraft: tasks ? draftWithTasks(draft, tasks) : null,
         refreshPlanId,
-        steps
+        steps,
+        profile
       };
     }
     const fallback = await streamChatWithCoach(slots, draft, history, message, onToken);
-    return { ...fallback, refreshPlanId: null, steps: [] };
+    // 자유 대화 폴백에는 프로필 개념이 없다 — 페르소나는 기존 코치로 회귀한다(의도된 비대칭).
+    return { ...fallback, refreshPlanId: null, steps: [], profile: null };
   }
 }
 

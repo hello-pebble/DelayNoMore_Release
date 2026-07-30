@@ -17,6 +17,7 @@ import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -32,6 +33,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -48,6 +52,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent                    # 케이스당 1회
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.repeats=3   # 케이스당 3회(흔들림 측정)
  *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.minPassRate=80
+ *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.only=notool  # 케이스 id 접두사로 한 축만
+ *   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.threads=4    # 병렬 실행(벽시계 시간 단축)
  * </pre>
  *
  * <p>합격선을 기본으로 두지 않은 것은 의도다. 모델은 결정적이지 않아 고정 임계값은 곧 무시되는
@@ -75,24 +81,65 @@ class AgentToolSelectionEvalTest {
     @Autowired
     private RecordingUsageLogger usageLogger;
 
+    /**
+     * 이 테스트만 이름을 ASCII로 두는 이유: {@code showStandardStreams = true} 때문에 Gradle이
+     * 리포트를 콘솔로 흘릴 때마다 테스트 이름을 헤더로 함께 찍는데, Windows 콘솔 코드페이지가
+     * UTF-8이 아니면 그 헤더가 깨져 보인다. 리포트 본문의 한글은 터미널 설정으로만 해결되지만
+     * (chcp 65001), 이 헤더는 이름을 ASCII로 두면 어느 콘솔에서도 읽힌다.
+     *
+     * <p>@DisplayName이 아니라 메서드명 자체를 ASCII로 둔 것은, Gradle이 스택트레이스·XML 리포트
+     * 등 여러 경로에서 메서드명을 그대로 쓰기 때문이다(DisplayName만 바꾸면 일부 경로가 남는다).
+     * 나머지 테스트는 콘솔로 흐르지 않으므로 프로젝트 관례대로 한글 이름을 유지한다.
+     */
     @Test
-    void 상태별_도구_선택_정확도를_측정한다() throws Exception {
-        EvalDataset dataset = EvalDataset.loadDefault();
+    @DisplayName("agent tool-selection eval (states x tools)")
+    void evaluateToolSelectionAccuracy() throws Exception {
+        // -Deval.only=notool,read.today 처럼 축을 골라 깊게 재는 용도. 고른 사실은 데이터셋 이름에
+        // 남아 리포트 제목에 찍힌다 — 부분집합 결과가 전체 실행처럼 보이면 안 된다.
+        EvalDataset dataset = EvalDataset.loadDefault().filter(System.getProperty("eval.only"));
         EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
         int repeats = Integer.getInteger("eval.repeats", 1);
 
-        List<EvalRunResult> results = new ArrayList<>();
-        for (EvalCase testCase : dataset.cases()) {
-            for (int repeat = 1; repeat <= repeats; repeat++) {
-                results.add(runOnce(testCase, repeat, fixtures));
-            }
-        }
+        // 이전 실행의 리포트를 먼저 지운다. 남겨 두면 실행이 결과 하나도 못 내고 죽었을 때 옛 리포트가
+        // 그대로 있어, 그걸 이번 결과로 읽게 된다 — 실제로 그렇게 오독한 적이 있다. 리포트가 아예
+        // 없는 편이 낫다: "실행이 시작조차 못 했다"는 정보가 되기 때문이다(clean을 대신하는 장치).
+        Files.deleteIfExists(REPORT_PATH);
 
-        EvalReport report = new EvalReport(dataset.name(), properties.model(), repeats, results);
-        String rendered = report.render();
-        Files.createDirectories(REPORT_PATH.getParent());
-        Files.writeString(REPORT_PATH, rendered);
-        System.out.println("\n" + rendered + "\n리포트: " + REPORT_PATH.toAbsolutePath());
+        // 병렬 실행. 시간의 99%가 업스트림 응답 대기라(실측: 호출당 약 8초) 스레드를 늘리면
+        // 벽시계 시간이 그대로 나뉜다 — 340회 실행이 순차로 80분이었다.
+        int threads = Math.max(1, Integer.getInteger("eval.threads", 1));
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<EvalRunResult> results = new ArrayList<>();
+        try {
+            List<Future<EvalRunResult>> pending = new ArrayList<>();
+            for (EvalCase testCase : dataset.cases()) {
+                for (int repeat = 1; repeat <= repeats; repeat++) {
+                    int attempt = repeat;
+                    pending.add(pool.submit(() -> runOnce(testCase, attempt, fixtures)));
+                }
+            }
+            // 제출 순서대로 걷는다 — 완료 순서로 걷으면 리포트의 행 순서가 실행마다 달라져
+            // 릴리스 간 diff가 무의미해진다. 병렬화가 결과의 재현성을 깎지 않게 하는 조건이다.
+            Exception firstFailure = null;
+            for (Future<EvalRunResult> future : pending) {
+                try {
+                    results.add(future.get());
+                } catch (Exception e) {
+                    if (firstFailure == null) {
+                        firstFailure = e;
+                    }
+                }
+            }
+            if (firstFailure != null) {
+                throw firstFailure;
+            }
+        } finally {
+            pool.shutdownNow();
+            // 리포트는 finally에서 쓴다 — 실행이 도중에 죽어도 그때까지의 측정은 유효하고,
+            // 오히려 그럴 때 "어디까지 갔는가"가 가장 필요한 정보다. 예전엔 루프가 죽으면
+            // 리포트가 아예 없어서 Gradle HTML 리포트만으로 원인을 캐야 했다.
+            writeReport(dataset, repeats, threads, results);
+        }
 
         // 1) 모든 실행이 오류로 끝났다면 이건 모델 품질이 아니라 설정이 고장 난 것이다(키 만료·
         //    업스트림 장애 등). 통과율 0%를 "모델이 못했다"로 읽으면 안 되므로 따로 세운다.
@@ -121,8 +168,20 @@ class AgentToolSelectionEvalTest {
         }
     }
 
+    private void writeReport(EvalDataset dataset, int repeats, int threads, List<EvalRunResult> results)
+            throws Exception {
+        if (results.isEmpty()) {
+            return;
+        }
+        String rendered = new EvalReport(dataset.name(), properties.model(), repeats, threads, results).render();
+        Files.createDirectories(REPORT_PATH.getParent());
+        Files.writeString(REPORT_PATH, rendered);
+        // 경로 안내만 ASCII로 둔다 — 콘솔 인코딩이 어긋나 본문이 깨져 보이는 상황에서
+        // 사용자가 유일하게 필요한 정보가 "정본 파일이 어디인가"이기 때문이다.
+        System.out.println("\n" + rendered + "\n[eval] report: " + REPORT_PATH.toAbsolutePath());
+    }
+
     private EvalRunResult runOnce(EvalCase testCase, int repeat, EvalFixtures fixtures) {
-        EvalFixtures.Prepared prepared = fixtures.prepare(testCase, repeat);
         List<String> attempted = new ArrayList<>();
         AgentEventSink sink = event -> {
             if ("tool_call".equals(event.get("type"))) {
@@ -132,12 +191,19 @@ class AgentToolSelectionEvalTest {
 
         usageLogger.reset();
         String error = null;
+        EvalFixtures.Prepared prepared = null;
         try {
+            // 준비도 try 안에서 한다. 밖에 두면 픽스처 실패 하나가 이미 끝난 케이스들의 결과까지
+            // 통째로 날린다 — 계획 저장소 전역 한도(200)에 닿았을 때 실제로 그랬다.
+            prepared = fixtures.prepare(testCase, repeat);
             agentRunner.run(request(testCase, prepared), prepared.owner(), "eval-session", sink);
         } catch (Exception e) {
             // 업스트림 오류·루프 상한은 그 케이스의 결과로 기록하고 다음 케이스를 계속 돈다 —
             // 한 케이스가 죽었다고 나머지 열다섯 개의 신호를 버릴 이유가 없다.
             error = e.getClass().getSimpleName() + ": " + e.getMessage();
+        } finally {
+            // 케이스가 쓴 계획을 즉시 치운다 — 안 치우면 저장소 한도가 반복 횟수의 상한이 된다.
+            fixtures.release(prepared);
         }
 
         // 노출 목록은 레지스트리에서 그대로 가져온다 — 채점기가 권한 표를 다시 적으면
@@ -158,11 +224,18 @@ class AgentToolSelectionEvalTest {
     /**
      * 사용량을 케이스별로 걷어내기 위한 기록용 로거. 스파이 대신 서브클래스를 쓴 이유는
      * 스프링 버전별 빈 오버라이드 API에 묶이지 않기 위해서다 — 평가 하네스는 오래 살아야 한다.
+     *
+     * <p><b>스레드 로컬로 둔 이유</b>: 이 로거는 스프링 싱글턴이라 병렬 실행({@code -Deval.threads})에서
+     * 모든 케이스가 같은 인스턴스에 사용량을 쏟는다. 필드로 두면 케이스별 토큰·왕복 수가 서로
+     * 섞여 <b>비용 열이 조용히 거짓이 된다</b>(정확도는 맞는데 비용만 틀리는, 알아채기 어려운 종류다).
+     *
+     * <p>스레드 로컬이 케이스 단위와 일치하는 근거: 에이전트 루프는 호출 스레드에서 동기로 돌고
+     * ({@code RestClient.exchange}의 콜백도 같은 스레드), 한 스레드는 한 번에 한 케이스만 담당한다.
      */
     static class RecordingUsageLogger extends AiUsageLogger {
 
-        private TokenUsage total = TokenUsage.EMPTY;
-        private int upstreamCalls;
+        private final ThreadLocal<TokenUsage> total = ThreadLocal.withInitial(() -> TokenUsage.EMPTY);
+        private final ThreadLocal<Integer> upstreamCalls = ThreadLocal.withInitial(() -> 0);
 
         RecordingUsageLogger(OpenRouterProperties properties) {
             super(properties);
@@ -172,22 +245,22 @@ class AgentToolSelectionEvalTest {
         public void recordTotal(AiCallSite site, int calls, TokenUsage usage) {
             super.recordTotal(site, calls, usage);
             if (site == AiCallSite.AGENT_TOTAL) {
-                total = total.plus(usage);
-                upstreamCalls += calls;
+                total.set(total.get().plus(usage));
+                upstreamCalls.set(upstreamCalls.get() + calls);
             }
         }
 
         void reset() {
-            total = TokenUsage.EMPTY;
-            upstreamCalls = 0;
+            total.set(TokenUsage.EMPTY);
+            upstreamCalls.set(0);
         }
 
         TokenUsage total() {
-            return total;
+            return total.get();
         }
 
         int upstreamCalls() {
-            return upstreamCalls;
+            return upstreamCalls.get();
         }
     }
 

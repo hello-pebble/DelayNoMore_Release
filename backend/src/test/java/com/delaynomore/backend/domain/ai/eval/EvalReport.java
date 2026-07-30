@@ -13,7 +13,12 @@ import java.util.Map;
  * <p>반복(repeat)을 지원하는 이유: 모델은 결정적이지 않아 1회 실행의 통과/실패는 잡음을 포함한다.
  * 케이스별 통과 <b>비율</b>로 보면 "가끔 틀리는 케이스"와 "항상 틀리는 케이스"가 갈린다.
  */
-public record EvalReport(String datasetName, String model, int repeats, List<EvalRunResult> results) {
+public record EvalReport(String datasetName, String model, int repeats, int threads,
+                        List<EvalRunResult> results) {
+
+    public EvalReport(String datasetName, String model, int repeats, List<EvalRunResult> results) {
+        this(datasetName, model, repeats, 1, results);
+    }
 
     public String render() {
         Map<String, List<EvalRunResult>> byCase = new LinkedHashMap<>();
@@ -25,7 +30,13 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
         out.append("# 에이전트 도구 선택 평가 — ").append(datasetName).append("\n\n");
         out.append("- 모델: `").append(model).append("`\n");
         out.append("- 케이스 ").append(byCase.size()).append("개 × ").append(repeats).append("회 = ")
-                .append(results.size()).append("회 실행\n\n");
+                .append(results.size()).append("회 실행\n");
+        if (threads > 1) {
+            // 병렬로 돌렸다는 사실은 결과 해석에 영향을 준다 — 레이트리밋으로 실행 오류가 늘 수
+            // 있어서, 같은 통과율이라도 순차 실행과 같은 값으로 읽으면 안 된다.
+            out.append("- 병렬 ").append(threads).append("스레드\n");
+        }
+        out.append("\n");
 
         out.append("| 케이스 | 통과 | 호출한 도구 | 왕복 | 토큰 |\n");
         out.append("| :--- | :---: | :--- | ---: | ---: |\n");
@@ -49,7 +60,7 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
                 .append(total.totalTokens()).append("(입력 ").append(total.promptTokens())
                 .append(" / 출력 ").append(total.completionTokens()).append(")");
         if (total.cost() != null) {
-            out.append(" · 비용 $").append(total.cost());
+            out.append(" · 비용 $").append(formatCost(total.cost()));
         }
         out.append("\n");
 
@@ -97,5 +108,20 @@ public record EvalReport(String datasetName, String model, int repeats, List<Eva
 
     private static long percent(long numerator, long denominator) {
         return denominator == 0 ? 0 : Math.round(numerator * 100.0 / denominator);
+    }
+
+    /**
+     * 비용을 유효숫자 4자리로 줄여 찍는다. {@code double}을 그대로 문자열화하면 부동소수점 원값이
+     * 새어 나온다($0.04795999999999999) — 여러 턴의 cost를 더한 값이라 오차가 누적되기 때문이다.
+     *
+     * <p>자릿수를 고정하지 않은 이유({@code %.5f}가 아닌 이유): 총액은 케이스 수와 반복 횟수에 따라
+     * 자릿수가 크게 달라진다. 1회 실행의 $0.0008을 소수 5자리로 찍으면 유효숫자가 한 자리만 남고,
+     * 48회 실행의 $0.048에 5자리는 과하다. 유효숫자 기준이면 규모와 무관하게 읽을 만한 값이 된다.
+     */
+    private static String formatCost(double cost) {
+        return java.math.BigDecimal.valueOf(cost)
+                .round(new java.math.MathContext(4))
+                .stripTrailingZeros()
+                .toPlainString();
     }
 }

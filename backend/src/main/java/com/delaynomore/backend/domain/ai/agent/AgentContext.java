@@ -62,6 +62,12 @@ public final class AgentContext {
         return status;
     }
 
+    // 상태에서 파생되는 프로필(v0.17.0). 별도 필드로 들지 않는 이유: status가 유일한 입력이라
+    // 저장하면 둘이 어긋날 수 있는 상태가 하나 늘어날 뿐이다.
+    public AgentProfile profile() {
+        return AgentProfile.forStatus(status);
+    }
+
     public String goalName() {
         return goalName;
     }
