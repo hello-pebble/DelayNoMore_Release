@@ -73,18 +73,22 @@ const AGENT_TOOL_LABELS = {
 const agentToolLabel = (name) => AGENT_TOOL_LABELS[name] || name;
 
 /**
- * 에이전트 실행 추적 패널 — "코치가 무엇을 근거로 답했는가"를 보여준다.
+ * 에이전트 실행 추적 패널 — "누가, 무엇을 근거로 답했는가"를 보여준다.
  * 기본은 접힌 한 줄 요약이고, 펼치면 도구별 인자와 서버가 돌려준 결과 요약을 볼 수 있다.
  * 실행 중(running)에는 결과가 아직 없으므로 상태 점만 다르게 찍는다.
+ *
+ * profile(v0.17.0)은 서버가 profile 이벤트로 내려준 값 — 이번 실행이 실제로 쓴 페르소나의
+ * 증빙이라, 헤더의 로컬 추측 라벨과 어긋나면 이쪽이 맞다.
  */
-function AgentTrace({ steps, expanded, onToggle }) {
+function AgentTrace({ steps, profile, expanded, onToggle }) {
   if (!steps || steps.length === 0) return null;
 
   const running = steps.some((s) => s.status === 'running');
   const failed = steps.filter((s) => s.status === 'error').length;
-  const summary = running
+  const toolSummary = running
     ? `도구 실행 중… (${steps.length})`
     : `도구 ${steps.length}개 실행${failed > 0 ? ` · ${failed}개 거부됨` : ''}`;
+  const summary = profile?.label ? `${profile.label} · ${toolSummary}` : toolSummary;
 
   return (
     <div style={{
@@ -469,6 +473,14 @@ export default function ChatCoach({ agentEnabled = false }) {
   const activeStatus = planStatusOf(draftChecklist);
   const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
   const isTerminal = !!draftChecklist && isTerminalStatus(activeStatus);
+
+  // 대화 패널 헤더 라벨(v0.17.0) — 상태가 프로필(누가 응대하는가)을 고른다. 프론트가 이미 아는
+  // 상태로 즉시 그리는 로컬 추측이고, 실행별 확정값은 서버 profile 이벤트가 추적 패널에 남긴다.
+  // 에이전트 모드가 아니면(자유 대화 폴백 배포) 페르소나 전환이 없으므로 기존 코치 라벨 고정.
+  const chatHeaderLabel = !agentEnabled ? 'AI 코치와 대화'
+    : activeStatus === 'CONFIRMED' ? `${slots.goalName ? `${slots.goalName} ` : ''}전문 에이전트와 대화`
+    : isTerminal ? '회고 도우미와 대화'
+    : 'AI 코치와 대화';
 
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
@@ -873,7 +885,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           if (aliveRef.current) setActiveSteps(steps);
         };
 
-        const { reply, updatedDraft, refreshPlanId, steps } = agentEnabled
+        const { reply, updatedDraft, refreshPlanId, steps, profile } = agentEnabled
           ? await streamAgentChat(
               slots, draftChecklist, history, userText, activePlanId, onToken, onStep
             )
@@ -883,9 +895,15 @@ export default function ChatCoach({ agentEnabled = false }) {
         stopThinking();
         setActiveSteps([]);
         // 최종 reply로 말풍선을 확정한다(스트림 미사용 mock 폴백이거나, 마지막에 기본 문구로
-        // 대체된 경우까지 일관되게 반영). 실행된 도구 목록은 그 말풍선에 붙여 남긴다 —
-        // 대화를 거슬러 올라가도 "이 답변의 근거"를 다시 펼쳐 볼 수 있게.
-        const botMessage = { id: botMsgId, sender: 'bot', text: reply, steps: steps?.length ? steps : undefined };
+        // 대체된 경우까지 일관되게 반영). 실행된 도구 목록과 프로필(누가 답했는가)은 그 말풍선에
+        // 붙여 남긴다 — 대화를 거슬러 올라가도 "이 답변의 근거"를 다시 펼쳐 볼 수 있게.
+        const botMessage = {
+          id: botMsgId,
+          sender: 'bot',
+          text: reply,
+          steps: steps?.length ? steps : undefined,
+          profile: profile || undefined
+        };
         if (!botCreated) {
           setMessages((prev) => [...prev, botMessage]);
         } else {
@@ -1519,7 +1537,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
-        AI 코치와 대화
+        {chatHeaderLabel}
       </div>
 
       {/* 대화 영역 */}
@@ -1534,11 +1552,12 @@ export default function ChatCoach({ agentEnabled = false }) {
               alignItems: msg.sender === 'user' ? 'flex-end' : 'flex-start'
             }}
           >
-            {/* 이 답변을 만들 때 코치가 호출한 도구들 — 기본 접힘, 펼치면 인자와 결과가 보인다. */}
+            {/* 이 답변을 만들 때 호출한 도구들과 실행 프로필 — 기본 접힘, 펼치면 인자와 결과가 보인다. */}
             {msg.steps && (
               <div style={{ maxWidth: '80%', width: '100%' }}>
                 <AgentTrace
                   steps={msg.steps}
+                  profile={msg.profile}
                   expanded={!!expandedTrace[msg.id]}
                   onToggle={() => toggleTrace(msg.id)}
                 />
@@ -1626,7 +1645,9 @@ export default function ChatCoach({ agentEnabled = false }) {
           {activeStatus === 'CONFIRMED' && (
             <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
               <Lock size={12} />
-              고정된 계획 — 대화 수정 불가
+              {agentEnabled
+                ? '고정된 계획 — 전문 에이전트가 실행을 함께합니다 · 대화 수정 불가'
+                : '고정된 계획 — 대화 수정 불가'}
             </span>
           )}
           {isTerminal && (

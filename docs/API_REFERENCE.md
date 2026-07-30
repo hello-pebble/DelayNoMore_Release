@@ -131,25 +131,32 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 { "type": "error", "m": "AI 응답 스트리밍 중 오류가 발생했습니다." }
 ```
 
-### 6. GET /ai/agent/tools — 에이전트 도구 카탈로그 [v0.15.0]
+### 6. GET /ai/agent/tools — 에이전트 카탈로그 [v0.15.0, v0.17.0에서 profile 추가]
 
-현재 계획 상태에서 **실제로 모델에게 노출되는** 도구만 내려온다. 프롬프트에 실리는 목록과
-같은 소스(`AgentToolRegistry`)를 쓰므로, 상태별로 호출해 보면 권한 모델을 그대로 확인할 수 있다.
+현재 계획 상태의 **프로필**(누가 응대하는가)과, **실제로 모델에게 노출되는** 도구만 내려온다.
+프롬프트에 실리는 목록과 같은 소스(`AgentToolRegistry`)를 쓰므로, 상태별로 호출해 보면 권한
+모델을 그대로 확인할 수 있다.
 
 **필수 헤더** `X-Guest-Id` (도구가 소유 데이터를 다루므로). 쿼리 `planId`는 선택 —
 생략하거나 접근할 수 없는 계획이면 보관 전 초안(DRAFT) 기준으로 답한다(404를 내지 않는다).
 
 ```json
 // GET /ai/agent/tools?planId=12   (계획이 CONFIRMED인 경우)
-// 응답 data — update_plan_tasks가 목록에서 사라진다(고정 계획은 내용 수정 불가).
-[ { "name": "get_today_tasks", "mutating": false,
-    "description": "Read the tasks and their completion state for one date …",
-    "parameters": { "type": "object", "properties": { "date": { "type": "string", "description": "…" } }, "required": [] } },
-  { "name": "get_weekly_summary", "mutating": false, "description": "…", "parameters": { … } },
-  { "name": "get_reflection_history", "mutating": false, "description": "…", "parameters": { … } },
-  { "name": "get_workload_recommendation", "mutating": false, "description": "…", "parameters": { … } },
-  { "name": "carry_over_tasks", "mutating": true, "description": "…", "parameters": { … } } ]
+// 응답 data — 프로필이 전문 에이전트로 바뀌고, update_plan_tasks가 목록에서 사라진다.
+{ "profile": { "name": "DOMAIN_EXPERT", "label": "정보처리기사 실기 전문 에이전트" },
+  "tools": [
+    { "name": "get_today_tasks", "mutating": false,
+      "description": "Read the tasks and their completion state for one date …",
+      "parameters": { "type": "object", "properties": { "date": { "type": "string", "description": "…" } }, "required": [] } },
+    { "name": "get_weekly_summary", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "get_reflection_history", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "get_workload_recommendation", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "carry_over_tasks", "mutating": true, "description": "…", "parameters": { … } } ] }
 ```
+
+> v0.17.0에서 응답이 맨 배열에서 `{profile, tools}` 래핑으로 바뀌었다(형식 변경 — 당시 이 API의
+> 프론트 소비처가 없어 호환성 부담 없이 변경). 프로필 3종(코치/전문가/회고 도우미) 표는
+> [에이전트 문서](AGENT.md) 참고.
 
 상태별 노출 표는 [에이전트 문서](AGENT.md#2-권한-모델--상태-기계--도구-노출) 참고.
 
@@ -165,6 +172,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 고정된 계획의 수정 도구를 열 수 없게 하기 위해서다.
 
 ```json
+{ "type": "profile", "name": "DOMAIN_EXPERT", "label": "정보처리기사 실기 전문 에이전트" }
 { "type": "step", "n": 1 }
 { "type": "tool_call", "id": "call_0", "name": "get_weekly_summary", "args": {} }
 { "type": "tool_result", "id": "call_0", "ok": true, "summary": "{\"startDate\":\"2026-07-20\",\"totalDone\":9,…" }
@@ -176,6 +184,8 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 { "type": "error", "m": "에이전트 응답 중 오류가 발생했습니다." }
 ```
 
+- `profile`(v0.17.0)은 스트림 시작 시 1회 — 이번 실행이 실제로 쓴 프로필(서버 저장 상태에서
+  파생). 구버전 클라이언트는 미지 타입을 무시하므로 하위 호환이다.
 - `tool_result.ok=false`면 실행이 거부된 것이고, `summary`에 한국어 사유가 담긴다
   (노출되지 않은 도구 호출·인자 형식 오류·대상 없음 등). 루프는 끊기지 않고 이어진다.
 - **`plan`과 `plan_refresh`는 다르다.** `plan`은 아직 저장되지 않은 변경(`update_plan_tasks`)이라

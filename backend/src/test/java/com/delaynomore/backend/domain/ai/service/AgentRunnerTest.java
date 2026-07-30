@@ -129,8 +129,8 @@ class AgentRunnerTest {
         // when
         runner.run(request("안녕하세요", null, Map.of()), OWNER, "sess-1", sink);
 
-        // then
-        assertThat(eventTypes()).containsExactly("step", "token");
+        // then — v0.17.0부터 실행이 고른 프로필이 항상 첫 이벤트로 나온다
+        assertThat(eventTypes()).containsExactly("profile", "step", "token");
         assertThat(firstEvent("token")).containsEntry("t", "안녕하세요! 무엇을 도와드릴까요?");
     }
 
@@ -146,7 +146,7 @@ class AgentRunnerTest {
         runner.run(request("오늘 얼마나 했지?", 7L, Map.of()), OWNER, "sess-1", sink);
 
         // then — 추적 패널이 그릴 수 있도록 호출과 결과가 짝지어 흐른다
-        assertThat(eventTypes()).containsExactly("step", "tool_call", "tool_result", "step", "token");
+        assertThat(eventTypes()).containsExactly("profile", "step", "tool_call", "tool_result", "step", "token");
         assertThat(firstEvent("tool_call")).containsEntry("name", "get_today_tasks");
         Map<String, Object> result = firstEvent("tool_result");
         assertThat(result).containsEntry("ok", true);
@@ -312,6 +312,51 @@ class AgentRunnerTest {
         // then
         assertThat(thrown).isNotNull();
         assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.AI_TOOL_LOOP_EXCEEDED);
+    }
+
+    @Test
+    void run_고정계획_전문가프로필이벤트와특화프롬프트가나간다() throws IOException {
+        // given — CONFIRMED 저장본. 프로필은 요청 바디가 아니라 서버 저장 상태에서 파생된다.
+        givenStoredPlan(7L, PlanStatus.CONFIRMED, Map.of());
+        when(openRouterClient.completeWithTools(any(), anyList(), anyInt(), anyList()))
+                .thenReturn(reply("무엇이든 물어보세요."));
+
+        // when
+        runner.run(request("실기 준비 어떻게 해?", 7L, Map.of()), OWNER, "sess-1", sink);
+
+        // then — 프로필 이벤트가 서버 발 증빙으로 나가고
+        Map<String, Object> profile = firstEvent("profile");
+        assertThat(profile).containsEntry("name", "DOMAIN_EXPERT")
+                .containsEntry("label", "정보처리기사 전문 에이전트");
+
+        // 업스트림에 실린 system 메시지도 같은 프로필로 특화되어 있다
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<List<Map<String, Object>>> messages =
+                org.mockito.ArgumentCaptor.forClass((Class) List.class);
+        verify(openRouterClient).completeWithTools(any(), messages.capture(), anyInt(), anyList());
+        String systemPrompt = String.valueOf(messages.getValue().get(0).get("content"));
+        assertThat(systemPrompt).contains("goal \"정보처리기사\"").contains("expert companion");
+    }
+
+    @Test
+    void run_보관전초안_코치프로필이유지된다() throws IOException {
+        // given — planId 없음(보관 전 초안) → DRAFT → 기존 코치 페르소나 그대로.
+        when(openRouterClient.completeWithTools(any(), anyList(), anyInt(), anyList()))
+                .thenReturn(reply("초안을 같이 다듬어 볼까요?"));
+
+        // when
+        runner.run(request("계획 좀 봐줘", null, Map.of()), OWNER, "sess-1", sink);
+
+        // then
+        assertThat(firstEvent("profile")).containsEntry("name", "CHECKLIST_COACH")
+                .containsEntry("label", "체크리스트 완성 코치");
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        org.mockito.ArgumentCaptor<List<Map<String, Object>>> messages =
+                org.mockito.ArgumentCaptor.forClass((Class) List.class);
+        verify(openRouterClient).completeWithTools(any(), messages.capture(), anyInt(), anyList());
+        assertThat(String.valueOf(messages.getValue().get(0).get("content")))
+                .contains("planning coach")
+                .doesNotContain("expert companion");
     }
 
     @Test

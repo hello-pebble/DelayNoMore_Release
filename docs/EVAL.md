@@ -108,7 +108,7 @@ v0.15.1의 버그(`dayCount`가 무엇을 세는지 모호했던 것)는 **실�
 
 | 파일 | 역할 |
 | :--- | :--- |
-| `src/test/resources/eval/agent-tool-selection.json` | 케이스 데이터셋(17개) |
+| `src/test/resources/eval/agent-tool-selection.json` | 케이스 데이터셋(19개) |
 | `EvalCase` · `EvalFixture` · `EvalDataset` | 케이스 표현과 로딩 |
 | `EvalScorer` · `EvalVerdict` | 채점 — **순수 함수** |
 | `EvalFixtures` | 서버 상태 준비(실제 서비스·실제 전이 API 사용) |
@@ -132,14 +132,14 @@ v0.15.1의 버그(`dayCount`가 무엇을 세는지 모호했던 것)는 **실�
   만들어냅니다. 그 오류는 실제 모델을 부른 뒤에야 드러나므로 비쌉니다. 그래서 id 유일성,
   실제 도구 이름과의 일치, **그 상태에서 실제로 노출되는 도구를 기대하는지**까지 미리 잡습니다.
 
-## 6. 케이스 구성 (17개)
+## 6. 케이스 구성 (19개)
 
 | 묶음 | 무엇을 보나 |
 | :--- | :--- |
 | `read.*` (7) | 완료율·회고·분량을 물으면 추측하지 않고 서버 계산값을 조회하는가. 다턴 조합 포함. `read.today.after_greeting`은 **인사가 섞여도 질문이 이기는가**를 본다 — `notool.*` 억제의 반대쪽 감시자 |
 | `rule.number_is_not_negotiable` | 사용자가 숫자를 지정해도 규칙을 조회하는가(분량 소유권은 서버 — v0.13.0) |
-| `write.*` (5) | **권한 모델의 핵심** — DRAFT/CONFIRMED/COMPLETED에서 수정·이월 도구의 노출이 바뀌는가. `write.update.confirmed_blocked`는 `avoidTools`로 **막힌 수정을 이월로 대체하는지**까지 본다 |
-| `notool.*` (2) | 인사·감사에 도구를 부르지 않는가(도구 남용은 왕복만 늘린다) |
+| `write.*` (6) | **권한 모델의 핵심** — DRAFT/CONFIRMED/COMPLETED/CANCELLED에서 수정·이월 도구의 노출이 바뀌는가. `write.update.confirmed_blocked`는 `avoidTools`로 **막힌 수정을 이월로 대체하는지**까지 보고, `write.update.cancelled_blocked`(v0.17.0)로 CANCELLED가 처음 실측된다 |
+| `notool.*` (3) | 인사·감사에 도구를 부르지 않는가(도구 남용은 왕복만 늘린다). `notool.domain_question`(v0.17.0)은 **전문가 프로필이 지식 질문에 도구 없이 직접 답하는가**를 본다 — 프로필 도입이 새로 만든 위험 축 |
 | `injection.*` (2) | 대화로 들어온 인젝션과 **계획 내용에 심긴 인젝션** 모두에서 수정이 일어나지 않는가 |
 
 픽스처는 KST 오늘 기준으로 재현 가능하게 만듭니다(날짜만 이동, 구조는 고정). 오늘 첫 항목만
@@ -247,7 +247,7 @@ OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.only=notool,read.today -Deval.
 
 ## 11. 한계
 
-- **케이스가 17개뿐입니다.** 회귀 신호로는 쓸 만하지만 통계라고 부르기엔 적습니다.
+- **케이스가 19개뿐입니다.** 회귀 신호로는 쓸 만하지만 통계라고 부르기엔 적습니다.
 - **한 모델만 봅니다.** 여러 모델 비교는 `OPENROUTER_MODEL`을 바꿔 여러 번 돌리고 리포트를 직접
   비교해야 합니다.
 - **답변 문장은 채점하지 않습니다**(2절). 도구는 맞게 골랐는데 설명이 엉망인 경우는 이 하네스로

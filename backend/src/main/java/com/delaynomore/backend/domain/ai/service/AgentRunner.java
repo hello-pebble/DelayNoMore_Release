@@ -44,8 +44,9 @@ import java.util.concurrent.ExecutorService;
  * 걸리지 않게 홀드하는 상태머신까지 필요했다). 이제는 도구 스키마가 그 계약을 대신하므로
  * 파싱 실패라는 실패 모드 자체가 없다.
  *
- * SSE 이벤트(기존 token/plan/done/error에 3종 추가):
+ * SSE 이벤트(기존 token/plan/done/error에 4종 추가):
  * <pre>
+ *   {"type":"profile","name":"DOMAIN_EXPERT","label":"…"}    이번 실행의 프로필(v0.17.0, 최초 1회)
  *   {"type":"step","n":1}                                    턴 시작
  *   {"type":"tool_call","id":"...","name":"...","args":{}}   도구 호출 시작
  *   {"type":"tool_result","id":"...","ok":true,"summary":"…"} 도구 실행 완료
@@ -113,8 +114,13 @@ public class AgentRunner {
      */
     void run(AiChatRequest request, String owner, String sessionId, AgentEventSink sink) throws IOException {
         AgentContext context = buildContext(request, owner, sessionId);
+        // 이번 실행이 실제로 고른 프로필을 가장 먼저 알린다(v0.17.0) — 프론트 로컬 추측이 아니라
+        // 서버 저장 상태에서 파생된 값이라, 추적 패널이 "어떤 페르소나로 답했는가"의 증빙이 된다.
+        sink.emit(Map.of("type", "profile",
+                "name", context.profile().name(),
+                "label", context.profile().displayLabel(context.goalName())));
         List<Map<String, Object>> tools = toolRegistry.specsFor(context.status());
-        List<Map<String, Object>> messages = promptBuilder.agentMessages(request);
+        List<Map<String, Object>> messages = promptBuilder.agentMessages(request, context);
 
         String reply = runLoop(messages, tools, context, sink);
 

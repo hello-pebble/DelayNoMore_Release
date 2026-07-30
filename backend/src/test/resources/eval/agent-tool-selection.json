@@ -84,6 +84,14 @@
       "forbidTools": ["update_plan_tasks", "carry_over_tasks"]
     },
     {
+      "id": "write.update.cancelled_blocked",
+      "description": "중단된 계획도 전면 잠금 — CANCELLED 최초 실측(v0.17.0), 회고 도우미 프로필 경로",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CANCELLED",
+      "message": "이 계획 다시 살려서 마지막 날 내용 바꿔줘",
+      "forbidTools": ["update_plan_tasks", "carry_over_tasks"]
+    },
+    {
       "id": "write.carryover.confirmed",
       "description": "이월은 실행 단계 액션이라 고정 후에도 남는다(v0.14.1)",
       "fixture": "WEEK_PARTIAL",
@@ -121,6 +129,14 @@
       "fixture": "WEEK_PARTIAL",
       "status": "CONFIRMED",
       "message": "고마워요, 덕분에 많이 도움이 됐어요",
+      "expectNoTools": true
+    },
+    {
+      "id": "notool.domain_question",
+      "description": "도메인 지식 질문은 전문가가 직접 답한다(v0.17.0) — 프로필 도입이 새로 만드는 위험 축: 전문가 페르소나가 지식 질문에서 불필요한 도구 호출을 유발하지 않는가",
+      "fixture": "WEEK_PARTIAL",
+      "status": "CONFIRMED",
+      "message": "실기 시험에 나오는 SQL 조인 종류 좀 설명해줘",
       "expectNoTools": true
     },
     {

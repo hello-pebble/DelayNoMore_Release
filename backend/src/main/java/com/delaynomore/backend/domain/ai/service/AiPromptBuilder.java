@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.ai.service;
 
+import com.delaynomore.backend.domain.ai.agent.AgentContext;
+import com.delaynomore.backend.domain.ai.agent.AgentProfile;
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.global.time.KstDates;
@@ -117,14 +119,21 @@ public class AiPromptBuilder {
             """;
 
     /**
-     * 에이전트(도구 호출) 경로의 시스템 프롬프트. CHAT_SYSTEM_PROMPT와 결정적으로 다른 점은
-     * <b>출력 계약이 없다는 것</b>이다 — ===PLAN=== 구분자도, patch JSON 형식 설명도 없다.
+     * 에이전트(도구 호출) 경로의 시스템 프롬프트 <b>공통부</b>. CHAT_SYSTEM_PROMPT와 결정적으로
+     * 다른 점은 <b>출력 계약이 없다는 것</b>이다 — ===PLAN=== 구분자도, patch JSON 형식 설명도 없다.
      * 계획 수정은 update_plan_tasks 도구가 스키마로 강제하므로 산문으로 설명할 필요가 없다.
      * 그만큼 시스템 프롬프트가 짧아지고(입력 토큰 절감), 형식 위반이라는 실패 모드가 사라진다.
      *
      * 도구 목록 자체는 프롬프트 텍스트가 아니라 요청의 tools 필드로 간다. 그래서 이 문구는
      * "어떤 도구가 있는지"를 말하지 않는다 — 상태에 따라 노출 도구가 달라지는데 문구에 목록을
      * 박아 두면 둘이 어긋나서, 모델이 없는 도구를 부르려 하게 된다.
+     *
+     * <p><b>[v0.17.0] 프로필 분해</b> — 상태가 프로필(페르소나 + 도구 집합)을 고르게 되면서
+     * 단일 상수를 셋으로 갈랐다: 이 공통부(도구 규칙·사교적 턴·답변 형식·Safety) + 프로필별
+     * 페르소나 머리말 + 프로필별 잠금 안내. <b>공통부를 복사하지 않고 조립하는 이유</b>는 아래
+     * 문구들이 전부 실측(676회)으로 다듬어진 것이라, 세 벌로 복사하면 한 벌만 고쳐지는 drift가
+     * 곧 측정 무효화이기 때문이다. AiPromptBuilderTest가 세 프로필 모두에 공통 절이 실리는지
+     * 지킨다.
      *
      * <p>"사교적 턴에는 도구를 부르지 않는다"를 별 단락으로 뽑은 것은 <b>평가 결과에 따른 조정</b>
      * 이다(docs/QA_RESULT_v0.16.0.md). 목록의 마지막 항목으로 뭉쳐 뒀을 때 인사·감사에서 도구를
@@ -143,8 +152,7 @@ public class AiPromptBuilder {
      *       "요청받지 않은 변경 금지"를 규칙 목록에 넣었다.</li>
      * </ul>
      */
-    private static final String AGENT_SYSTEM_PROMPT = """
-            You are a friendly, professional Korean planning coach for an anti-procrastination app.
+    private static final String AGENT_PROMPT_CORE = """
             The user already has a daily plan (dates → task lists) shown on screen and is chatting about it.
 
             You have tools. Use them instead of guessing:
@@ -168,10 +176,6 @@ public class AiPromptBuilder {
             But if such a message also asks something ("안녕! 오늘 뭐 해야 해?"), the question wins:
             greet briefly AND still call the tool that question needs.
 
-            When the user asks to modify a plan but you have no plan-editing tool, explain that the plan
-            is fixed (고정) and that fixed plans are meant to be executed as-is, and that they can start
-            over with a new plan if they really need a different one. Do not apologize repeatedly.
-
             Your final reply to the user:
             - Natural, PURE Korean (한국어), 1-4 sentences. No Chinese characters/Hanja (漢字) or other
               non-Korean script. No stray markdown symbols (_, *, `, ~).
@@ -186,11 +190,102 @@ public class AiPromptBuilder {
             """;
 
     /**
+     * DRAFT — 체크리스트 완성 코치. v0.15.0부터 쓰던 페르소나·잠금 안내를 그대로 잇는다.
+     * DRAFT에서는 수정 도구가 노출되므로 잠금 안내가 실제로 발화할 일은 드물지만, 보관 전
+     * 초안(planId 없음)에서 서버 저장 도구가 실패하는 경로가 있어 문구를 유지한다.
+     */
+    private static final String COACH_PERSONA = """
+            You are a friendly, professional Korean planning coach for an anti-procrastination app.
+            """;
+
+    private static final String COACH_LOCKED_NOTE = """
+            When the user asks to modify a plan but you have no plan-editing tool, explain that the plan
+            is fixed (고정) and that fixed plans are meant to be executed as-is, and that they can start
+            over with a new plan if they really need a different one. Do not apologize repeatedly.
+            """;
+
+    /**
+     * CONFIRMED — 목표 영역 전문 에이전트. 로드맵의 "고정하면 전문 에이전트가 인계받는다"의
+     * 1단계다. goalName을 %s로 받아 특화한다(최초의 비정적 시스템 프롬프트 — 삽입 전
+     * {@link #safeInline}으로 새니타이즈). 도메인 지식 질문에는 도구 없이 직접 답하되, 계획의
+     * 숫자·사실은 여전히 도구가 소유한다 — 전문가 페르소나가 "서버가 숫자를 소유한다" 규칙을
+     * 침식하지 않게 명시한다. 잠금 안내(구 공통 프롬프트의 "plan is fixed" 문구)는 CONFIRMED
+     * 전용 사실이므로 이 프로필로 이동했다.
+     */
+    private static final String EXPERT_PERSONA = """
+            You are a dedicated Korean expert companion for the user's goal "%s" — their 1:1 tutor and
+            domain coach for executing the plan they have committed to. Answer domain knowledge questions
+            (concepts, study tips, technique) directly from your own expertise in plain Korean, without
+            calling tools. But every number and every fact about THEIR plan still comes from tools.
+            """;
+
+    private static final String EXPERT_LOCKED_NOTE = COACH_LOCKED_NOTE;
+
+    /**
+     * COMPLETED·CANCELLED — 회고 도우미. 별도 프로필인 이유는 취향이 아니라 <b>정확성</b>이다:
+     * 구 공통 프롬프트의 잠금 안내는 "plan is fixed (고정)"라고 설명하는데, 종결 상태는 고정이
+     * 아니라 완료/중단이다 — 모델이 사용자에게 틀린 상태 설명을 하게 만든다. 종결 상태의 노출
+     * 도구(읽기 4종 + 분량 추천)와 "돌아보기 + 다음 계획 준비"가 정확히 합치한다.
+     */
+    private static final String RETRO_PERSONA = """
+            You are a warm Korean retrospective companion for a plan that has ENDED (completed or
+            cancelled). Help the user look back — completion rates, what their reflections said — and
+            prepare their NEXT plan, quoting the workload recommendation tool when they ask how much
+            to take on. Do not treat the ended plan as ongoing work.
+            """;
+
+    private static final String RETRO_LOCKED_NOTE = """
+            When the user asks to modify this plan, explain that it has ended (완료/중단) and cannot be
+            changed — not even by moving tasks. Offer to help them start a new plan instead.
+            Do not apologize repeatedly.
+            """;
+
+    /**
+     * 프로필별 시스템 프롬프트 조립(v0.17.0): 페르소나 머리말 + 공통부 + 프로필별 잠금 안내.
+     * 패키지-프라이빗인 이유: 프롬프트 <b>내용</b>을 검증하는 테스트(AiPromptBuilderTest)의
+     * 진입점이다 — 공통 절이 세 프로필 모두에 실리는지(drift 가드), goalName이 안전하게
+     * 삽입되는지를 조립 결과 문자열로 직접 확인한다.
+     */
+    String agentSystemPrompt(AgentProfile profile, String goalName) {
+        String persona = switch (profile) {
+            case CHECKLIST_COACH -> COACH_PERSONA;
+            case DOMAIN_EXPERT -> EXPERT_PERSONA.formatted(safeInline(goalName));
+            case RETRO_COMPANION -> RETRO_PERSONA;
+        };
+        String lockedNote = switch (profile) {
+            case CHECKLIST_COACH -> COACH_LOCKED_NOTE;
+            case DOMAIN_EXPERT -> EXPERT_LOCKED_NOTE;
+            case RETRO_COMPANION -> RETRO_LOCKED_NOTE;
+        };
+        return persona + "\n" + AGENT_PROMPT_CORE + "\n" + lockedNote;
+    }
+
+    /**
+     * 시스템 프롬프트에 삽입되는 사용자 텍스트의 새니타이저. goalName은 사용자가 친 자유
+     * 텍스트인데 v0.17.0부터 처음으로 <b>시스템 프롬프트 안에</b> 들어간다 — user 섹션과 달리
+     * "여기는 데이터"라는 브래킷 방어가 없는 자리라, 구조를 흔들 수 있는 재료를 미리 뺀다:
+     * 개행(새 지시 단락 위장)은 공백으로, 큰따옴표(인용 탈출)는 홑따옴표로, 길이는 80자로.
+     * 비어 있으면 일반 문구로 폴백해 프롬프트에 빈 인용부호가 남지 않게 한다.
+     */
+    private static String safeInline(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "the user's goal";
+        }
+        String flattened = raw.replaceAll("\\s+", " ").replace('"', '\'').trim();
+        return flattened.length() <= 80 ? flattened : flattened.substring(0, 80);
+    }
+
+    /**
      * 에이전트 경로의 초기 메시지(system + user). user 턴 구성은 chatMessages와 같은 재료
      * (목표·현재 계획·최근 6턴·유저 메시지)를 쓰되, 출력 형식 지시가 있던 [Requirements]만
      * 도구 사용 지침으로 바뀐다 — 토큰 절약 규칙(compactPlan, 6턴, 300자)은 그대로 공유한다.
+     *
+     * <p>context를 함께 받는 이유(v0.17.0): 시스템 프롬프트가 프로필(= 서버 저장 상태에서 파생)에
+     * 따라 달라진다. goalName은 요청 바디 값을 쓴다 — [Goal] user 섹션과 같은 소스여야 모델이
+     * 목표명을 두 개 보지 않는다. goalName은 권한에 관여하지 않으므로 클라이언트 값이어도 도구
+     * 노출(서버 저장 status가 결정)은 흔들리지 않는다.
      */
-    public List<Map<String, Object>> agentMessages(AiChatRequest request) {
+    public List<Map<String, Object>> agentMessages(AiChatRequest request, AgentContext context) {
         StringBuilder userPrompt = new StringBuilder();
         userPrompt.append("[Goal]\n")
                 .append(goalSection(request.goalName(), request.durationOrDefault(),
@@ -209,7 +304,7 @@ public class AiPromptBuilder {
                 .append("- Finish with a short Korean reply to the user.");
 
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(message("system", AGENT_SYSTEM_PROMPT));
+        messages.add(message("system", agentSystemPrompt(context.profile(), context.goalName())));
         messages.add(message("user", userPrompt.toString()));
         return messages; // 루프가 assistant/tool 턴을 이어 붙이므로 가변 리스트로 돌려준다
     }

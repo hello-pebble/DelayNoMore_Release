@@ -1,6 +1,6 @@
 package com.delaynomore.backend.domain.ai.controller;
 
-import com.delaynomore.backend.domain.ai.dto.AgentToolResponse;
+import com.delaynomore.backend.domain.ai.dto.AgentCatalogResponse;
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
@@ -26,7 +26,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.List;
 
 /**
  * "대화 → 투두리스트 생성" 데모용 AI 프록시.
@@ -86,9 +85,9 @@ public class AiController {
     // 않았으므로), 에이전트는 도구로 남의 계획을 읽거나 바꿀 수 있으므로 소유자 스코프가
     // 필수다. 해석 규칙은 계획 API와 같은 OwnerGuestId를 그대로 쓴다.
 
-    @Operation(summary = "에이전트 도구 카탈로그 (현재 계획 상태에서 노출되는 도구만)")
+    @Operation(summary = "에이전트 카탈로그 (현재 계획 상태의 프로필 + 노출되는 도구)")
     @GetMapping("/agent/tools")
-    public ApiResponse<List<AgentToolResponse>> getAgentTools(
+    public ApiResponse<AgentCatalogResponse> getAgentTools(
             @RequestParam(required = false) Long planId,
             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
         return ApiResponse.ok(agentToolCatalogService.list(planId, OwnerGuestId.resolve(rawGuestId)));
