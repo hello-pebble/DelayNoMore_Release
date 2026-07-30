@@ -25,9 +25,10 @@ DelayNoMore_Release/
     └── src/main/java/.../
         ├── domain/ai/   # controller·service·client·dto — /api/v1/ai/{health,drafts,chats}(+/stream)
         │   └── agent/   # 에이전트 도구 레이어 — AgentTool·AgentToolRegistry(상태별 노출)·tools/
+        │                #   + AgentProfile(상태별 페르소나: 코치→전문 에이전트→회고 도우미, v0.17.0)
         │                #   루프는 service/AgentRunner — /api/v1/ai/agent/{tools, chats/stream}
         ├── domain/plan/ # 계획 보관함+일일 회고+변경 이력(InMemory/Jdbc 프로필 분리, 기본은 인메모리) — /api/v1/plans CRUD
-        │                #   + /plans/{id}/reflections + /plans/{id}/audit-events, 추후 DB로 교체 예정
+        │                #   + /plans/{id}/reflections + /plans/{id}/audit-events (배포는 postgres 프로필로 PostgreSQL 영속, v0.12.0)
         └── global/      # 공통: response(ApiResponse) · error(ErrorCode, GlobalExceptionHandler) · config
 ```
 
