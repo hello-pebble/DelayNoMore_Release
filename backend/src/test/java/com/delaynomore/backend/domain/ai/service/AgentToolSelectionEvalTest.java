@@ -96,19 +96,18 @@ class AgentToolSelectionEvalTest {
         int repeats = Integer.getInteger("eval.repeats", 1);
 
         List<EvalRunResult> results = new ArrayList<>();
-        for (EvalCase testCase : dataset.cases()) {
-            for (int repeat = 1; repeat <= repeats; repeat++) {
-                results.add(runOnce(testCase, repeat, fixtures));
+        try {
+            for (EvalCase testCase : dataset.cases()) {
+                for (int repeat = 1; repeat <= repeats; repeat++) {
+                    results.add(runOnce(testCase, repeat, fixtures));
+                }
             }
+        } finally {
+            // 리포트는 finally에서 쓴다 — 실행이 도중에 죽어도 그때까지의 측정은 유효하고,
+            // 오히려 그럴 때 "어디까지 갔는가"가 가장 필요한 정보다. 예전엔 루프가 죽으면
+            // 리포트가 아예 없어서 Gradle HTML 리포트만으로 원인을 캐야 했다.
+            writeReport(dataset, repeats, results);
         }
-
-        EvalReport report = new EvalReport(dataset.name(), properties.model(), repeats, results);
-        String rendered = report.render();
-        Files.createDirectories(REPORT_PATH.getParent());
-        Files.writeString(REPORT_PATH, rendered);
-        // 경로 안내만 ASCII로 둔다 — 콘솔 인코딩이 어긋나 본문이 깨져 보이는 상황에서
-        // 사용자가 유일하게 필요한 정보가 "정본 파일이 어디인가"이기 때문이다.
-        System.out.println("\n" + rendered + "\n[eval] report: " + REPORT_PATH.toAbsolutePath());
 
         // 1) 모든 실행이 오류로 끝났다면 이건 모델 품질이 아니라 설정이 고장 난 것이다(키 만료·
         //    업스트림 장애 등). 통과율 0%를 "모델이 못했다"로 읽으면 안 되므로 따로 세운다.
@@ -137,8 +136,19 @@ class AgentToolSelectionEvalTest {
         }
     }
 
+    private void writeReport(EvalDataset dataset, int repeats, List<EvalRunResult> results) throws Exception {
+        if (results.isEmpty()) {
+            return;
+        }
+        String rendered = new EvalReport(dataset.name(), properties.model(), repeats, results).render();
+        Files.createDirectories(REPORT_PATH.getParent());
+        Files.writeString(REPORT_PATH, rendered);
+        // 경로 안내만 ASCII로 둔다 — 콘솔 인코딩이 어긋나 본문이 깨져 보이는 상황에서
+        // 사용자가 유일하게 필요한 정보가 "정본 파일이 어디인가"이기 때문이다.
+        System.out.println("\n" + rendered + "\n[eval] report: " + REPORT_PATH.toAbsolutePath());
+    }
+
     private EvalRunResult runOnce(EvalCase testCase, int repeat, EvalFixtures fixtures) {
-        EvalFixtures.Prepared prepared = fixtures.prepare(testCase, repeat);
         List<String> attempted = new ArrayList<>();
         AgentEventSink sink = event -> {
             if ("tool_call".equals(event.get("type"))) {
@@ -148,12 +158,19 @@ class AgentToolSelectionEvalTest {
 
         usageLogger.reset();
         String error = null;
+        EvalFixtures.Prepared prepared = null;
         try {
+            // 준비도 try 안에서 한다. 밖에 두면 픽스처 실패 하나가 이미 끝난 케이스들의 결과까지
+            // 통째로 날린다 — 계획 저장소 전역 한도(200)에 닿았을 때 실제로 그랬다.
+            prepared = fixtures.prepare(testCase, repeat);
             agentRunner.run(request(testCase, prepared), prepared.owner(), "eval-session", sink);
         } catch (Exception e) {
             // 업스트림 오류·루프 상한은 그 케이스의 결과로 기록하고 다음 케이스를 계속 돈다 —
             // 한 케이스가 죽었다고 나머지 열다섯 개의 신호를 버릴 이유가 없다.
             error = e.getClass().getSimpleName() + ": " + e.getMessage();
+        } finally {
+            // 케이스가 쓴 계획을 즉시 치운다 — 안 치우면 저장소 한도가 반복 횟수의 상한이 된다.
+            fixtures.release(prepared);
         }
 
         // 노출 목록은 레지스트리에서 그대로 가져온다 — 채점기가 권한 표를 다시 적으면
