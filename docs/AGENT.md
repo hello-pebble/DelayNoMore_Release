@@ -266,8 +266,10 @@ ai.usage site=agent.total  model=qwen/qwen3.7-plus calls=2 prompt=3000 completio
   빈 문자열이 되어 화면으로는 새지 않습니다(테스트로 고정).
 - **계측은 본래 기능보다 항상 후순위입니다.** `usage`가 없거나 형식이 어긋나도 예외를 던지지
   않고 빈 값으로 떨어집니다. 대화가 계측 때문에 깨지면 안 됩니다.
-- **`cost`는 있을 때만 찍습니다.** OpenRouter가 usage accounting을 켠 응답에서만 주는 선택
-  필드라, 없을 때 `cost=null`을 남기면 집계 스크립트가 0으로 오해합니다.
+- **`cost`는 있을 때만 찍습니다.** 실측에서 OpenRouter는 **별도 옵트인 없이** `usage.cost`를 함께
+  내려줬습니다([평가 48회 = $0.048](EVAL.md#8-첫-실측-기준선)). 다만 표준 필드가 아니어서 다른
+  게이트웨이나 프록시에서는 빠질 수 있으므로 선택 필드로 다룹니다 — 없을 때 `cost=null`을 남기면
+  집계 스크립트가 0으로 오해하니, 아예 생략합니다.
 
 ```bash
 OPENROUTER_STREAM_USAGE=false   # 기본값 true — 끄면 스트리밍 경로의 사용량 로그만 사라진다

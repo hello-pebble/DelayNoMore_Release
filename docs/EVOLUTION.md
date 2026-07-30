@@ -113,7 +113,7 @@ graph TD
 - 이 프로젝트는 **버전을 나눠 점진적으로 진화**합니다. 현재 버전: **v0.16.1**.
 - 버전 규칙은 [유의적 버전(SemVer)](https://semver.org/lang/ko/)을 따르며, 프론트엔드(`package.json`)와 백엔드(`build.gradle`)는 **하나의 제품 버전**으로 통일합니다.
 - 버전별 변경사항은 [`CHANGELOG.md`](../CHANGELOG.md)에 기록합니다.
-- 버전별 기능 점검은 [`QA_CHECKLIST.md`](QA_CHECKLIST.md)로 확인하고, 릴리스별 수행 결과는 `QA_RESULT_vX.Y.Z.md`로 기록합니다(최신: [`QA_RESULT_v0.13.0.md`](QA_RESULT_v0.13.0.md)).
+- 버전별 기능 점검은 [`QA_CHECKLIST.md`](QA_CHECKLIST.md)로 확인하고, 릴리스별 수행 결과는 `QA_RESULT_vX.Y.Z.md`로 기록합니다(최신: [`QA_RESULT_v0.16.0.md`](QA_RESULT_v0.16.0.md) — 에이전트 평가 하네스의 첫 실측).
 - 배포 회고와 AI 파라미터 제어 방향은 [`DEPLOY_RETROSPECTIVE.md`](DEPLOY_RETROSPECTIVE.md)에 정리했습니다.
 - 브랜치 전략은 **트렁크 기반** — `main`은 항상 배포 가능한 상태로 유지하고, 기능마다 짧게 사는 브랜치 → PR → `main` 머지 → `vX.Y.Z` 태그를 찍습니다.
 - PR/`main` 푸시 시 [CI](../.github/workflows/ci.yml)가 프론트(lint+build)·백엔드(bootJar) 빌드를 검증합니다.
