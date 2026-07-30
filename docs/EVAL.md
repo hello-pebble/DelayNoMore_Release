@@ -11,13 +11,19 @@ OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.minPassRate=80
 
 리포트는 콘솔과 `backend/build/eval/report.md`에 남습니다.
 
-> **Windows에서 한글이 깨지면** — 빌드 쪽은 `build.gradle`이 UTF-8로 못박아 두었습니다(`javac`는
-> `-encoding`이 없으면 플랫폼 기본, 즉 한국어 Windows에서 CP949로 소스를 읽어 **한글 리터럴을
-> 컴파일 시점에 깨뜨립니다** — 콘솔 표시 문제가 아니라 산출물이 망가지는 문제입니다).
->
-> 그래도 콘솔만 깨져 보이면 터미널 코드페이지 문제입니다. `cmd`/PowerShell은 `chcp 65001`을 먼저
-> 실행하세요. Git Bash는 보통 UTF-8이라 그대로 됩니다. 어느 쪽이든 **`report.md` 파일이 정본**이니
+> **Windows 콘솔에서 한글이 깨지면** — **`build/eval/report.md` 파일이 정본이고 항상 UTF-8입니다.**
 > 콘솔이 의심스러우면 파일을 에디터로 여세요.
+>
+> 콘솔 출력은 Gradle이 터미널 코드페이지에 맞춰 인코딩하므로 저장소가 강제할 수 없습니다.
+> `chcp 65001`로 터미널을 UTF-8로 바꾸면 해결됩니다(`cmd`·PowerShell·Git Bash 모두).
+>
+> 대신 **저장소가 통제할 수 있는 부분은 ASCII로 뒀습니다** — Gradle이 리포트마다 함께 찍는 테스트
+> 이름 헤더(`AgentToolSelectionEvalTest > agent tool-selection eval …`)와 리포트 경로 안내
+> (`[eval] report: …`)는 어느 콘솔에서도 읽힙니다. 본문이 깨져 보여도 경로 줄은 찾을 수 있습니다.
+>
+> 참고로 **소스 컴파일은 원래부터 문제가 없었습니다** — JDK 18([JEP 400](https://openjdk.org/jeps/400))
+> 부터 `javac` 기본 인코딩이 UTF-8입니다. `build.gradle`의 `options.encoding = 'UTF-8'`은 플랫폼
+> 기본값에 의존하지 않기 위한 위생 설정입니다.
 
 ---
 

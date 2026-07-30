@@ -16,35 +16,44 @@
 
 ## [0.16.1]
 
-**빌드 인코딩을 UTF-8로 못박음 — Windows에서 한글이 산출물째로 깨지던 문제.** v0.16.0의 평가를
-Windows에서 처음 돌려보니 리포트의 한글이 깨졌다. 콘솔 표시 문제로 보였지만 원인은 더 아래에
-있었다 — 이 저장소에 **인코딩 설정이 아예 없었다.**
+**Windows 콘솔에서 평가 출력의 한글이 깨지던 문제.** v0.16.0의 평가를 Windows(Git Bash)에서 처음
+돌려보니 리포트와 테스트 이름의 한글이 깨졌다.
 
-`javac`는 `-encoding`이 없으면 **플랫폼 기본 인코딩**으로 소스를 읽는다. 한국어 Windows에서 그
-값은 CP949다. 이 저장소의 소스는 UTF-8이고 한글 주석·문자열·테스트 메서드명이 잔뜩 있으므로,
-Windows에서 빌드하면 한글 리터럴이 **컴파일 시점에 깨져 `.class`에 박힌다.** 표시 문제가 아니라
-산출물이 망가지는 문제이고, 그래서 평가 리포트 파일까지 깨진다.
+**진단** — 깨진 모양(`?곹깭蹂?` ← `상태별`)은 **UTF-8 바이트를 CP949로 디코딩**했을 때 나오는
+패턴이다. 즉 소스는 UTF-8로 제대로 컴파일됐고 **출력 계층에서 어긋난 것**이다. JDK 18의
+[JEP 400](https://openjdk.org/jeps/400)부터 `javac`의 기본 인코딩이 이미 UTF-8이라 컴파일은 정상이었다.
 
-`javac -encoding ISO-8859-1`로 같은 메커니즘을 재현해 확인했다(같은 소스가 `-encoding UTF-8`에서는
-정상).
+그래서 이 저장소가 통제할 수 있는 부분(콘솔로 흐르는 텍스트)과 통제할 수 없는 부분(터미널
+코드페이지)을 갈라 처리했다.
 
 ### Fixed
-- **`JavaCompile.options.encoding = 'UTF-8'`** — 컴파일 계층. 이게 핵심 수정이다.
-- **테스트 JVM의 `file.encoding`·`stdout.encoding`·`stderr.encoding`을 UTF-8로** — Gradle은 워커의
-  기본 charset으로 테스트 표준출력을 해석하므로, 고정하지 않으면 플랫폼에 따라 해석이 갈린다
-  (평가 리포트를 콘솔에 찍는 `evalAgent`가 이 경로를 그대로 탄다).
-- **`gradle.properties`에 `org.gradle.jvmargs=-Dfile.encoding=UTF-8`** — 데몬 계층. 테스트 JVM →
-  Gradle 워커 → 데몬 → 콘솔의 각 단계가 같은 charset이어야 중간에서 다시 깨지지 않는다.
+- **콘솔로 흐르는 Gradle 테스트 헤더를 ASCII로** — `evalAgent`는 `showStandardStreams = true`라
+  리포트를 흘릴 때마다 Gradle이 테스트 이름을 헤더로 함께 찍는다. 이 테스트만 메서드명을
+  `evaluateToolSelectionAccuracy`로 바꾸고 `@DisplayName`도 ASCII로 뒀다 — 이제 헤더와
+  스택트레이스에 비ASCII 문자가 남지 않는다. `@DisplayName`만 바꾸지 않은 이유는 Gradle이
+  스택트레이스·XML 리포트에서 메서드명을 그대로 쓰기 때문이다. 콘솔로 흐르지 않는 나머지
+  테스트는 프로젝트 관례대로 한글 이름을 유지한다.
+- **리포트 경로 안내를 ASCII로**(`[eval] report: <path>`) — 콘솔 인코딩이 어긋나 본문이 깨져 보이는
+  상황에서 사용자가 유일하게 필요한 정보가 "정본 파일이 어디인가"이기 때문이다.
 - **`evalAgent`가 인코딩 설정을 지우던 버그** — `systemProperties = [..]`로 **맵을 통째로 대입**해
-  위에서 넣은 인코딩 프로퍼티까지 날려버렸다. `systemProperties.putAll(..)`로 더하도록 고쳤다.
-  이 수정 없이는 위 세 가지가 `evalAgent`에만 적용되지 않아, 정작 문제가 드러난 태스크가 고쳐지지
-  않는다.
+  아래 위생 설정까지 날려버렸다. `systemProperties.putAll(..)`로 더하도록 고쳤다.
+
+### Changed (위생 — 원인은 아니지만 플랫폼 기본값에 의존하지 않도록)
+- `JavaCompile.options.encoding = 'UTF-8'` — JDK 18+에서는 기본값이 이미 UTF-8이지만, 명시해 두면
+  더 낮은 JDK나 다른 툴체인에서도 소스 해석이 흔들리지 않는다.
+- 테스트 JVM의 `file.encoding`·`stdout.encoding`·`stderr.encoding`을 UTF-8로 고정.
+- `gradle.properties`에 `org.gradle.jvmargs=-Dfile.encoding=UTF-8` — 테스트 JVM → Gradle 워커 →
+  데몬의 각 단계가 같은 charset을 쓰게 한다.
 
 Linux/macOS는 플랫폼 기본이 이미 UTF-8이라 **CI 동작은 달라지지 않는다**(no-op).
 
+### 남는 한계 — 리포트 본문은 터미널 설정에 달려 있다
+리포트 본문의 한글은 저장소가 강제할 수 없다. Gradle이 콘솔 코드페이지에 맞춰 인코딩하므로,
+`cmd`/PowerShell·Git Bash에서 코드페이지가 UTF-8이 아니면 여전히 깨져 보인다 — `chcp 65001`로
+해결한다. **어느 쪽이든 `build/eval/report.md` 파일이 정본이고 항상 UTF-8이다.**
+
 ### 문서
-- `docs/EVAL.md`에 Windows 인코딩 절 추가 — 빌드 쪽은 고정됐고, 콘솔만 깨져 보이면 터미널
-  코드페이지 문제(`chcp 65001`)이며, 어느 쪽이든 **`report.md` 파일이 정본**이라는 점.
+- `docs/EVAL.md`에 인코딩 절 추가 — 무엇이 고쳐졌고 무엇이 터미널 문제인지, 정본은 파일이라는 점.
 
 ## [0.16.0]
 

@@ -17,6 +17,7 @@ import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -75,8 +76,19 @@ class AgentToolSelectionEvalTest {
     @Autowired
     private RecordingUsageLogger usageLogger;
 
+    /**
+     * 이 테스트만 이름을 ASCII로 두는 이유: {@code showStandardStreams = true} 때문에 Gradle이
+     * 리포트를 콘솔로 흘릴 때마다 테스트 이름을 헤더로 함께 찍는데, Windows 콘솔 코드페이지가
+     * UTF-8이 아니면 그 헤더가 깨져 보인다. 리포트 본문의 한글은 터미널 설정으로만 해결되지만
+     * (chcp 65001), 이 헤더는 이름을 ASCII로 두면 어느 콘솔에서도 읽힌다.
+     *
+     * <p>@DisplayName이 아니라 메서드명 자체를 ASCII로 둔 것은, Gradle이 스택트레이스·XML 리포트
+     * 등 여러 경로에서 메서드명을 그대로 쓰기 때문이다(DisplayName만 바꾸면 일부 경로가 남는다).
+     * 나머지 테스트는 콘솔로 흐르지 않으므로 프로젝트 관례대로 한글 이름을 유지한다.
+     */
     @Test
-    void 상태별_도구_선택_정확도를_측정한다() throws Exception {
+    @DisplayName("agent tool-selection eval (states x tools)")
+    void evaluateToolSelectionAccuracy() throws Exception {
         EvalDataset dataset = EvalDataset.loadDefault();
         EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
         int repeats = Integer.getInteger("eval.repeats", 1);
@@ -92,7 +104,9 @@ class AgentToolSelectionEvalTest {
         String rendered = report.render();
         Files.createDirectories(REPORT_PATH.getParent());
         Files.writeString(REPORT_PATH, rendered);
-        System.out.println("\n" + rendered + "\n리포트: " + REPORT_PATH.toAbsolutePath());
+        // 경로 안내만 ASCII로 둔다 — 콘솔 인코딩이 어긋나 본문이 깨져 보이는 상황에서
+        // 사용자가 유일하게 필요한 정보가 "정본 파일이 어디인가"이기 때문이다.
+        System.out.println("\n" + rendered + "\n[eval] report: " + REPORT_PATH.toAbsolutePath());
 
         // 1) 모든 실행이 오류로 끝났다면 이건 모델 품질이 아니라 설정이 고장 난 것이다(키 만료·
         //    업스트림 장애 등). 통과율 0%를 "모델이 못했다"로 읽으면 안 되므로 따로 세운다.
