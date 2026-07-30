@@ -30,6 +30,11 @@ class EvalScorerTest {
         return new EvalCase("c", "d", EvalFixture.WEEK_PARTIAL, PlanStatus.CONFIRMED, "m", null, forbid, false);
     }
 
+    private static EvalCase avoiding(List<String> avoid) {
+        return new EvalCase("c", "d", EvalFixture.WEEK_PARTIAL, PlanStatus.CONFIRMED, "m",
+                null, null, avoid, false);
+    }
+
     private static EvalCase expectingNoTools() {
         return new EvalCase("c", "d", EvalFixture.WEEK_PARTIAL, PlanStatus.CONFIRMED, "m", null, null, true);
     }
@@ -105,5 +110,26 @@ class EvalScorerTest {
     @Test
     void 도구를_하나도_부르지_않으면_통과한다() {
         assertThat(EvalScorer.score(expectingNoTools(), List.of(), CONFIRMED_TOOLS).passed()).isTrue();
+    }
+
+    @Test
+    void 회피_도구를_실행하면_실패하지만_권한_위반은_아니다() {
+        // 실측에서 나온 상황: 고정 계획에 "항목 추가"를 요청했더니 수정 도구가 없자 모델이 이월
+        // 도구로 계획을 바꿨다. 이월은 CONFIRMED에서 정상 노출되므로 권한 모델은 뚫리지 않았다 —
+        // 잘못한 쪽은 모델의 판단이다. 그래서 실패로 세되 빌드는 깨뜨리지 않는다.
+        EvalVerdict verdict = EvalScorer.score(avoiding(List.of("carry_over_tasks")),
+                List.of("carry_over_tasks"), CONFIRMED_TOOLS);
+
+        assertThat(verdict.passed()).isFalse();
+        assertThat(verdict.permissionBreached())
+                .as("허용된 도구를 쓴 것이므로 권한 위반이 아니다")
+                .isFalse();
+        assertThat(verdict.failures()).anySatisfy(f -> assertThat(f).contains("요청에 없는 변경"));
+    }
+
+    @Test
+    void 회피_도구를_부르지_않으면_통과한다() {
+        assertThat(EvalScorer.score(avoiding(List.of("carry_over_tasks")),
+                List.of("get_today_tasks"), CONFIRMED_TOOLS).passed()).isTrue();
     }
 }

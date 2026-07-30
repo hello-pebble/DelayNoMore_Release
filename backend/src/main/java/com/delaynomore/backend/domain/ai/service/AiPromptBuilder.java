@@ -127,10 +127,21 @@ public class AiPromptBuilder {
      * 박아 두면 둘이 어긋나서, 모델이 없는 도구를 부르려 하게 된다.
      *
      * <p>"사교적 턴에는 도구를 부르지 않는다"를 별 단락으로 뽑은 것은 <b>평가 결과에 따른 조정</b>
-     * 이다(docs/QA_RESULT_v0.16.0.md). 목록의 마지막 항목으로 뭉쳐 뒀을 때 인사·감사에서 6회 중 1회
-     * 도구를 불렀고, 그 실패가 두 실행 사이에 케이스를 옮겨 다녀 특정 문구가 아니라 성향임이
-     * 드러났다. 같은 단락에서 "질문이 섞이면 질문이 이긴다"까지 못박은 이유는 억제가 과해지면
-     * 반대쪽(read.* 케이스)이 깨지기 때문이다 — 한쪽만 밀면 다른 쪽이 무너지는 축이라 함께 쓴다.
+     * 이다(docs/QA_RESULT_v0.16.0.md). 목록의 마지막 항목으로 뭉쳐 뒀을 때 인사·감사에서 도구를
+     * 불렀고, 그 실패가 실행 사이에 케이스를 옮겨 다녀 특정 문구가 아니라 성향임이 드러났다.
+     * 같은 단락에서 "질문이 섞이면 질문이 이긴다"까지 못박은 이유는 억제가 과해지면 반대쪽
+     * (read.* 케이스)이 깨지기 때문이다 — 한쪽만 밀면 다른 쪽이 무너지는 축이라 함께 쓴다.
+     *
+     * <p>이후 340회 실측에서 두 가지가 더 드러나 문구를 보강했다(v0.16.5):
+     * <ul>
+     *   <li><b>인사가 감사보다 3배 위험하다</b>(누적 9.7% 대 3.2%). 인사는 대화를 <i>여는</i> 말이라
+     *       모델이 "인사 + 오늘 할 일 브리핑"을 자연스러운 응대로 본다. 그래서 예시 나열에 그치지
+     *       않고 <b>대화 위치</b>를 지시한다 — "여는 인사는 브리핑 요청이 아니다".</li>
+     *   <li><b>수정이 막히면 다른 변경으로 대체한다.</b> 고정 계획에 "항목을 추가해줘"라고 했을 때
+     *       수정 도구가 없자 <b>이월 도구로 계획을 실제로 바꿨다.</b> 이월은 CONFIRMED에서 정상
+     *       노출되므로 권한 모델이 뚫린 것은 아니지만, 사용자가 요청하지 않은 변경이다. 그래서
+     *       "요청받지 않은 변경 금지"를 규칙 목록에 넣었다.</li>
+     * </ul>
      */
     private static final String AGENT_SYSTEM_PROMPT = """
             You are a friendly, professional Korean planning coach for an anti-procrastination app.
@@ -146,9 +157,14 @@ public class AiPromptBuilder {
             - If a tool returns ok=false, tell the user what the error message says in plain Korean.
               Do not retry the same call with the same arguments.
             - Only call a tool when your reply needs a fact you do not already have.
+            - NEVER make a change the user did not ask for. If the edit they asked for is not
+              available to you, say so plainly — do NOT substitute a different change (moving tasks
+              to another day, for example) as a consolation prize.
 
             NO tools for social turns. Greetings, thanks and acknowledgements (안녕, 고마워, 알겠어,
             화이팅, ㅇㅇ) are not information requests — reply warmly in one sentence and call NOTHING.
+            A greeting that OPENS the conversation is not an invitation to brief them: do not fetch
+            today's tasks to "be helpful". Wait until they ask.
             But if such a message also asks something ("안녕! 오늘 뭐 해야 해?"), the question wins:
             greet briefly AND still call the tool that question needs.
 

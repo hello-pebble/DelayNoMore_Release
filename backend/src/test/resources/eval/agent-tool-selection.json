@@ -72,7 +72,8 @@
       "fixture": "WEEK_PARTIAL",
       "status": "CONFIRMED",
       "message": "마지막 날에 '모의고사 1회 풀기'를 추가해줘",
-      "forbidTools": ["update_plan_tasks"]
+      "forbidTools": ["update_plan_tasks"],
+      "avoidTools": ["carry_over_tasks"]
     },
     {
       "id": "write.update.completed_blocked",
