@@ -22,6 +22,10 @@ export default function App() {
   // 새로고침·탭 종료 시 보관함 접근을 잃는다. 사용자에게 미리 안내한다.
   const [storageEphemeral, setStorageEphemeral] = useState(false);
 
+  // 모바일 폭에서는 헤더에 긴 문구를 둘 자리가 없다. 데모 안내와 AI 상태 문구는 헤더 아래
+  // 한 줄 배너로 접어 두고, 상태 LED를 누르면 펼친다(정보는 그대로 두고 자리만 옮긴 것).
+  const [infoOpen, setInfoOpen] = useState(false);
+
   const handleNicknameSubmit = (value) => {
     setNickname(value); // 표시 이름 localStorage 보관
     getGuestId(); // 첫 API 호출 전에 게스트 ID를 확정(생성)해 둔다
@@ -76,7 +80,8 @@ export default function App() {
         style={{
           height: '52px',
           flexShrink: 0,
-          padding: '0 16px',
+          padding: '0 12px',
+          gap: '8px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -84,47 +89,87 @@ export default function App() {
           background: 'var(--bg-card)'
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', minWidth: 0 }}>
-          <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
-          {/* 데모 특성 안내 — 방문자가 미리 알아야 할 특성(브라우저 단위 보관함·로그인 전이라
-              브라우저 데이터를 지우면 복구 불가)만 알린다. 서버 데이터는 DB에 영속된다(v0.12.0). */}
-          <div className="header-guide" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            데모 페이지 — 계획은 이 브라우저 보관함에 저장됩니다 · 브라우저 데이터를 지우면 복구할 수 없어요(로그인 전)
-          </div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>{nickname}</span>
-            <button
-              onClick={() => setEditingNickname(true)}
-              title="표시 이름만 바뀝니다 — 보관함 데이터는 그대로 유지됩니다"
-              style={{
-                padding: '2px 8px',
-                background: 'var(--bg-card)',
-                color: 'var(--text-muted)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                fontSize: '12px',
-                cursor: 'pointer'
-              }}
-            >
-              변경
-            </button>
-          </div>
-          <div title={ledLabel} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)', minWidth: 0 }}>
+          <span
+            style={{
+              fontWeight: 600,
+              color: 'var(--text-main)',
+              maxWidth: '84px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {nickname}
+          </span>
+          <button
+            onClick={() => setEditingNickname(true)}
+            title="표시 이름만 바뀝니다 — 보관함 데이터는 그대로 유지됩니다"
+            style={{
+              padding: '0 10px',
+              minHeight: '32px',
+              flexShrink: 0,
+              background: 'var(--bg-card)',
+              color: 'var(--text-muted)',
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
+              fontSize: '12px',
+              cursor: 'pointer'
+            }}
+          >
+            변경
+          </button>
+          {/* 상태 LED — 좁은 폭에서는 점만 두고, 누르면 아래 배너에 전체 문구가 펼쳐진다. */}
+          <button
+            type="button"
+            onClick={() => setInfoOpen((v) => !v)}
+            aria-expanded={infoOpen}
+            aria-label={ledLabel}
+            title={ledLabel}
+            style={{
+              width: '32px',
+              minHeight: '32px',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+          >
             <span
               style={{
-                width: '8px',
-                height: '8px',
+                width: '10px',
+                height: '10px',
                 borderRadius: '50%',
                 background: ledColor,
                 display: 'inline-block'
               }}
             />
-            {ledLabel}
-          </div>
+          </button>
         </div>
       </header>
+
+      {/* 데모 특성 안내 + AI 상태 — 방문자가 미리 알아야 할 특성(브라우저 단위 보관함·로그인 전이라
+          브라우저 데이터를 지우면 복구 불가)만 알린다. 서버 데이터는 DB에 영속된다(v0.12.0). */}
+      {infoOpen && (
+        <div
+          style={{
+            flexShrink: 0,
+            padding: '8px 12px',
+            fontSize: '12px',
+            lineHeight: 1.5,
+            color: 'var(--text-muted)',
+            background: 'var(--bg-panel)',
+            borderBottom: '1px solid var(--border)'
+          }}
+        >
+          <div style={{ color: 'var(--text-main)', fontWeight: 600 }}>{ledLabel}</div>
+          데모 페이지 — 계획은 이 브라우저 보관함에 저장됩니다 · 브라우저 데이터를 지우면 복구할 수 없어요(로그인 전)
+        </div>
+      )}
 
       {storageEphemeral && (
         // 저장소 차단 경고 — 게스트 ID가 이 탭에만 있어 새로고침 시 보관함을 잃는다.
@@ -132,7 +177,7 @@ export default function App() {
           role="alert"
           style={{
             flexShrink: 0,
-            padding: '8px 16px',
+            padding: '8px 12px',
             fontSize: '12px',
             color: '#7c2d12',
             background: '#fef3c7',
@@ -147,7 +192,8 @@ export default function App() {
       {/* 데이터 스코프는 게스트 ID(안정)라 닉네임이 바뀌어도 ChatCoach를 리마운트하지 않는다. */}
       <ChatCoach agentEnabled={agentEnabled} />
 
-      {/* "변경"은 오버레이로 — ChatCoach가 마운트된 채 위에 얹혀, 대화·계획 상태가 유지된다. */}
+      {/* "변경"은 오버레이로 — ChatCoach가 마운트된 채 위에 얹혀, 대화·계획 상태가 유지된다.
+          모바일 전용 컬럼(#root 최대 480px) 안에 맞춰 가운데 정렬한다. */}
       {editingNickname && (
         <div
           style={{
@@ -155,14 +201,17 @@ export default function App() {
             inset: 0,
             background: 'rgba(0, 0, 0, 0.4)',
             display: 'flex',
+            justifyContent: 'center',
             zIndex: 50
           }}
         >
-          <NicknameSetup
-            initialValue={nickname}
-            onSubmit={handleNicknameSubmit}
-            onCancel={() => setEditingNickname(false)}
-          />
+          <div style={{ width: '100%', maxWidth: '480px', display: 'flex' }}>
+            <NicknameSetup
+              initialValue={nickname}
+              onSubmit={handleNicknameSubmit}
+              onCancel={() => setEditingNickname(false)}
+            />
+          </div>
         </div>
       )}
     </>

@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 모바일 전용 화면 — viewport-fit=cover로 노치/홈 인디케이터 영역(env(safe-area-inset-*))까지
+         레이아웃이 계산되게 한다. 하단 탭바가 홈 인디케이터에 가리지 않으려면 필요하다. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ffffff" />
     <meta name="description" content="대화를 통해 하루 단위 실행 계획(투두리스트)을 생성하는 AI 코치 데모, DelayNoMore" />
     <title>DelayNoMore | 대화형 투두리스트 생성 데모</title>
   </head>

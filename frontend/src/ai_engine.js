@@ -344,7 +344,7 @@ export async function streamAgentChat(slots, draft, history, message, planId, on
     const updatedDraft = tasks ? draftWithTasks(draft, tasks) : null;
     if (replyText.trim() || updatedDraft || refreshPlanId) {
       return {
-        reply: replyText.trim() || "요청하신 내용을 반영했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+        reply: replyText.trim() || "요청하신 내용을 반영했습니다. 체크리스트 탭을 확인해 주세요.",
         updatedDraft,
         refreshPlanId,
         steps,
@@ -409,7 +409,7 @@ export async function streamChatWithCoach(slots, draft, history, message, onToke
       const updatedDraft = draftWithTasks(draft, tasks);
       if (updatedDraft) {
         return {
-          reply: replyText.trim() || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+          reply: replyText.trim() || "요청하신 내용을 반영해 계획을 수정했습니다. 체크리스트 탭을 확인해 주세요.",
           updatedDraft
         };
       }
@@ -452,7 +452,7 @@ export async function chatWithCoach(slots, draft, history, message) {
       const updatedDraft = draftWithTasks(draft, result.tasks);
       if (updatedDraft) {
         return {
-          reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 오른쪽 체크리스트를 확인해 주세요.",
+          reply: reply || "요청하신 내용을 반영해 계획을 수정했습니다. 체크리스트 탭을 확인해 주세요.",
           updatedDraft
         };
       }
@@ -500,7 +500,7 @@ export function mockChatWithCoach(slots, draft, message) {
     const addDays = numMatch ? Math.max(1, Math.min(14, parseInt(numMatch[1], 10))) : 3;
     const extended = extendMockChecklistDays(draft, slots, addDays);
     return {
-      reply: `(오프라인 모드) 기간을 ${addDays}일 늘렸습니다. 오른쪽 체크리스트에서 확인해 보세요.`,
+      reply: `(오프라인 모드) 기간을 ${addDays}일 늘렸습니다. 체크리스트 탭에서 확인해 보세요.`,
       updatedDraft: extended
     };
   }
@@ -518,7 +518,7 @@ export function mockChatWithCoach(slots, draft, message) {
         ? "하루 분량을 한 단계 줄였습니다"
         : "하루 분량을 한 단계 늘렸습니다";
     return {
-      reply: `(오프라인 모드) ${changed}. 오른쪽 체크리스트에서 확인해 보세요.`,
+      reply: `(오프라인 모드) ${changed}. 체크리스트 탭에서 확인해 보세요.`,
       updatedDraft: refined
     };
   }
