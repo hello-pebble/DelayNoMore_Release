@@ -2699,29 +2699,55 @@ export default function ChatCoach({ agentEnabled = false }) {
           전체 계획 완료 버튼은 여기 없다 — 1차 경로는 회고 저장 연동, 수동 경로는 보관함 행 ✓.
           전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
       {draftChecklist && (
-        // 좁은 폭에서 버튼이 한 줄에 1~2개씩 어중간하게 접히지 않도록 2열 그리드로 고정한다.
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px', flexShrink: 0 }}>
+        // 버튼 개수(2~4개)와 무관하게 **항상 한 줄**에 넣는다. 이 바에서는 아이콘을 빼는데,
+        // 4개일 때 아이콘 폭(합계 약 68px)이 라벨을 잘라내기 때문이다 — 좁은 폭에서는 라벨이
+        // 곧 구분 수단이라 아이콘보다 우선한다. 줄인 문구의 전체 뜻은 title·aria-label에 남긴다.
+        <div className="plan-action-bar">
           {activeStatus === 'DRAFT' && (
             <>
-              <button type="button" onClick={handleSavePlan} disabled={isTyping} style={exportButtonStyle}>
-                <Save size={13} />
-                계획 저장(고정)
+              <button
+                type="button"
+                onClick={handleSavePlan}
+                disabled={isTyping}
+                title="계획 저장(고정) — 저장하면 대화로 수정할 수 없습니다"
+                aria-label="계획 저장(고정)"
+                style={exportButtonStyle}
+              >
+                <span>저장(고정)</span>
               </button>
-              <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={exportButtonStyle}>
-                <CalendarPlus size={13} />
-                기간 +{EXTEND_DAYS}일
+              <button
+                type="button"
+                onClick={handleExtendDuration}
+                disabled={isTyping}
+                title={`기간 ${EXTEND_DAYS}일 늘리기`}
+                aria-label={`기간 ${EXTEND_DAYS}일 늘리기`}
+                style={exportButtonStyle}
+              >
+                <span>+{EXTEND_DAYS}일</span>
               </button>
             </>
           )}
           {!isTerminal && activePlanId != null && (
-            <button type="button" onClick={handleCancelPlan} disabled={isTyping} style={exportButtonStyle}>
-              <XCircle size={13} />
-              계획 중단
+            <button
+              type="button"
+              onClick={handleCancelPlan}
+              disabled={isTyping}
+              title="계획 중단"
+              aria-label="계획 중단"
+              style={exportButtonStyle}
+            >
+              <span>중단</span>
             </button>
           )}
-          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={exportButtonStyle}>
-            <RotateCcw size={13} />
-            처음부터 다시 만들기
+          <button
+            type="button"
+            onClick={handleResetPlan}
+            disabled={isTyping}
+            title="처음부터 다시 만들기"
+            aria-label="처음부터 다시 만들기"
+            style={exportButtonStyle}
+          >
+            <span>다시 만들기</span>
           </button>
         </div>
       )}
@@ -2896,6 +2922,25 @@ export default function ChatCoach({ agentEnabled = false }) {
           min-height: 0;
           overflow: hidden;
           flex-direction: column;
+        }
+        /* 계획 동작 바 — 버튼 2~4개를 폭에 상관없이 한 줄에 균등 분배한다.
+           아이콘은 고정, 라벨만 줄어들며(min-width:0), 가장 좁은 기기에서도 줄바꿈되지 않는다. */
+        .plan-action-bar {
+          flex-shrink: 0;
+          display: flex;
+          gap: 6px;
+          padding: 8px 12px;
+          border-bottom: 1px solid var(--border);
+        }
+        .plan-action-bar button {
+          flex: 1 1 auto;
+          min-width: 0;
+          padding-left: 6px;
+          padding-right: 6px;
+        }
+        .plan-action-bar button > span {
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .tab-bar {
           flex-shrink: 0;
