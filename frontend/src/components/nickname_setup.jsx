@@ -63,7 +63,8 @@ export default function NicknameSetup({ initialValue = '', onSubmit, onCancel })
             padding: '10px 12px',
             border: `1px solid ${error ? 'var(--danger)' : 'var(--border)'}`,
             borderRadius: '8px',
-            fontSize: '15px',
+            // 16px 미만이면 iOS Safari가 포커스 시 화면을 확대한다 — 모바일 전용 화면이라 16px 고정.
+            fontSize: '16px',
             outline: 'none'
           }}
         />

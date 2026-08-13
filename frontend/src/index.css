@@ -35,17 +35,38 @@ body {
 body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  background: var(--bg-app);
+  /* 폰 폭 컬럼 바깥의 여백 — 데스크톱에서 앱 영역과 배경을 구분한다. */
+  background: var(--bg-panel);
   color: var(--text-main);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* iOS 가로 회전 시 본문 폰트가 임의로 커지는 것을 막고, 화면 끝에서의
+     당겨서 새로고침·바운스 스크롤을 끈다(패널 내부 스크롤만 남긴다). */
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
 }
 
+/* 모바일 전용 화면 — 화면 폭과 무관하게 폰 폭(최대 480px) 한 컬럼만 렌더한다.
+   데스크톱에서 접속해도 같은 UI가 가운데 정렬돼 보이므로, 유지보수 대상 레이아웃은 하나다.
+   100dvh: iOS 주소창이 접혔다 펴질 때 100vh가 실제 보이는 높이보다 커져 하단 입력바·탭바가
+   화면 밖으로 밀리는 문제를 피한다(dvh 미지원 브라우저는 위의 100vh로 폴백). */
 #root {
   height: 100vh;
+  height: 100dvh;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--bg-app);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+}
+
+/* 하단 안전영역(홈 인디케이터) 확보 — 하단 고정 요소에 붙인다. */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 button {
@@ -81,13 +102,6 @@ input {
 
 .animate-fade-in {
   animation: fadeIn 0.25s ease forwards;
-}
-
-/* 헤더 안내 문구 — 좁은 화면에서는 상태 LED와 겹치므로 숨긴다. */
-@media (max-width: 760px) {
-  .header-guide {
-    display: none;
-  }
 }
 
 @keyframes blink {

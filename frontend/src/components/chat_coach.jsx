@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
-  CheckCircle2, History, BarChart3, Sparkles, XCircle, Wrench
+  CheckCircle2, History, BarChart3, Sparkles, XCircle, Wrench,
+  MessageSquare, ListChecks
 } from 'lucide-react';
 import {
   REQUIRED_SLOTS,
@@ -364,11 +365,14 @@ async function copyTextToClipboard(text) {
   }
 }
 
+// 모바일 전용 화면이라 탭 타깃 최소 높이(약 40px)를 지켜, 손가락으로 눌러도 빗나가지 않게 한다.
 const quickReplyButtonStyle = {
   display: 'flex',
   alignItems: 'center',
+  justifyContent: 'center',
   gap: '4px',
-  padding: '6px 10px',
+  minHeight: '38px',
+  padding: '6px 12px',
   fontSize: '12px',
   border: '1px solid var(--border)',
   borderRadius: '999px',
@@ -380,8 +384,11 @@ const quickReplyButtonStyle = {
 const exportButtonStyle = {
   display: 'flex',
   alignItems: 'center',
+  justifyContent: 'center',
   gap: '4px',
-  padding: '5px 9px',
+  minHeight: '38px',
+  padding: '5px 10px',
+  whiteSpace: 'nowrap',
   fontSize: '12px',
   border: '1px solid var(--border)',
   borderRadius: '6px',
@@ -453,6 +460,11 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 서버에서 채우고, 회고 저장 성공 시 로컬 병합한다(재요청 불필요). {planId: ['YYYY-MM-DD']}
   const [reflectionDates, setReflectionDates] = useState({});
 
+  // 모바일 전용 화면의 활성 탭 — 대화 / 오늘 할 일 / 체크리스트 중 하나만 보인다.
+  // 세 패널은 항상 마운트해 두고 비활성만 숨기므로(아래 렌더 참고) 탭을 오가도 스크롤 위치와
+  // 진행 중인 스트리밍이 끊기지 않는다.
+  const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'today' | 'checklist'
+
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
   const statusTimerRef = useRef(null);
@@ -467,7 +479,7 @@ export default function ChatCoach({ agentEnabled = false }) {
                                  // 전환을 도입하면 이 가드가 전환 경계도 지킨다. AbortController를 db_service에
                                  // 스레딩하는 방식은 이 코드베이스엔 과하다고 판단해 두지 않는다.)
 
-  // 계획 상태 — "계획 저장(고정)"을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
+  // 계획 상태 — "고정" 버튼을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
   // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
   const activeStatus = planStatusOf(draftChecklist);
@@ -632,8 +644,8 @@ export default function ChatCoach({ agentEnabled = false }) {
           ? `${restoredStatus === 'COMPLETED' ? '완료' : '중단'}된 "${goalName}" 계획을 불러왔습니다. 종결된 계획은 더 이상 수정하거나 완료 체크할 수 없어요 — 기록 확인과 질문만 가능합니다.`
           : kind === 'restored'
           ? (locked
-            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 오른쪽 체크리스트에서 완료 체크를 이어가세요.`
-            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오른쪽 체크리스트를 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
+            ? `고정된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 체크리스트 탭에서 완료 체크를 이어가세요.`
+            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 체크리스트 탭을 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
           : (locked
             ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
             : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
@@ -721,7 +733,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           {
             id: generateUniqueId('bot'),
             sender: 'bot',
-            text: '⚠️ 내 보관함이 가득 차서(최대 10개) 이 계획은 저장되지 않았어요. 오른쪽 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
+            text: '⚠️ 내 보관함이 가득 차서(최대 10개) 이 계획은 저장되지 않았어요. 체크리스트 탭의 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
           }
         ]);
       } else if (err.code === 'PLAN_STORE_FULL') {
@@ -849,7 +861,7 @@ export default function ChatCoach({ agentEnabled = false }) {
             {
               id: generateUniqueId('bot'),
               sender: 'bot',
-              text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+              text: '🔒 이 계획은 고정되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
             }
           ]);
           return;
@@ -930,7 +942,7 @@ export default function ChatCoach({ agentEnabled = false }) {
               {
                 id: generateUniqueId('bot'),
                 sender: 'bot',
-                text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+                text: '🔒 이 계획은 고정되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
               }
             ]);
             return;
@@ -1019,7 +1031,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       setDraftChecklist(checklist);
       // 완성된 초안을 서버 보관함에 자동 등록(부분 스트리밍 중에는 등록하지 않는다).
       archiveNewPlan(checklist);
-      const replyText = "계획 초안을 완성했습니다. 오른쪽 체크리스트를 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
+      const replyText = "계획 초안을 완성했습니다. 체크리스트 탭을 확인해 주세요. 수정하고 싶은 부분이 있으면 채팅으로 알려주세요.";
       setMessages((prev) =>
         prev.map(msg =>
           msg.id === botMsgId
@@ -1204,7 +1216,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     window.alert('계획 상태를 변경하지 못했습니다. 잠시 후 다시 시도해 주세요.');
   };
 
-  // 계획 저장 = 고정(DRAFT→CONFIRMED 전이) — 이후 대화로는 계획을 수정할 수 없게 된다.
+  // 계획 고정(DRAFT→CONFIRMED 전이) — 이후 대화로는 계획을 수정할 수 없게 된다.
   // 단순 보관이 아니라 "이 계획대로 실행하겠다"는 확정 행위라, 실수 방지 확인 창을 띄운다.
   // 보관된 계획은 서버 전이 API(POST /confirm)를 호출한다 — 고정 시각(confirmedAt)은 서버가
   // 발급하고 이력(PLAN_CONFIRMED)도 전이명 그대로 발행된다. 미보관 초안(서버 미가용 등으로
@@ -1212,7 +1224,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // CONFIRMED 상태 그대로 POST하는 것은 서버가 허용한다(API 일관성).
   const handleSavePlan = async () => {
     if (!draftChecklist || isLocked || isTyping) return;
-    if (!window.confirm('계획을 저장하면 고정되어 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
+    if (!window.confirm('계획을 고정하면 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
     if (activePlanId == null) {
       setDraftChecklist((prev) => (prev ? { ...prev, status: 'CONFIRMED', confirmedAt: new Date().toISOString() } : prev));
     } else {
@@ -1232,7 +1244,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 오른쪽 체크리스트를 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
+        text: '🔒 계획을 고정했습니다! 이제 대화로는 수정할 수 없어요 — 체크리스트 탭을 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
       }
     ]);
   };
@@ -1533,15 +1545,15 @@ export default function ChatCoach({ agentEnabled = false }) {
     currentSlot === REQUIRED_SLOTS.CURRENT_LEVEL ? LEVEL_PRESETS :
     [];
 
-  // === 왼쪽: 대화 패널 ===
+  // === 대화 패널 (하단 탭: 대화) ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
-      <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
         {chatHeaderLabel}
       </div>
 
       {/* 대화 영역 */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
         {messages.map((msg) => (
           <div
             key={msg.id}
@@ -1554,7 +1566,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           >
             {/* 이 답변을 만들 때 호출한 도구들과 실행 프로필 — 기본 접힘, 펼치면 인자와 결과가 보인다. */}
             {msg.steps && (
-              <div style={{ maxWidth: '80%', width: '100%' }}>
+              <div style={{ maxWidth: '88%', width: '100%' }}>
                 <AgentTrace
                   steps={msg.steps}
                   profile={msg.profile}
@@ -1565,7 +1577,7 @@ export default function ChatCoach({ agentEnabled = false }) {
             )}
             <div
               style={{
-                maxWidth: '80%',
+                maxWidth: '88%',
                 padding: '9px 13px',
                 borderRadius: '12px',
                 lineHeight: '1.5',
@@ -1583,7 +1595,7 @@ export default function ChatCoach({ agentEnabled = false }) {
         {/* 응답 대기 중의 라이브 추적 — 봇 말풍선이 생기기 전에도 무슨 일이 벌어지는지 보인다.
             응답이 끝나면 위 메시지의 steps로 옮겨 붙고 여기서는 사라진다(중복 표시 없음). */}
         {activeSteps.length > 0 && (
-          <div className="animate-fade-in" style={{ maxWidth: '80%' }}>
+          <div className="animate-fade-in" style={{ maxWidth: '88%' }}>
             <AgentTrace
               steps={activeSteps}
               expanded={!!expandedTrace.__active}
@@ -1641,7 +1653,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           (저장·중단·다시 만들기)은 체크리스트 패널의 계획 동작 바로, 전체 계획 완료는 회고 저장
           연동(maybeOfferPlanCompletion)·보관함 행 ✓ 버튼으로 이동했다. DRAFT는 표시할 것이 없다. */}
       {isLocked && (
-        <div style={{ padding: '0 16px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
+        <div style={{ padding: '0 12px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
           {activeStatus === 'CONFIRMED' && (
             <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
               <Lock size={12} />
@@ -1663,7 +1675,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       <form
         onSubmit={handleSendMessage}
         style={{
-          padding: '12px 16px',
+          padding: '10px 12px',
           borderTop: '1px solid var(--border)',
           display: 'flex',
           gap: '8px',
@@ -1681,20 +1693,23 @@ export default function ChatCoach({ agentEnabled = false }) {
           }
           style={{
             flex: 1,
+            minWidth: 0,
             padding: '10px 12px',
             background: 'var(--bg-card)',
             border: '1px solid var(--border)',
             borderRadius: '8px',
             color: 'var(--text-main)',
             outline: 'none',
-            fontSize: '14px'
+            // 16px 미만이면 iOS Safari가 포커스 시 화면을 자동 확대한다 — 모바일에서는 16px 고정.
+            fontSize: '16px'
           }}
         />
         <button
           type="submit"
+          aria-label="보내기"
           style={{
-            width: '42px',
-            height: '42px',
+            width: '44px',
+            height: '44px',
             border: 'none',
             borderRadius: '8px',
             background: 'var(--primary)',
@@ -1880,14 +1895,14 @@ export default function ChatCoach({ agentEnabled = false }) {
     return () => { cancelled = true; };
   }, [activePlanId]);
 
-  // === 오늘 할 일 패널 (가운데 칸 · 항상 표시) ===
+  // === 오늘 할 일 패널 (하단 탭: 오늘) ===
   // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
   // 다른 기기/방문자의 변경을 반영한다(자동 갱신은 마운트 fetch + 각 조작 경로가 담당).
   const todayPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-card)' }}>
       <div
         style={{
-          padding: '10px 16px',
+          padding: '10px 12px',
           borderBottom: '1px solid var(--border)',
           flexShrink: 0,
           display: 'flex',
@@ -1913,7 +1928,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           <RefreshCw size={13} />
         </button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
           {savedPlans.length === 0 ? (
             <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>
               보관된 계획이 아직 없습니다.<br />계획을 만들면 오늘 할 일이 여기에 모여요.
@@ -1964,13 +1979,13 @@ export default function ChatCoach({ agentEnabled = false }) {
                     // 본문 체크리스트와 동일한 접근성 패턴 — <label>로 감싼 실제 체크박스라
                     // 텍스트 클릭 토글 + Tab 포커스/Space 토글이 네이티브로 동작한다.
                     <li key={task.id} style={{ fontSize: '13px' }}>
-                      <label style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', cursor: 'pointer', userSelect: 'none' }}>
+                      <label style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '6px 0', cursor: 'pointer', userSelect: 'none' }}>
                         <input
                           type="checkbox"
                           checked={!!task.completed}
                           disabled={group.terminal} /* 종결 계획 — 서버가 토글 PUT도 거부(전면 잠금) */
                           onChange={() => toggleTodayTask(group.planId, task.id)}
-                          style={{ marginTop: '2px', flexShrink: 0, width: '14px', height: '14px', accentColor: 'var(--primary)', cursor: group.terminal ? 'default' : 'pointer' }}
+                          style={{ marginTop: '1px', flexShrink: 0, width: '18px', height: '18px', accentColor: 'var(--primary)', cursor: group.terminal ? 'default' : 'pointer' }}
                         />
                         <span
                           style={{
@@ -2031,8 +2046,10 @@ export default function ChatCoach({ agentEnabled = false }) {
               {showReflection ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
             </span>
           </button>
+          {/* 이 섹션은 패널 본문 스크롤러 바깥(flexShrink:0)이라 높이 제한이 필요하다. 다만 고정
+              px는 폰 세로 화면에서 과하게 답답해, 화면 높이 기준(dvh)으로 잡는다. */}
           {showReflection && (
-            <div style={{ maxHeight: '280px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ maxHeight: '46dvh', overflowY: 'auto', padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {todayGroups.map((group) => {
                 const done = group.tasks.filter((t) => t.completed).length;
                 const total = group.tasks.length;
@@ -2241,8 +2258,9 @@ export default function ChatCoach({ agentEnabled = false }) {
           {showPlanList ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
         </span>
       </button>
+      {/* 위 회고 섹션과 같은 이유로 높이를 화면 높이 기준(dvh)으로 제한한다. */}
       {showPlanList && (
-        <div style={{ maxHeight: '240px', overflowY: 'auto', padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ maxHeight: '46dvh', overflowY: 'auto', padding: '0 12px 10px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
           {plansStatus === 'error' && (
             <div style={{ fontSize: '12px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
               목록을 불러오지 못했습니다.
@@ -2615,11 +2633,11 @@ export default function ChatCoach({ agentEnabled = false }) {
     </div>
   );
 
-  // === 오른쪽: 체크리스트 패널 ===
+  // === 체크리스트 패널 (하단 탭: 체크리스트) ===
   const checklistPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-panel)' }}>
       <div style={{
-        padding: '10px 16px',
+        padding: '10px 12px',
         borderBottom: '1px solid var(--border)',
         flexShrink: 0,
         display: 'flex',
@@ -2677,42 +2695,69 @@ export default function ChatCoach({ agentEnabled = false }) {
       </div>
 
       {/* 계획 동작 바 — 상태(PlanStatus)별로 허용된 전이·수정만 노출한다(구 대화창 빠른동작 줄에서
-          이동). DRAFT: 저장(고정)·기간 늘리기 / 종결 전: 중단 / 항상: 처음부터 다시 만들기.
+          이동). DRAFT: 고정·기간 늘리기 / 종결 전: 중단 / 항상: 처음부터 다시 만들기.
           전체 계획 완료 버튼은 여기 없다 — 1차 경로는 회고 저장 연동, 수동 경로는 보관함 행 ✓.
           전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
       {draftChecklist && (
-        <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
+        // 버튼 개수(2~4개)와 무관하게 **항상 한 줄**에 넣는다. 이 바에서는 아이콘을 빼는데,
+        // 4개일 때 아이콘 폭(합계 약 68px)이 라벨을 잘라내기 때문이다 — 좁은 폭에서는 라벨이
+        // 곧 구분 수단이라 아이콘보다 우선한다. 줄인 문구의 전체 뜻은 title·aria-label에 남긴다.
+        <div className="plan-action-bar">
           {activeStatus === 'DRAFT' && (
             <>
-              <button type="button" onClick={handleSavePlan} disabled={isTyping} style={exportButtonStyle}>
-                <Save size={13} />
-                계획 저장(고정)
+              <button
+                type="button"
+                onClick={handleSavePlan}
+                disabled={isTyping}
+                title="계획 고정 — 고정하면 대화로 수정할 수 없습니다"
+                aria-label="계획 고정"
+                style={exportButtonStyle}
+              >
+                <span>고정</span>
               </button>
-              <button type="button" onClick={handleExtendDuration} disabled={isTyping} style={exportButtonStyle}>
-                <CalendarPlus size={13} />
-                기간 +{EXTEND_DAYS}일
+              <button
+                type="button"
+                onClick={handleExtendDuration}
+                disabled={isTyping}
+                title={`기간 ${EXTEND_DAYS}일 늘리기`}
+                aria-label={`기간 ${EXTEND_DAYS}일 늘리기`}
+                style={exportButtonStyle}
+              >
+                <span>+{EXTEND_DAYS}일</span>
               </button>
             </>
           )}
           {!isTerminal && activePlanId != null && (
-            <button type="button" onClick={handleCancelPlan} disabled={isTyping} style={exportButtonStyle}>
-              <XCircle size={13} />
-              계획 중단
+            <button
+              type="button"
+              onClick={handleCancelPlan}
+              disabled={isTyping}
+              title="계획 중단"
+              aria-label="계획 중단"
+              style={exportButtonStyle}
+            >
+              <span>중단</span>
             </button>
           )}
-          <button type="button" onClick={handleResetPlan} disabled={isTyping} style={exportButtonStyle}>
-            <RotateCcw size={13} />
-            처음부터 다시 만들기
+          <button
+            type="button"
+            onClick={handleResetPlan}
+            disabled={isTyping}
+            title="처음부터 다시 만들기"
+            aria-label="처음부터 다시 만들기"
+            style={exportButtonStyle}
+          >
+            <span>다시 만들기</span>
           </button>
         </div>
       )}
 
       {planListBar}
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px', minHeight: 0 }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '12px', minHeight: 0 }}>
         {!draftChecklist ? (
           <div style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', marginTop: '40px', lineHeight: 1.6 }}>
-            왼쪽 대화에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
+            대화 탭에서 목표 · 기간 · 하루 투자 시간 · 현재 수준을<br />
             입력하면 이곳에 계획표가 생성됩니다.
           </div>
         ) : (
@@ -2789,8 +2834,9 @@ export default function ChatCoach({ agentEnabled = false }) {
                         title={isPastLockedDate(activeStatus, date) ? '지난 날짜는 변경할 수 없어요' : undefined}
                         style={{
                           display: 'flex',
-                          gap: '8px',
+                          gap: '10px',
                           alignItems: 'flex-start',
+                          padding: '6px 0',
                           cursor: isTerminal || isPastLockedDate(activeStatus, date) ? 'default' : 'pointer',
                           userSelect: 'none'
                         }}
@@ -2804,8 +2850,8 @@ export default function ChatCoach({ agentEnabled = false }) {
                           style={{
                             marginTop: '2px',
                             flexShrink: 0,
-                            width: '15px',
-                            height: '15px',
+                            width: '18px',
+                            height: '18px',
                             accentColor: 'var(--primary)',
                             cursor: isTerminal || isPastLockedDate(activeStatus, date) ? 'default' : 'pointer'
                           }}
@@ -2830,43 +2876,117 @@ export default function ChatCoach({ agentEnabled = false }) {
     </div>
   );
 
-  // 가로 3칸 — 왼쪽=대화, 가운데=오늘 할 일, 오른쪽=체크리스트. 가운데 칸은 목록 성격이라
-  // 살짝 좁게 잡는다. 모바일 폭에서는 위아래 스택으로 전환하고, 오늘 칸은 화면을 다
-  // 차지하지 않게 높이를 제한한다(내부 스크롤).
+  // 모바일 전용 화면 — 한 번에 한 패널만 전체 높이로 쓰고, 하단 고정 탭바로 전환한다.
+  // 세 패널을 모두 마운트한 채 비활성만 display:none으로 숨기는 이유: 언마운트하면 각 패널의
+  // 스크롤 위치가 날아가고(대화 스크롤·보관함 목록), 진행 중인 스트리밍 렌더가 끊긴다.
+  const tabs = [
+    { id: 'chat', label: '대화', Icon: MessageSquare, badge: null },
+    { id: 'today', label: '오늘', Icon: Sun, badge: todayTotal > 0 ? todayTotal - todayDone : 0 },
+    { id: 'checklist', label: '체크리스트', Icon: ListChecks, badge: null }
+  ];
+
   return (
-    <div className="split-layout">
-      <div className="split-pane split-pane--chat">{chatPanel}</div>
-      <div className="split-pane split-pane--today">{todayPanel}</div>
-      <div className="split-pane split-pane--checklist">{checklistPanel}</div>
+    <div className="mobile-shell">
+      <div className="mobile-pane" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>{chatPanel}</div>
+      <div className="mobile-pane" style={{ display: activeTab === 'today' ? 'flex' : 'none' }}>{todayPanel}</div>
+      <div className="mobile-pane" style={{ display: activeTab === 'checklist' ? 'flex' : 'none' }}>{checklistPanel}</div>
+
+      <nav className="tab-bar safe-bottom" role="tablist" aria-label="화면 전환">
+        {tabs.map(({ id, label, Icon, badge }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === id}
+            onClick={() => setActiveTab(id)}
+          >
+            <span className="tab-icon">
+              <Icon size={19} />
+              {badge > 0 && <span className="tab-badge">{badge > 99 ? '99+' : badge}</span>}
+            </span>
+            {label}
+          </button>
+        ))}
+      </nav>
 
       <style>{`
-        .split-layout {
+        .mobile-shell {
           flex: 1;
           min-height: 0;
-          display: grid;
-          grid-template-columns: 1.1fr 0.8fr 1.1fr;
+          display: flex;
+          flex-direction: column;
         }
-        .split-pane {
+        /* 활성 패널만 남은 높이를 전부 차지한다. 숨긴 패널은 위 인라인 display:none이 이긴다. */
+        .mobile-pane {
+          flex: 1;
           min-height: 0;
           overflow: hidden;
+          flex-direction: column;
         }
-        .split-pane--chat,
-        .split-pane--today {
-          border-right: 1px solid var(--border);
+        /* 계획 동작 바 — 버튼 2~4개를 폭에 상관없이 한 줄에 균등 분배한다.
+           아이콘은 고정, 라벨만 줄어들며(min-width:0), 가장 좁은 기기에서도 줄바꿈되지 않는다. */
+        .plan-action-bar {
+          flex-shrink: 0;
+          display: flex;
+          gap: 6px;
+          padding: 8px 12px;
+          border-bottom: 1px solid var(--border);
         }
-        @media (max-width: 760px) {
-          .split-layout {
-            grid-template-columns: 1fr;
-            grid-template-rows: 1fr auto 1fr;
-          }
-          .split-pane--chat,
-          .split-pane--today {
-            border-right: none;
-            border-bottom: 1px solid var(--border);
-          }
-          .split-pane--today {
-            max-height: 40vh;
-          }
+        .plan-action-bar button {
+          flex: 1 1 auto;
+          min-width: 0;
+          padding-left: 6px;
+          padding-right: 6px;
+        }
+        .plan-action-bar button > span {
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .tab-bar {
+          flex-shrink: 0;
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          border-top: 1px solid var(--border);
+          background: var(--bg-card);
+        }
+        .tab-bar button {
+          min-height: 54px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 3px;
+          padding: 6px 4px;
+          background: transparent;
+          border: none;
+          cursor: pointer;
+          font-size: 11px;
+          line-height: 1;
+          color: var(--text-muted);
+        }
+        .tab-bar button[aria-selected="true"] {
+          color: var(--primary);
+          font-weight: 600;
+        }
+        .tab-icon {
+          position: relative;
+          display: flex;
+        }
+        .tab-badge {
+          position: absolute;
+          top: -5px;
+          left: 11px;
+          min-width: 15px;
+          height: 15px;
+          padding: 0 4px;
+          border-radius: 999px;
+          background: var(--primary);
+          color: #ffffff;
+          font-size: 10px;
+          font-weight: 600;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
       `}</style>
     </div>
