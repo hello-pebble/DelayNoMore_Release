@@ -479,7 +479,7 @@ export default function ChatCoach({ agentEnabled = false }) {
                                  // 전환을 도입하면 이 가드가 전환 경계도 지킨다. AbortController를 db_service에
                                  // 스레딩하는 방식은 이 코드베이스엔 과하다고 판단해 두지 않는다.)
 
-  // 계획 상태 — "계획 저장(고정)"을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
+  // 계획 상태 — "고정" 버튼을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
   // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
   const activeStatus = planStatusOf(draftChecklist);
@@ -644,7 +644,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           ? `${restoredStatus === 'COMPLETED' ? '완료' : '중단'}된 "${goalName}" 계획을 불러왔습니다. 종결된 계획은 더 이상 수정하거나 완료 체크할 수 없어요 — 기록 확인과 질문만 가능합니다.`
           : kind === 'restored'
           ? (locked
-            ? `저장(고정)된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 체크리스트 탭에서 완료 체크를 이어가세요.`
+            ? `고정된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 체크리스트 탭에서 완료 체크를 이어가세요.`
             : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 체크리스트 탭을 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
           : (locked
             ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
@@ -861,7 +861,7 @@ export default function ChatCoach({ agentEnabled = false }) {
             {
               id: generateUniqueId('bot'),
               sender: 'bot',
-              text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+              text: '🔒 이 계획은 고정되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
             }
           ]);
           return;
@@ -942,7 +942,7 @@ export default function ChatCoach({ agentEnabled = false }) {
               {
                 id: generateUniqueId('bot'),
                 sender: 'bot',
-                text: '🔒 이 계획은 저장(고정)되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
+                text: '🔒 이 계획은 고정되어 수정이 반영되지 않았어요. 확정한 계획은 그대로 실행해 보세요! 정말 바꿔야 한다면 "처음부터 다시 만들기"로 새 계획을 세울 수 있어요.'
               }
             ]);
             return;
@@ -1216,7 +1216,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     window.alert('계획 상태를 변경하지 못했습니다. 잠시 후 다시 시도해 주세요.');
   };
 
-  // 계획 저장 = 고정(DRAFT→CONFIRMED 전이) — 이후 대화로는 계획을 수정할 수 없게 된다.
+  // 계획 고정(DRAFT→CONFIRMED 전이) — 이후 대화로는 계획을 수정할 수 없게 된다.
   // 단순 보관이 아니라 "이 계획대로 실행하겠다"는 확정 행위라, 실수 방지 확인 창을 띄운다.
   // 보관된 계획은 서버 전이 API(POST /confirm)를 호출한다 — 고정 시각(confirmedAt)은 서버가
   // 발급하고 이력(PLAN_CONFIRMED)도 전이명 그대로 발행된다. 미보관 초안(서버 미가용 등으로
@@ -1224,7 +1224,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // CONFIRMED 상태 그대로 POST하는 것은 서버가 허용한다(API 일관성).
   const handleSavePlan = async () => {
     if (!draftChecklist || isLocked || isTyping) return;
-    if (!window.confirm('계획을 저장하면 고정되어 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
+    if (!window.confirm('계획을 고정하면 대화로는 더 이상 수정할 수 없습니다. 이 계획으로 확정할까요?')) return;
     if (activePlanId == null) {
       setDraftChecklist((prev) => (prev ? { ...prev, status: 'CONFIRMED', confirmedAt: new Date().toISOString() } : prev));
     } else {
@@ -1244,7 +1244,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 저장하고 고정했습니다! 이제 대화로는 수정할 수 없어요 — 체크리스트 탭을 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
+        text: '🔒 계획을 고정했습니다! 이제 대화로는 수정할 수 없어요 — 체크리스트 탭을 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
       }
     ]);
   };
@@ -2695,7 +2695,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       </div>
 
       {/* 계획 동작 바 — 상태(PlanStatus)별로 허용된 전이·수정만 노출한다(구 대화창 빠른동작 줄에서
-          이동). DRAFT: 저장(고정)·기간 늘리기 / 종결 전: 중단 / 항상: 처음부터 다시 만들기.
+          이동). DRAFT: 고정·기간 늘리기 / 종결 전: 중단 / 항상: 처음부터 다시 만들기.
           전체 계획 완료 버튼은 여기 없다 — 1차 경로는 회고 저장 연동, 수동 경로는 보관함 행 ✓.
           전이 자체의 허용 여부는 서버 전이표가 최종 판정한다. */}
       {draftChecklist && (
@@ -2709,11 +2709,11 @@ export default function ChatCoach({ agentEnabled = false }) {
                 type="button"
                 onClick={handleSavePlan}
                 disabled={isTyping}
-                title="계획 저장(고정) — 저장하면 대화로 수정할 수 없습니다"
-                aria-label="계획 저장(고정)"
+                title="계획 고정 — 고정하면 대화로 수정할 수 없습니다"
+                aria-label="계획 고정"
                 style={exportButtonStyle}
               >
-                <span>저장(고정)</span>
+                <span>고정</span>
               </button>
               <button
                 type="button"
