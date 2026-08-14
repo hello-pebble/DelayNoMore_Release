@@ -32,6 +32,10 @@ public class PlanService {
     // 전역 상한 — 소유자 격리와 무관하게 저장소는 한 서버 메모리이므로, 합산 폭주를 막는 안전판.
     // 초과 시 "서버 보관함 가득참"(사용자 잘못이 아니므로 PLAN_STORE_FULL, 503).
     private static final int MAX_PLANS_GLOBAL = 200;
+    // 하루 생성 한도 — KST 자정 리셋. 소스는 감사 이력(PLAN_CREATED, 삭제 생존)이라 삭제-재생성
+    // 우회 불가. 검사 순서상 맨 앞 — 보관함 한도와 동시 초과 시 "삭제하라"는 안내가 오답이므로
+    // (지워도 오늘은 못 만듦) "내일 다시" 안내가 우선한다.
+    private static final int MAX_PLANS_CREATED_PER_DAY = 5;
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
@@ -49,6 +53,10 @@ public class PlanService {
     // 다중 서버 마일스톤으로 이연한다.
     @Transactional
     public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId) {
+        Instant kstDayStart = KstDates.today().atStartOfDay(KstDates.KST).toInstant();
+        if (auditEventService.countPlansCreatedSince(owner, kstDayStart) >= MAX_PLANS_CREATED_PER_DAY) {
+            throw new BusinessException(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
+        }
         if (planRepository.countByOwner(owner) >= MAX_PLANS_PER_OWNER) {
             throw new BusinessException(ErrorCode.PLAN_LIMIT_EXCEEDED);
         }

@@ -1,7 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
-import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
@@ -41,7 +41,9 @@ class PlanServiceConcurrencyTest {
     }
 
     @Test
-    void create_동시20건_소유자한도10정확히유지_TOCTOU없음() throws Exception {
+    void create_동시20건_일일한도5정확히유지_TOCTOU없음() throws Exception {
+        // 일일 생성 한도(5) < 보관 한도(10)라 동시 생성에서 먼저 걸리는 가드는 일일 한도다.
+        // 같은 synchronized create가 카운트 검사와 감사 append를 원자로 묶는지 검증한다.
         int threads = 20;
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         CountDownLatch ready = new CountDownLatch(threads);
@@ -58,7 +60,7 @@ class PlanServiceConcurrencyTest {
                     planService.create(request("목표 " + n), OWNER, null);
                     success.incrementAndGet();
                 } catch (BusinessException e) {
-                    if (e.getErrorCode() == ErrorCode.PLAN_LIMIT_EXCEEDED) {
+                    if (e.getErrorCode() == ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED) {
                         limited.incrementAndGet();
                     }
                 } catch (InterruptedException ignored) {
@@ -72,17 +74,20 @@ class PlanServiceConcurrencyTest {
         assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
         // 정확히 한도까지만 성공 — synchronized create가 검사·저장을 원자로 묶어 TOCTOU를 막는다.
-        assertThat(success.get()).isEqualTo(10);
-        assertThat(limited.get()).isEqualTo(10);
-        assertThat(planService.getPlans(OWNER)).hasSize(10);
+        assertThat(success.get()).isEqualTo(5);
+        assertThat(limited.get()).isEqualTo(15);
+        assertThat(planService.getPlans(OWNER)).hasSize(5);
     }
 
     @Test
     void update와delete_동시실행_소유자가드원자성_부활도탈취도없음() throws Exception {
         // 매 라운드: 소유자 delete와 타인 update(탈취 시도)를 동시에 — 어떤 인터리빙에서도
         // 결과는 항상 "삭제됨 + 탈취 실패"여야 한다(계획 부활 금지, 소유자 변경 금지).
+        // 50라운드 생성은 일일 한도(5)를 넘으므로 리포지토리 직접 시딩 — 이 테스트의 관심사는
+        // delete/update 경합이지 생성 한도가 아니다.
         for (int round = 0; round < 50; round++) {
-            PlanResponse saved = planService.create(request("r" + round), OWNER, null);
+            Plan saved = planRepository.save(
+                    request("r" + round).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, OWNER));
             CountDownLatch start = new CountDownLatch(1);
 
             Thread deleter = new Thread(() -> {

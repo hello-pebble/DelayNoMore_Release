@@ -440,6 +440,28 @@
 - [ ] curl: `GET /api/v1/dashboard/today -H "X-Guest-Id: <UUID>"` → `date`, `done`, `total`,
       `plans[].plan`, `plans[].tasks`, `plans[].reflection`, `plans[].completionEligible`가 반환된다
 
+## F-29. 계획 생성 일일 한도 (v0.20.0)
+
+> 게스트당 하루 5회(KST 자정 리셋). 카운트는 삭제를 살아남는 감사 이력(`PLAN_CREATED`) 기준이라
+> 계획을 지워도 그날의 횟수는 돌아오지 않는다.
+
+- [ ] 같은 브라우저에서 계획을 5회 생성(작성 대화 완료) → 6번째 초안 완성 시 봇 말풍선
+      "오늘 만들 수 있는 계획(5개)을 모두 사용해서 …" 안내가 뜨고 계획은 보관되지 않는다
+- [ ] 안내 이후 대화·체크리스트를 계속 수정해도 Network에 보관 `POST /plans` 재시도가 반복되지 않는다
+- [ ] 보관된 계획을 전부 삭제한 뒤 다시 생성 시도 → 여전히 같은 안내로 차단된다(삭제-재생성 우회 불가)
+- [ ] 분량 추천 승인으로 6번째 생성 시도 → alert "오늘 만들 수 있는 계획(5개)을 모두 사용했습니다 …"
+- [ ] 다른 브라우저(다른 게스트 ID)에서는 정상적으로 생성된다(게스트별 격리)
+- [ ] 서버 확인(curl) — 같은 게스트로 6번째 POST가 429:
+
+  ```bash
+  for i in 1 2 3 4 5 6; do
+    curl -s -o /dev/null -w "try $i: %{http_code}\n" -X POST http://localhost/api/v1/plans \
+      -H "Content-Type: application/json" -H "X-Guest-Id: qa-daily-limit" \
+      -d '{"goalName":"limit test","duration":3,"dailyHours":2,"currentLevel":"beginner","tasks":{"2026-08-14":[{"id":"t-1","content":"check","completed":false}]},"startDate":"2026-08-14","endDate":"2026-08-16","createdAt":"2026-08-14T00:00:00Z"}'
+  done
+  # 기대: try 1~5 = 200, try 6 = 429 (본문 code = PLAN_DAILY_LIMIT_EXCEEDED)
+  ```
+
 ## G. 화면 폭 (v0.18.0 — 모바일 전용)
 > v0.5.1의 "좁히면 위아래 스택" 반응형은 폐지됐다. 폭과 무관하게 **모바일 UI 하나**만 렌더한다.
 - [ ] 데스크톱 브라우저(1440px 이상) → 앱이 화면 **가운데 폰 폭 컬럼(최대 480px)**으로 보이고, 좌우는 회색 배경 + 컬럼 경계선이다

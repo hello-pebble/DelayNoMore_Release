@@ -129,6 +129,13 @@ public class AuditEventService {
                 "계획 #" + sourcePlanId + " 기록 기반 · 하루 " + selectedTasksPerDay + "개", sessionId);
     }
 
+    // 일일 생성 한도 카운트 — PLAN_CREATED만 센다(추천 확정도 PlanService.create를 지나므로 포함,
+    // PLAN_CREATED_FROM_RECOMMENDATION은 부가 이벤트라 세면 중복). 삭제를 살아남는 감사 이력이
+    // 소스라서 삭제-재생성으로 우회할 수 없다.
+    public long countPlansCreatedSince(String owner, Instant since) {
+        return auditEventRepository.countByOwnerAndTypeSince(owner, AuditEventType.PLAN_CREATED.name(), since);
+    }
+
     // 이벤트에 소유자(ownerId)를 박아 두므로 계획 생존 여부와 무관하게 소유자 스코프로 조회한다 —
     // 삭제된 계획의 이력도 소유자에게는 다시 보인다("언제 삭제됐는가" 계약 복원). 남의 계획·모르는
     // planId는 404가 아니라 빈 목록(존재 여부 은닉). PlanRepository 조회가 필요 없어졌다.
