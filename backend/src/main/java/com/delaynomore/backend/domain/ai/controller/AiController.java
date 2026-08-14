@@ -5,9 +5,12 @@ import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.domain.ai.dto.AiHealthResponse;
+import com.delaynomore.backend.domain.ai.dto.PlanDraftSessionMessageRequest;
+import com.delaynomore.backend.domain.ai.dto.PlanDraftSessionResponse;
 import com.delaynomore.backend.domain.ai.service.AgentRunner;
 import com.delaynomore.backend.domain.ai.service.AgentToolCatalogService;
 import com.delaynomore.backend.domain.ai.service.AiService;
+import com.delaynomore.backend.domain.ai.service.PlanDraftSessionService;
 import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -42,6 +46,25 @@ public class AiController {
     private final AiService aiService;
     private final AgentRunner agentRunner;
     private final AgentToolCatalogService agentToolCatalogService;
+    private final PlanDraftSessionService planDraftSessionService;
+
+    @Operation(summary = "서버 소유 계획 작성 대화 시작")
+    @PostMapping("/plan-draft-sessions")
+    public ApiResponse<PlanDraftSessionResponse> createPlanDraftSession(
+            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+        return ApiResponse.ok(planDraftSessionService.create(OwnerGuestId.resolve(rawGuestId)));
+    }
+
+    @Operation(summary = "서버 소유 계획 작성 대화에 메시지 전송")
+    @PostMapping("/plan-draft-sessions/{sessionId}/messages")
+    public ApiResponse<PlanDraftSessionResponse> sendPlanDraftSessionMessage(
+            @PathVariable String sessionId,
+            @Valid @RequestBody PlanDraftSessionMessageRequest request,
+            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+            @RequestHeader(value = "X-Session-Id", required = false) String requestSessionId) {
+        return ApiResponse.ok(planDraftSessionService.accept(sessionId, OwnerGuestId.resolve(rawGuestId),
+                request.message(), requestSessionId));
+    }
 
     @Operation(summary = "AI 연결 상태 점검")
     @GetMapping("/health")

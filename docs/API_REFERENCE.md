@@ -1,6 +1,6 @@
 # API 데이터 레퍼런스
 
-모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.18.0 기준**이며(v0.11.0에서 시작해 버전마다 갱신 — v0.18.0은 화면 전용 변경이라 API 계약은 v0.17.0과 동일), 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
+모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.19.0 기준**이며, 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. v0.19.0은 프론트의 작성 흐름·작업 토글·오늘 화면 조합을 서버 명령과 읽기 모델로 이관했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
 
 - 베이스 경로: `/api/v1`
 - 스펙 자동 문서: 서버 실행 후 Swagger UI(`/swagger-ui/index.html`)에서도 확인 가능
@@ -11,8 +11,9 @@
 | 헤더 | 방향 | 대상 | 필수 | 설명 |
 |---|---|---|---|---|
 | `X-Guest-Id` | 요청 | `/api/v1/plans*` 전부(GET 포함) | **필수** | 브라우저가 생성한 소유자 키(안정 식별자). 값 규칙 `^[A-Za-z0-9-]{8,64}$`(예: `550e8400-e29b-41d4-a716-446655440000`). 누락 → 400 `GUEST_ID_REQUIRED`, 형식 위반 → 400 `GUEST_ID_INVALID`. **닉네임은 이 헤더에 담기지 않으며 서버로 전송되지 않는다**(화면 표시용 라벨). |
+| `X-Guest-Id` | 요청 | `/api/v1/ai/plan-draft-sessions*`, `/api/v1/dashboard/today` | **필수** | 작성 세션의 소유자와 오늘 읽기 모델의 범위를 정한다(v0.19.0). |
 | `X-Session-Id` | 요청 | `/plans` POST·PUT·DELETE, 회고 PUT | 선택 | 변경 이력의 "이 브라우저/다른 세션" 귀속용. 없으면 이력에 `sessionId: null`. 읽기(GET)에는 받지 않는다. |
-| `Cache-Control: no-store` | 응답 | `/api/v1/plans*` 전부 | — | 소유자별 개인 데이터라 프록시·브라우저 캐시 금지(`global/config/WebConfig`). |
+| `Cache-Control: no-store` | 응답 | `/api/v1/plans*`, `/dashboard/today`, `/ai/plan-draft-sessions*` | — | 소유자별 개인 데이터·작성 중 입력이라 프록시·브라우저 캐시 금지(`global/config/WebConfig`, v0.19.0 범위 확장). |
 | `Access-Control-Allow-Headers: X-Guest-Id` | 응답(프리플라이트) | OPTIONS | — | CORS 프리플라이트에서 `X-Guest-Id` 요청 헤더 허용(`@CrossOrigin` 기본 allowedHeaders). |
 
 > **소유자(owner) 필드는 서버 내부 전용**입니다 — `X-Guest-Id`로 받아 `Plan.owner`·`AuditEvent.ownerId`로 저장하지만, **어떤 응답 바디(`PlanResponse`·`AuditEventResponse` 등)에도 노출되지 않습니다**(응답 스키마는 v0.10.0과 동일). 격리는 서버가 필터링으로 수행하고, 다른 소유자의 리소스는 존재 자체를 숨겨 404 또는 빈 목록으로 응답합니다.
@@ -131,7 +132,31 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 { "type": "error", "m": "AI 응답 스트리밍 중 오류가 발생했습니다." }
 ```
 
-### 6. GET /ai/agent/tools — 에이전트 카탈로그 [v0.15.0, v0.17.0에서 profile 추가]
+### 6. POST /ai/plan-draft-sessions — 서버 소유 계획 작성 시작 (v0.19.0)
+
+`X-Guest-Id`가 가리키는 임시 작성 세션을 만들고 첫 질문을 반환한다. 질문 순서·입력 검증·초안
+저장은 서버가 소유하며, 세션은 인메모리이므로 서버 재시작 후에는 새로 시작한다.
+
+```json
+// 응답 data
+{ "sessionId": "f9c7...", "reply": "어떤 목표를 이루고 싶으신가요?",
+  "slots": { "goalName": "", "duration": 0, "dailyHours": 0, "currentLevel": "" },
+  "nextInput": "goalName", "plan": null }
+```
+
+### 7. POST /ai/plan-draft-sessions/{sessionId}/messages — 작성 답변 전송 (v0.19.0)
+
+```json
+// 요청
+{ "message": "정보처리기사 실기 합격" }
+
+// 응답 data — 마지막(현재 수준) 답변이면 plan이 서버에 저장되어 함께 온다
+{ "sessionId": "f9c7...", "reply": "며칠 동안 진행할 계획인가요? (1~14일)",
+  "slots": { "goalName": "정보처리기사 실기 합격", "duration": 0, "dailyHours": 0, "currentLevel": "" },
+  "nextInput": "duration", "plan": null }
+```
+
+### 8. GET /ai/agent/tools — 에이전트 카탈로그 [v0.15.0, v0.17.0에서 profile 추가]
 
 현재 계획 상태의 **프로필**(누가 응대하는가)과, **실제로 모델에게 노출되는** 도구만 내려온다.
 프롬프트에 실리는 목록과 같은 소스(`AgentToolRegistry`)를 쓰므로, 상태별로 호출해 보면 권한
@@ -279,7 +304,23 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 
 그 외 오류: 400 `INVALID_INPUT`, 400 `GUEST_ID_REQUIRED`/`GUEST_ID_INVALID`, 404 `PLAN_NOT_FOUND`(없는 id 또는 다른 소유자)
 
-### 10. DELETE /plans/{id} — 계획 삭제
+### 10. PUT /plans/{id}/tasks/{taskId}/completion — 단일 작업 완료 상태 변경 (v0.19.0)
+
+전체 계획 문서를 보내지 않는 실행 명령이다. 서버가 저장된 tasks에서 `taskId`와 날짜를 찾으므로
+클라이언트가 날짜·구조를 바꾸거나 CONFIRMED 계획의 지난 날짜 잠금을 우회할 수 없다.
+
+```json
+// 요청
+{ "completed": true }
+
+// 응답 data — 일반 PlanResponse, progress는 서버가 재계산
+{ "id": 12, "status": "CONFIRMED", "progress": { "done": 4, "total": 10 }, "tasks": { "...": [] } }
+```
+
+오류: 400 `INVALID_INPUT`(없는/중복 taskId 또는 본문 형식), 404 `PLAN_NOT_FOUND`, 409
+`PLAN_LOCKED`(종결 계획) / `PAST_TASK_LOCKED`(CONFIRMED 계획의 지난 날짜).
+
+### 11. DELETE /plans/{id} — 계획 삭제
 
 CONFIRMED여도 삭제는 허용합니다(잠긴 계획의 탈출구). 변경 이력은 지우지 않습니다(이벤트에 소유자가 기록되어, 삭제 후에도 소유자는 이력을 조회할 수 있습니다 — 16 참고).
 
@@ -451,6 +492,29 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 응답은 저장된 계획의 `PlanResponse`(아래 계획 보관함 응답과 동일 형식).
 
 ---
+
+## 오늘 Dashboard (`/api/v1/dashboard`)
+
+### GET /dashboard/today — 오늘 화면 읽기 모델 (v0.19.0)
+
+계획 목록, 오늘 날짜 작업, 오늘 회고를 프론트에서 여러 번 조합할 때 생기던 요청 수와 응답 시점 차이를
+없애기 위한 읽기 전용 API다. 오늘 작업이 없는 계획은 `plans`에서 제외한다.
+
+```json
+// 응답 data
+{ "date": "2026-08-14", "done": 2, "total": 5,
+  "plans": [
+    { "plan": { "id": 12, "goalName": "정보처리기사 실기", "status": "CONFIRMED",
+                "progress": { "done": 4, "total": 10 } },
+      "tasks": [ { "id": "t-2026-08-14-0", "content": "기출 1회", "completed": true } ],
+      "done": 1, "total": 2,
+      "reflection": null,
+      "completionEligible": false }
+  ] }
+```
+
+`reflection`은 오늘 회고가 없으면 `null`이다. `completionEligible`은 CONFIRMED 계획이 종료일에
+도달했거나 전체 작업을 모두 마쳤는지 서버가 판정한 값이다.
 
 ## 하루 회고 (`/api/v1/plans/{planId}/reflections`)
 

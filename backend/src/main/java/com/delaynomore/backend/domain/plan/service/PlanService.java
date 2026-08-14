@@ -18,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -116,6 +118,72 @@ public class PlanService {
         // 이벤트 종류(PLAN_CONFIRMED/TASK_*/PLAN_UPDATED)를 서버가 판별·기록한다.
         auditEventService.recordPlanUpdated(previous, updated, sessionId);
         return PlanResponse.from(updated);
+    }
+
+    /**
+     * A task completion is an execution command, not a replacement of the plan document. The server resolves the
+     * task date from the stored plan so a client cannot bypass the confirmed-plan past-date lock by sending another date.
+     */
+    @Transactional
+    public PlanResponse updateTaskCompletion(long id, String taskId, boolean completed, String owner, String sessionId) {
+        Plan[] previous = new Plan[1];
+        String today = KstDates.today().toString();
+        Plan updated = planRepository.mutate(id, current -> {
+            if (!owner.equals(current.owner())) {
+                throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+            }
+            PlanStatus status = current.statusOrDraft();
+            if (!status.allowsStructuralEdit() && !status.allowsCompletionToggle()) {
+                throw new BusinessException(ErrorCode.PLAN_LOCKED);
+            }
+            TaskMutation mutation = updateTask(current.tasks(), taskId, completed, status, today);
+            previous[0] = current;
+            return new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
+                    current.dailyHours(), current.currentLevel(), mutation.tasks(), current.status(),
+                    current.confirmedAt(), current.completedAt(), current.startDate(), current.endDate(),
+                    current.createdAt(), System.currentTimeMillis());
+        });
+        if (updated == null) {
+            throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
+        }
+        auditEventService.recordPlanUpdated(previous[0], updated, sessionId);
+        return PlanResponse.from(updated);
+    }
+
+    private static TaskMutation updateTask(Map<String, Object> source, String taskId, boolean completed,
+                                           PlanStatus status, String today) {
+        Map<String, Object> copied = new LinkedHashMap<>();
+        boolean found = false;
+        if (source != null) {
+            for (Map.Entry<String, Object> day : source.entrySet()) {
+                if (!(day.getValue() instanceof List<?> list)) {
+                    copied.put(day.getKey(), day.getValue());
+                    continue;
+                }
+                List<Object> nextDay = new java.util.ArrayList<>();
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> task && taskId.equals(String.valueOf(task.get("id")))) {
+                        if (found) throw new BusinessException(ErrorCode.INVALID_INPUT);
+                        if (status.allowsCompletionToggle() && day.getKey().compareTo(today) < 0) {
+                            throw new BusinessException(ErrorCode.PAST_TASK_LOCKED);
+                        }
+                        Map<String, Object> nextTask = new LinkedHashMap<>();
+                        task.forEach((key, value) -> nextTask.put(String.valueOf(key), value));
+                        nextTask.put("completed", completed);
+                        nextDay.add(nextTask);
+                        found = true;
+                    } else {
+                        nextDay.add(item);
+                    }
+                }
+                copied.put(day.getKey(), nextDay);
+            }
+        }
+        if (!found) throw new BusinessException(ErrorCode.INVALID_INPUT);
+        return new TaskMutation(copied);
+    }
+
+    private record TaskMutation(Map<String, Object> tasks) {
     }
 
     // 상태별 PUT 허용 범위 — 규칙은 PlanStatus의 전이표·능력 플래그가 소유하고, 여기서는 표를

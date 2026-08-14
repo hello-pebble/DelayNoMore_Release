@@ -17,7 +17,9 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new NoStoreInterceptor()).addPathPatterns("/api/v1/plans/**", "/api/v1/plans");
+        registry.addInterceptor(new NoStoreInterceptor()).addPathPatterns(
+                "/api/v1/plans/**", "/api/v1/plans",
+                "/api/v1/dashboard/**", "/api/v1/ai/plan-draft-sessions/**", "/api/v1/ai/plan-draft-sessions");
     }
 
     public static class NoStoreInterceptor implements HandlerInterceptor {

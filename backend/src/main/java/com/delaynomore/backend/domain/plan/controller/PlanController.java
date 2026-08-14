@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.dto.TaskCompletionRequest;
 import com.delaynomore.backend.domain.plan.dto.RecommendationConfirmRequest;
 import com.delaynomore.backend.domain.plan.dto.RecommendationDraftRequest;
 import com.delaynomore.backend.domain.plan.dto.RecommendationDraftResponse;
@@ -92,6 +93,17 @@ public class PlanController {
                                             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         return ApiResponse.ok(planService.update(id, request, OwnerGuestId.resolve(rawGuestId), sessionId));
+    }
+
+    @Operation(summary = "계획의 단일 작업 완료 상태 변경")
+    @PutMapping("/{id}/tasks/{taskId}/completion")
+    public ApiResponse<PlanResponse> updateTaskCompletion(@PathVariable long id,
+                                                           @PathVariable String taskId,
+                                                           @Valid @RequestBody TaskCompletionRequest request,
+                                                           @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                           @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
+        return ApiResponse.ok(planService.updateTaskCompletion(id, taskId, request.completed(),
+                OwnerGuestId.resolve(rawGuestId), sessionId));
     }
 
     // 본문 없는 도메인 액션 — 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간 하루 연장)은

@@ -54,6 +54,11 @@ const requestJson = async (path, payload, method = 'POST') => {
 // 응답 data: { 날짜: [할 일 문자열] }
 export const postAiDraft = (payload) => requestJson('/ai/drafts', payload);
 
+// 계획 작성의 질문 순서와 입력 해석은 서버 세션이 소유한다.
+export const createPlanDraftSession = () => requestJson('/ai/plan-draft-sessions', null);
+export const postPlanDraftSessionMessage = (sessionId, message) =>
+  requestJson(`/ai/plan-draft-sessions/${sessionId}/messages`, { message });
+
 // 초안 생성 이후의 자유 대화 — 백엔드(/api/v1/ai/chats)가 의도 판단(수정/질문/불명확)까지 LLM에 위임한다.
 // tasks는 서버가 LLM patch를 현재 계획에 병합한 정규화된 전체 계획({id,content,completed} 객체).
 // 응답 data: { reply, planUpdated, tasks? }
@@ -133,6 +138,8 @@ export const fetchAgentTools = (planId) =>
 // 로그인/DB 도입 전의 원격 데모용이며, 응답/요청 형태는 PlanController(/api/v1/plans) 계약을 따른다.
 export const createPlan = (payload) => requestJson('/plans', payload);
 export const updatePlan = (id, payload) => requestJson(`/plans/${id}`, payload, 'PUT');
+export const updateTaskCompletion = (planId, taskId, completed) =>
+  requestJson(`/plans/${planId}/tasks/${encodeURIComponent(taskId)}/completion`, { completed }, 'PUT');
 // 미완료 이월 도메인 액션 — 본문 없는 POST. 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간
 // 하루 연장)은 서버 소유라 클라이언트는 날짜를 지정하지 않는다.
 // 응답: { movedCount, targetDate, plan } — movedCount 0은 "옮길 게 없음"의 정상 no-op.
@@ -146,6 +153,7 @@ export const cancelPlan = (id) => requestJson(`/plans/${id}/cancel`, null);
 export const fetchPlans = () => requestJson('/plans', null, 'GET');
 export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
+export const fetchTodayDashboard = () => requestJson('/dashboard/today', null, 'GET');
 
 // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
 // 서버 소유(plan.tasks 기준)라 프론트는 표시만 한다. 응답 data: { planId, startDate, endDate,

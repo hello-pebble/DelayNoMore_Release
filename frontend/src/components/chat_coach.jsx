@@ -21,7 +21,8 @@ import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
   fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
-  confirmPlan, completePlan, cancelPlan, fetchPlanStatuses
+  confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
+  updateTaskCompletion, fetchTodayDashboard
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { getGuestId } from '../guest_id';
@@ -459,6 +460,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // "전체 계획 완료"(상태 전이·헤더 칩)와 구분되는 일 단위 마무리 표시다. 활성 계획을 불러올 때
   // 서버에서 채우고, 회고 저장 성공 시 로컬 병합한다(재요청 불필요). {planId: ['YYYY-MM-DD']}
   const [reflectionDates, setReflectionDates] = useState({});
+  const [todayDashboard, setTodayDashboard] = useState(null);
 
   // 모바일 전용 화면의 활성 탭 — 대화 / 오늘 할 일 / 체크리스트 중 하나만 보인다.
   // 세 패널은 항상 마운트해 두고 비활성만 숨기므로(아래 렌더 참고) 탭을 오가도 스크롤 위치와
@@ -482,6 +484,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 계획 상태 — "고정" 버튼을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
   // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
+  const draftSessionIdRef = useRef(null); // 계획 작성 질문 순서와 입력 해석은 서버 세션이 소유한다.
   const activeStatus = planStatusOf(draftChecklist);
   const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
   const isTerminal = !!draftChecklist && isTerminalStatus(activeStatus);
@@ -548,6 +551,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 차단한다(restorePlan의 "방금 서버에서 읽은 상태" 처리와 같은 패턴). 활성 계획이 아니면
   // 목록 스냅샷만 갱신한다.
   const applyServerPlan = (plan) => {
+    setTodayDashboard(null);
     if (plan.id === activePlanId) {
       const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
       lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
@@ -850,6 +854,33 @@ export default function ChatCoach({ agentEnabled = false }) {
     try {
       // 초안 생성 이후에는 자유 대화 모드 — LLM이 의도(수정/질문/불명확)를 직접 판단한다.
       // 무조건 재생성하고 "반영했습니다"라고 답하던 이전 방식을 대체한다.
+      if (!draftChecklist) {
+        if (!draftSessionIdRef.current) {
+          const started = await createPlanDraftSession();
+          draftSessionIdRef.current = started.sessionId;
+        }
+        const result = await postPlanDraftSessionMessage(draftSessionIdRef.current, userText);
+        if (!aliveRef.current) return;
+        setSlots(result.slots || INITIAL_SLOTS);
+        setCurrentSlot(result.nextInput || null);
+        setMessages((prev) => [...prev, {
+          id: generateUniqueId('bot'),
+          sender: 'bot',
+          text: result.reply
+        }]);
+        if (result.plan) {
+          const { slots: savedSlots, draftChecklist: savedDraft } = fromPlanResponse(result.plan);
+          setSlots(savedSlots);
+          setDraftChecklist(savedDraft);
+          setCurrentSlot(null);
+          setActivePlanId(result.plan.id);
+          writeLastViewedPlanId(result.plan.id);
+          lastSyncedRef.current = JSON.stringify(toPlanPayload(savedDraft));
+          refreshPlans();
+        }
+        return;
+      }
+
       if (draftChecklist) {
         // 고정(CONFIRMED) 계획의 수정 요청 차단 — 키워드 휴리스틱이라 오탐·미탐이 있는
         // 임시 방편이었다. 에이전트 경로에서는 필요 없다: 고정된 계획에는 수정 도구가 아예
@@ -1066,20 +1097,16 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 종결(COMPLETED/CANCELLED) 계획은 서버가 모든 변경 PUT을 거부하므로 토글 자체를 막는다.
   // 고정(CONFIRMED) 계획의 지난 날짜도 서버가 거부(PAST_TASK_LOCKED)하므로 여기서 막는다(방어 —
   // 체크박스 disabled가 1차 차단이지만, 자정 경계에 열린 화면 등에서 새어 들어올 수 있다).
-  const toggleTask = (date, taskId) => {
-    setDraftChecklist((prev) => {
-      if (!prev || isTerminalStatus(planStatusOf(prev))) return prev;
-      if (isPastLockedDate(planStatusOf(prev), date)) return prev;
-      const dayTasks = prev.tasks?.[date];
-      if (!Array.isArray(dayTasks)) return prev;
-      return {
-        ...prev,
-        tasks: {
-          ...prev.tasks,
-          [date]: dayTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
-        }
-      };
-    });
+  const toggleTask = async (date, taskId) => {
+    if (activePlanId == null || !draftChecklist) return;
+    const task = draftChecklist.tasks?.[date]?.find((item) => item.id === taskId);
+    if (!task) return;
+    try {
+      const saved = await updateTaskCompletion(activePlanId, taskId, !task.completed);
+      if (aliveRef.current) applyServerPlan(saved);
+    } catch (err) {
+      await handleTransitionError(err, activePlanId);
+    }
   };
 
   // 오늘 보기 밴드에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
@@ -1089,26 +1116,19 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 단발 클릭이고, 매 호출이 최신 낙관 상태를 읽으므로 연속 토글도 누적 반영된다.
   const toggleTodayTask = async (planId, taskId) => {
     if (planId === activePlanId) {
-      toggleTask(todayStr(), taskId);
+      await toggleTask(todayStr(), taskId);
       return;
     }
     const plan = savedPlans.find((p) => p.id === planId);
     if (isTerminalStatus(planStatusOf(plan))) return; // 종결 계획 — 서버가 PUT을 거부(전면 잠금)
     const today = todayStr();
-    const dayTasks = plan?.tasks?.[today];
-    if (!Array.isArray(dayTasks)) return;
-    const updated = {
-      ...plan,
-      tasks: {
-        ...plan.tasks,
-        [today]: dayTasks.map((t) => (t.id === taskId ? { ...t, completed: !t.completed } : t))
-      }
-    };
-    setSavedPlans((prev) => prev.map((p) => (p.id === planId ? updated : p)));
+    const task = plan?.tasks?.[today]?.find((item) => item.id === taskId);
+    if (!task) return;
     try {
       // PlanResponse는 toPlanPayload가 뽑는 필드를 전부 가지므로 그대로 직렬화할 수 있다.
       // status/confirmedAt이 통과되므로 고정(CONFIRMED) 계획도 고정 상태를 잃지 않는다.
-      await updatePlan(planId, toPlanPayload(updated));
+      const saved = await updateTaskCompletion(planId, taskId, !task.completed);
+      setSavedPlans((prev) => prev.map((p) => (p.id === planId ? saved : p)));
     } catch (err) {
       setSavedPlans((prev) => prev.map((p) => (p.id === planId ? plan : p))); // 실패 시 롤백
       if (err.code === 'PLAN_NOT_FOUND') {
@@ -1341,6 +1361,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       setSavedPlans((prev) => prev.map((p) => (p.id === leavingId ? { ...p, ...toPlanPayload(draftChecklist) } : p)));
     }
     setActivePlanId(null);
+    draftSessionIdRef.current = null;
     clearLastViewedPlanId();
     setShowPlanList(false);
     setSlots({ ...INITIAL_SLOTS });
@@ -1754,8 +1775,8 @@ export default function ChatCoach({ agentEnabled = false }) {
       })
       .filter((g) => g.tasks.length > 0)
   ), [savedPlans, activePlanId, draftChecklist, today]);
-  const todayDone = todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
-  const todayTotal = todayGroups.reduce((n, g) => n + g.tasks.length, 0);
+  const todayDone = todayDashboard?.done ?? todayGroups.reduce((n, g) => n + g.tasks.filter((t) => t.completed).length, 0);
+  const todayTotal = todayDashboard?.total ?? todayGroups.reduce((n, g) => n + g.tasks.length, 0);
 
   // === 오늘 마무리(회고) 핸들러 ===
 
@@ -1763,20 +1784,21 @@ export default function ChatCoach({ agentEnabled = false }) {
   // (보관된 계획 목록의 "펼칠 때 refetch" 패턴과 동일). REFLECTION_NOT_FOUND는 "아직 없음"이
   // 확인된 정상 상태(null 저장)이고, 그 외 오류는 재시도 행을 띄운다.
   const loadReflections = async () => {
-    await Promise.all(todayGroups.map(async (group) => {
-      try {
-        const data = await fetchReflection(group.planId, todayStr());
-        setReflections((prev) => ({ ...prev, [group.planId]: data }));
-        setReflectionErrors((prev) => ({ ...prev, [group.planId]: false }));
-      } catch (err) {
-        if (err.code === 'REFLECTION_NOT_FOUND') {
-          setReflections((prev) => ({ ...prev, [group.planId]: null }));
-          setReflectionErrors((prev) => ({ ...prev, [group.planId]: false }));
-        } else {
-          setReflectionErrors((prev) => ({ ...prev, [group.planId]: true }));
-        }
-      }
-    }));
+    try {
+      const dashboard = await fetchTodayDashboard();
+      if (!aliveRef.current) return;
+      setTodayDashboard(dashboard);
+      const nextReflections = {};
+      const nextErrors = {};
+      dashboard.plans.forEach((item) => {
+        nextReflections[item.plan.id] = item.reflection || null;
+        nextErrors[item.plan.id] = false;
+      });
+      setReflections((prev) => ({ ...prev, ...nextReflections }));
+      setReflectionErrors((prev) => ({ ...prev, ...nextErrors }));
+    } catch {
+      setReflectionErrors((prev) => Object.fromEntries(todayGroups.map((group) => [group.planId, true])));
+    }
   };
 
   // 계획의 전체 회고를 서버에서 최신순(date DESC)으로 불러온다. 오류 시 'error'로 두어 재시도
