@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.List;
 
 // 계획 변경 이력 JDBC 구현 — PostgreSQL에 영속한다(v0.12.0). postgres 프로필에서만 활성화된다.
@@ -54,6 +55,23 @@ public class JdbcAuditEventRepository implements AuditEventRepository {
                 .addValue("planId", planId)
                 .addValue("ownerId", ownerId);
         return jdbc.query(sql, params, auditMapper);
+    }
+
+    // ponytail: created_at::timestamptz 캐스트라 인덱스를 못 타는 seq scan — 데모 규모(수백 건)엔
+    // 충분. 규모가 커지면 (owner_id, type) 부분 인덱스 + created_at 저장 포맷 정규화로 전환.
+    @Override
+    public long countByOwnerAndTypeSince(String ownerId, String type, Instant since) {
+        String sql = """
+                SELECT COUNT(*) FROM audit_events
+                WHERE owner_id = :ownerId AND type = :type
+                  AND created_at::timestamptz >= CAST(:since AS timestamptz)
+                """;
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("ownerId", ownerId)
+                .addValue("type", type)
+                .addValue("since", since.toString());
+        Long count = jdbc.queryForObject(sql, params, Long.class);
+        return count == null ? 0 : count;
     }
 
     @Override

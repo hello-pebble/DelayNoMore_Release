@@ -21,6 +21,9 @@ public enum ErrorCode {
     PLAN_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "내 보관함이 가득 찼습니다(최대 10개). 기존 계획을 삭제한 뒤 다시 저장해주세요."),
     // 전역 상한 초과 — 서버 메모리 보호용(사용자 잘못이 아님)이라 503.
     PLAN_STORE_FULL(HttpStatus.SERVICE_UNAVAILABLE, "데모 서버 보관함이 가득 찼습니다. 잠시 후 다시 시도해주세요."),
+    // 하루 생성 한도 초과 — 시간이 지나면 해소되는 속도 제한이므로 429. 카운트 소스는
+    // 감사 이력(PLAN_CREATED)이라 삭제-재생성으로 우회할 수 없다.
+    PLAN_DAILY_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "오늘 계획 생성 한도(5회)를 모두 사용했습니다. 내일 다시 만들어주세요."),
     // 요청 형식 오류(400)가 아니라 "리소스의 현재 상태와 충돌"이므로 409.
     PLAN_LOCKED(HttpStatus.CONFLICT, "고정(CONFIRMED)된 계획은 완료 체크 외에는 수정할 수 없습니다."),
     // 같은 409지만 용도가 다르다 — PLAN_LOCKED는 "내용 수정이 상태에 막힘"(레거시 PUT 경로,

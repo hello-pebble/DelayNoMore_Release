@@ -740,6 +740,16 @@ export default function ChatCoach({ agentEnabled = false }) {
             text: '⚠️ 내 보관함이 가득 차서(최대 10개) 이 계획은 저장되지 않았어요. 체크리스트 탭의 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
           }
         ]);
+      } else if (err.code === 'PLAN_DAILY_LIMIT_EXCEEDED') {
+        archivePendingRef.current = false; // 하루 생성 한도 — 오늘은 재시도해도 소용없으니 포기하고 안내만
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: generateUniqueId('bot'),
+            sender: 'bot',
+            text: '⚠️ 오늘 만들 수 있는 계획(5개)을 모두 사용해서 이 계획은 저장되지 않았어요. 내일 다시 만들어 주세요.'
+          }
+        ]);
       } else if (err.code === 'PLAN_STORE_FULL') {
         archivePendingRef.current = false; // 서버 전역 상한 — 잠시 후 재시도 안내
         setMessages((prev) => [
@@ -1541,6 +1551,8 @@ export default function ChatCoach({ agentEnabled = false }) {
       setRecommendationView((prev) => (prev?.planId === planId ? { ...prev, saving: false } : prev));
       if (err.code === 'PLAN_LIMIT_EXCEEDED') {
         window.alert('내 보관함이 가득 찼습니다(최대 10개). 기존 계획을 삭제한 뒤 다시 시도해 주세요.');
+      } else if (err.code === 'PLAN_DAILY_LIMIT_EXCEEDED') {
+        window.alert('오늘 만들 수 있는 계획(5개)을 모두 사용했습니다. 내일 다시 시도해 주세요.');
       } else if (err.code === 'PLAN_STORE_FULL') {
         window.alert('데모 서버 보관함이 가득 찼습니다. 잠시 후 다시 시도해 주세요.');
       } else {

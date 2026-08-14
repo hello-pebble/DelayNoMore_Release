@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.repository;
 
 import com.delaynomore.backend.domain.plan.entity.AuditEvent;
 
+import java.time.Instant;
 import java.util.List;
 
 // 계획 변경 이력 저장소 계약 — 구현은 프로필로 선택된다:
@@ -17,6 +18,10 @@ public interface AuditEventRepository {
 
     // (planId, ownerId) 짝으로 조회, id 내림차순(최신 이벤트가 앞) — 남의 계획은 빈 목록.
     List<AuditEvent> findAllByPlanIdAndOwner(long planId, String ownerId);
+
+    // 소유자·타입별 since 이후 개수 — 일일 생성 한도(PlanService)가 사용한다. created_at(UTC ISO
+    // 문자열)은 소수점 초 자릿수가 가변이라 문자열 비교가 아닌 시각(Instant) 비교로 판정한다.
+    long countByOwnerAndTypeSince(String ownerId, String type, Instant since);
 
     int count();
 }

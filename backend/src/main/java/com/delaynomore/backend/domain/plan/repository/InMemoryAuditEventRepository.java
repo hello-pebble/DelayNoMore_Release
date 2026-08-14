@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.plan.entity.AuditEvent;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
@@ -38,6 +39,16 @@ public class InMemoryAuditEventRepository implements AuditEventRepository {
                 .filter(e -> e.planId() == planId && ownerId.equals(e.ownerId()))
                 .sorted((a, b) -> Long.compare(b.id(), a.id()))
                 .toList();
+    }
+
+    // 링버퍼 축출로 오늘의 이벤트가 밀려나면 과소 카운트될 수 있으나, 인메모리는 재시작만으로도
+    // 초기화되는 휘발성 데모 모드라 허용한다 — 영속 프로필(postgres)에는 축출이 없다.
+    @Override
+    public synchronized long countByOwnerAndTypeSince(String ownerId, String type, Instant since) {
+        return store.stream()
+                .filter(e -> ownerId.equals(e.ownerId()) && type.equals(e.type())
+                        && !Instant.parse(e.createdAt()).isBefore(since))
+                .count();
     }
 
     @Override

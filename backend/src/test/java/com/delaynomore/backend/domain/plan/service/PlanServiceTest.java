@@ -196,11 +196,17 @@ class PlanServiceTest {
         assertThat(updated.duration()).isEqualTo(5);
     }
 
+    // 보관 개수 한도 테스트용 시딩 — 리포지토리에 직접 저장해 감사 이벤트(PLAN_CREATED)를 남기지
+    // 않는다. 일일 생성 한도(5) < 보관 한도(10)라, create로 채우면 일일 한도에 먼저 걸린다.
+    private void seedPlan(String goalName, String owner) {
+        planRepository.save(request(goalName).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, owner));
+    }
+
     @Test
     void create_소유자한도초과_PLAN_LIMIT_EXCEEDED예외_타소유자는영향없음() {
-        // given — OWNER가 자기 한도(10)를 채운다
+        // given — OWNER가 자기 한도(10)를 채운다(직접 시딩 — 일일 생성 한도 미소모)
         for (int i = 0; i < MAX_PLANS_PER_OWNER; i++) {
-            planService.create(request("목표 " + i), OWNER, null);
+            seedPlan("목표 " + i, OWNER);
         }
 
         // when — OWNER의 11번째는 거부되지만
@@ -214,11 +220,11 @@ class PlanServiceTest {
 
     @Test
     void create_전역상한초과_PLAN_STORE_FULL예외() {
-        // given — 20명이 각 10건씩 = 200건으로 저장소를 전역 상한까지 채운다
+        // given — 20명이 각 10건씩 = 200건으로 저장소를 전역 상한까지 채운다(직접 시딩)
         int owners = MAX_PLANS_GLOBAL / MAX_PLANS_PER_OWNER;
         for (int o = 0; o < owners; o++) {
             for (int i = 0; i < MAX_PLANS_PER_OWNER; i++) {
-                planService.create(request("g" + o + "-" + i), "guest-" + o, null);
+                seedPlan("g" + o + "-" + i, "guest-" + o);
             }
         }
 
@@ -228,6 +234,36 @@ class PlanServiceTest {
 
         // then — 서버 메모리 보호(503 성격)
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_STORE_FULL);
+    }
+
+    @Test
+    void create_일일한도5회초과_PLAN_DAILY_LIMIT_EXCEEDED예외_타소유자는영향없음() {
+        // given — OWNER가 오늘의 생성 한도(5)를 채운다
+        for (int i = 0; i < 5; i++) {
+            planService.create(request("목표 " + i), OWNER, null);
+        }
+
+        // when — 6번째는 거부
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.create(request("6번째"), OWNER, null));
+
+        // then — 일일 한도(429 성격), 다른 소유자는 여전히 생성 가능(격리 증명)
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
+        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null).id()).isPositive();
+    }
+
+    @Test
+    void create_일일한도_삭제해도카운트유지_재생성우회불가() {
+        // given — 생성→삭제를 5회 반복(보관함은 항상 비어 있음)
+        for (int i = 0; i < 5; i++) {
+            PlanResponse saved = planService.create(request("목표 " + i), OWNER, null);
+            planService.delete(saved.id(), OWNER, null);
+        }
+
+        // when/then — 카운트 소스는 삭제를 살아남는 감사 이력이라 6번째도 차단
+        BusinessException exception = catchThrowableOfType(
+                BusinessException.class, () -> planService.create(request("우회 시도"), OWNER, null));
+        assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
     }
 
     @Test
