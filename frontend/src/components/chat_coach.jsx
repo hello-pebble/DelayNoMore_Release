@@ -3,8 +3,9 @@ import {
   Send, Copy, Download, Check, Save, Lock, RotateCcw, CalendarPlus,
   FolderOpen, Trash2, ChevronDown, ChevronUp, Plus, RefreshCw, Sun, ArrowRight,
   CheckCircle2, History, BarChart3, Sparkles, XCircle, Wrench,
-  MessageSquare, ListChecks
+  MessageSquare, ListChecks, Users
 } from 'lucide-react';
+import ChallengePanel from './challenge_panel';
 import {
   REQUIRED_SLOTS,
   getNextEmptySlot,
@@ -19,7 +20,7 @@ import {
 } from '../ai_engine';
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
-  fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
+  fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
   updateTaskCompletion, fetchTodayDashboard
@@ -1809,7 +1810,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       setReflections((prev) => ({ ...prev, ...nextReflections }));
       setReflectionErrors((prev) => ({ ...prev, ...nextErrors }));
     } catch {
-      setReflectionErrors((prev) => Object.fromEntries(todayGroups.map((group) => [group.planId, true])));
+      setReflectionErrors(() => Object.fromEntries(todayGroups.map((group) => [group.planId, true])));
     }
   };
 
@@ -2916,7 +2917,8 @@ export default function ChatCoach({ agentEnabled = false }) {
   const tabs = [
     { id: 'chat', label: '대화', Icon: MessageSquare, badge: null },
     { id: 'today', label: '오늘', Icon: Sun, badge: todayTotal > 0 ? todayTotal - todayDone : 0 },
-    { id: 'checklist', label: '체크리스트', Icon: ListChecks, badge: null }
+    { id: 'checklist', label: '체크리스트', Icon: ListChecks, badge: null },
+    { id: 'challenge', label: '챌린지', Icon: Users, badge: null }
   ];
 
   return (
@@ -2924,6 +2926,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       <div className="mobile-pane" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>{chatPanel}</div>
       <div className="mobile-pane" style={{ display: activeTab === 'today' ? 'flex' : 'none' }}>{todayPanel}</div>
       <div className="mobile-pane" style={{ display: activeTab === 'checklist' ? 'flex' : 'none' }}>{checklistPanel}</div>
+      <div className="mobile-pane" style={{ display: activeTab === 'challenge' ? 'flex' : 'none' }}><ChallengePanel /></div>
 
       <nav className="tab-bar safe-bottom" role="tablist" aria-label="화면 전환">
         {tabs.map(({ id, label, Icon, badge }) => (

@@ -11,7 +11,7 @@ import com.delaynomore.backend.domain.ai.service.AgentRunner;
 import com.delaynomore.backend.domain.ai.service.AgentToolCatalogService;
 import com.delaynomore.backend.domain.ai.service.AiService;
 import com.delaynomore.backend.domain.ai.service.PlanDraftSessionService;
-import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
+import com.delaynomore.backend.global.auth.Owner;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -51,8 +51,8 @@ public class AiController {
     @Operation(summary = "서버 소유 계획 작성 대화 시작")
     @PostMapping("/plan-draft-sessions")
     public ApiResponse<PlanDraftSessionResponse> createPlanDraftSession(
-            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(planDraftSessionService.create(OwnerGuestId.resolve(rawGuestId)));
+            @Owner String owner) {
+        return ApiResponse.ok(planDraftSessionService.create(owner));
     }
 
     @Operation(summary = "서버 소유 계획 작성 대화에 메시지 전송")
@@ -60,9 +60,9 @@ public class AiController {
     public ApiResponse<PlanDraftSessionResponse> sendPlanDraftSessionMessage(
             @PathVariable String sessionId,
             @Valid @RequestBody PlanDraftSessionMessageRequest request,
-            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+            @Owner String owner,
             @RequestHeader(value = "X-Session-Id", required = false) String requestSessionId) {
-        return ApiResponse.ok(planDraftSessionService.accept(sessionId, OwnerGuestId.resolve(rawGuestId),
+        return ApiResponse.ok(planDraftSessionService.accept(sessionId, owner,
                 request.message(), requestSessionId));
     }
 
@@ -112,16 +112,16 @@ public class AiController {
     @GetMapping("/agent/tools")
     public ApiResponse<AgentCatalogResponse> getAgentTools(
             @RequestParam(required = false) Long planId,
-            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(agentToolCatalogService.list(planId, OwnerGuestId.resolve(rawGuestId)));
+            @Owner String owner) {
+        return ApiResponse.ok(agentToolCatalogService.list(planId, owner));
     }
 
     @Operation(summary = "계획 코치 에이전트 대화 (SSE 스트리밍, 도구 호출)")
     @PostMapping(value = "/agent/chats/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamAgentChat(@Valid @RequestBody AiChatRequest request,
-                                      @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                      @Owner String owner,
                                       @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request for agent chat (stream)");
-        return agentRunner.stream(request, OwnerGuestId.resolve(rawGuestId), sessionId);
+        return agentRunner.stream(request, owner, sessionId);
     }
 }

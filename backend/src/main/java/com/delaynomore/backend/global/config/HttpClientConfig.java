@@ -22,4 +22,10 @@ public class HttpClientConfig {
                 .defaultHeader("X-Title", "DelayNoMore")
                 .build();
     }
+
+    // Google ID 토큰 검증(tokeninfo) 전용 RestClient — 인증 헤더가 필요 없는 공개 엔드포인트다.
+    @Bean
+    public RestClient googleTokenInfoRestClient(RestClient.Builder builder) {
+        return builder.baseUrl("https://oauth2.googleapis.com").build();
+    }
 }

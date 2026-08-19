@@ -11,7 +11,7 @@ import com.delaynomore.backend.domain.plan.dto.RecommendationResponse;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.WorkloadRecommendationService;
-import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
+import com.delaynomore.backend.global.auth.Owner;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -57,24 +57,24 @@ public class PlanController {
     @Operation(summary = "계획 보관")
     @PostMapping
     public ApiResponse<PlanResponse> create(@Valid @RequestBody PlanSaveRequest request,
-                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                            @Owner String owner,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to create plan");
-        return ApiResponse.ok(planService.create(request, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.create(request, owner, sessionId));
     }
 
     @Operation(summary = "보관된 계획 목록 조회 (최근 저장순 · 게스트 ID별)")
     @GetMapping
     public ApiResponse<List<PlanResponse>> getPlans(
-            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(planService.getPlans(OwnerGuestId.resolve(rawGuestId)));
+            @Owner String owner) {
+        return ApiResponse.ok(planService.getPlans(owner));
     }
 
     @Operation(summary = "보관된 계획 단건 조회")
     @GetMapping("/{id}")
     public ApiResponse<PlanResponse> getPlan(@PathVariable long id,
-                                             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(planService.getPlan(id, OwnerGuestId.resolve(rawGuestId)));
+                                             @Owner String owner) {
+        return ApiResponse.ok(planService.getPlan(id, owner));
     }
 
     // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 읽기라
@@ -82,17 +82,17 @@ public class PlanController {
     @Operation(summary = "주간 완료율 요약")
     @GetMapping("/{id}/summary/weekly")
     public ApiResponse<WeeklySummaryResponse> getWeeklySummary(@PathVariable long id,
-                                                               @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(planService.getWeeklySummary(id, OwnerGuestId.resolve(rawGuestId)));
+                                                               @Owner String owner) {
+        return ApiResponse.ok(planService.getWeeklySummary(id, owner));
     }
 
     @Operation(summary = "보관된 계획 수정")
     @PutMapping("/{id}")
     public ApiResponse<PlanResponse> update(@PathVariable long id,
                                             @Valid @RequestBody PlanSaveRequest request,
-                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                            @Owner String owner,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
-        return ApiResponse.ok(planService.update(id, request, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.update(id, request, owner, sessionId));
     }
 
     @Operation(summary = "계획의 단일 작업 완료 상태 변경")
@@ -100,10 +100,10 @@ public class PlanController {
     public ApiResponse<PlanResponse> updateTaskCompletion(@PathVariable long id,
                                                            @PathVariable String taskId,
                                                            @Valid @RequestBody TaskCompletionRequest request,
-                                                           @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                           @Owner String owner,
                                                            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         return ApiResponse.ok(planService.updateTaskCompletion(id, taskId, request.completed(),
-                OwnerGuestId.resolve(rawGuestId), sessionId));
+                owner, sessionId));
     }
 
     // 본문 없는 도메인 액션 — 이월 규칙(오늘(KST) 미완료 → 내일, 필요 시 기간 하루 연장)은
@@ -111,10 +111,10 @@ public class PlanController {
     @Operation(summary = "미완료 이월 — 오늘(KST) 미완료 항목을 내일로 이동")
     @PostMapping("/{id}/carry-over")
     public ApiResponse<CarryOverResponse> carryOver(@PathVariable long id,
-                                                    @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                    @Owner String owner,
                                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to carry over plan {}", id);
-        return ApiResponse.ok(planService.carryOver(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.carryOver(id, owner, sessionId));
     }
 
     // === 상태 전이 도메인 액션 — 계획 수명주기(PlanStatus 전이표)의 명시적 명령 ===
@@ -124,28 +124,28 @@ public class PlanController {
     @Operation(summary = "계획 고정 — DRAFT→CONFIRMED (고정 시각은 서버 발급)")
     @PostMapping("/{id}/confirm")
     public ApiResponse<PlanResponse> confirm(@PathVariable long id,
-                                             @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                             @Owner String owner,
                                              @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to confirm plan {}", id);
-        return ApiResponse.ok(planService.confirm(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.confirm(id, owner, sessionId));
     }
 
     @Operation(summary = "계획 완료 — CONFIRMED→COMPLETED (종결 · 완료 시각은 서버 발급)")
     @PostMapping("/{id}/complete")
     public ApiResponse<PlanResponse> complete(@PathVariable long id,
-                                              @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                              @Owner String owner,
                                               @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to complete plan {}", id);
-        return ApiResponse.ok(planService.complete(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.complete(id, owner, sessionId));
     }
 
     @Operation(summary = "계획 중단 — DRAFT|CONFIRMED→CANCELLED (종결)")
     @PostMapping("/{id}/cancel")
     public ApiResponse<PlanResponse> cancel(@PathVariable long id,
-                                            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                            @Owner String owner,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to cancel plan {}", id);
-        return ApiResponse.ok(planService.cancel(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(planService.cancel(id, owner, sessionId));
     }
 
     // === 다음 계획 분량 추천(로드맵 4·5번) ===
@@ -154,10 +154,10 @@ public class PlanController {
     @Operation(summary = "다음 계획 분량 추천 — 수행 기록 계산 + 규칙 분량 + 이유")
     @PostMapping("/{id}/recommendation")
     public ApiResponse<RecommendationResponse> recommend(@PathVariable long id,
-                                                         @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                         @Owner String owner,
                                                          @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to recommend workload for plan {}", id);
-        return ApiResponse.ok(recommendationService.recommend(id, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(recommendationService.recommend(id, owner, sessionId));
     }
 
     // 선택한 분량으로 초안을 생성해 미리보기로 돌려준다 — 저장하지 않는다(승인 전 미저장).
@@ -165,9 +165,9 @@ public class PlanController {
     @PostMapping("/{id}/recommendation/draft")
     public ApiResponse<RecommendationDraftResponse> recommendationDraft(@PathVariable long id,
                                                                         @Valid @RequestBody RecommendationDraftRequest request,
-                                                                        @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
+                                                                        @Owner String owner) {
         return ApiResponse.ok(recommendationService.draft(id, request.selectedTasksPerDay(),
-                OwnerGuestId.resolve(rawGuestId)));
+                owner));
     }
 
     // 승인된 초안을 새 계획으로 저장한다(원본은 불변). 결정·생성 이력이 함께 남는다.
@@ -175,19 +175,19 @@ public class PlanController {
     @PostMapping("/{id}/recommendation/confirm")
     public ApiResponse<PlanResponse> recommendationConfirm(@PathVariable long id,
                                                            @Valid @RequestBody RecommendationConfirmRequest request,
-                                                           @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                           @Owner String owner,
                                                            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to confirm recommendation from plan {}", id);
-        return ApiResponse.ok(recommendationService.confirm(id, request, OwnerGuestId.resolve(rawGuestId), sessionId));
+        return ApiResponse.ok(recommendationService.confirm(id, request, owner, sessionId));
     }
 
     @Operation(summary = "보관된 계획 삭제")
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable long id,
-                                    @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                    @Owner String owner,
                                     @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to delete plan {}", id);
-        planService.delete(id, OwnerGuestId.resolve(rawGuestId), sessionId);
+        planService.delete(id, owner, sessionId);
         return ApiResponse.ok(null);
     }
 }

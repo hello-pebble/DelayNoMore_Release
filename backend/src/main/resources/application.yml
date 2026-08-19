@@ -35,6 +35,14 @@ openrouter:
     # 이 필드를 무시하거나 이상 동작하는 모델로 갈아끼웠을 때의 탈출구다.
     stream-usage: ${OPENROUTER_STREAM_USAGE:true}
 
+google:
+  oauth:
+    # GCP 콘솔의 OAuth 클라이언트 ID. 비밀값은 아니지만 배포 환경마다 달라 환경변수로 주입한다.
+    # 미설정이면 로그인 기능이 통째로 꺼진다(/auth/config → enabled=false, 프론트 버튼 숨김).
+    client-id: ${GOOGLE_CLIENT_ID:YOUR_GOOGLE_CLIENT_ID_HERE}
+    # 긴급 오프 스위치 — 클라이언트 ID를 지우지 않고도 코드 배포 없이 로그인만 끌 수 있다.
+    enabled: ${GOOGLE_LOGIN_ENABLED:true}
+
 # postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
 # 기본(프로필 미지정) 기동은 datasource 설정이 없고 Flyway도 위에서 꺼뒀으므로 DataSource가
 # 전혀 필요 없이 인메모리 저장소(@Profile("!postgres"))로 동작한다 — 롤백 경로이자 단위 테스트 체제.

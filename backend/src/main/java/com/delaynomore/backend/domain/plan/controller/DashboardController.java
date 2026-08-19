@@ -2,7 +2,7 @@ package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.plan.dto.TodayDashboardResponse;
 import com.delaynomore.backend.domain.plan.service.TodayDashboardService;
-import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
+import com.delaynomore.backend.global.auth.Owner;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,7 +25,7 @@ public class DashboardController {
     @Operation(summary = "오늘 화면에 필요한 계획, 작업, 회고를 한 번에 조회")
     @GetMapping("/today")
     public ApiResponse<TodayDashboardResponse> getToday(
-            @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(todayDashboardService.get(OwnerGuestId.resolve(rawGuestId)));
+            @Owner String owner) {
+        return ApiResponse.ok(todayDashboardService.get(owner));
     }
 }

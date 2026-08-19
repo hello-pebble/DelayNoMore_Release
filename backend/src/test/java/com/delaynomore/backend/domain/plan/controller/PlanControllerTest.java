@@ -9,6 +9,8 @@ import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionReposito
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.global.config.WebConfig;
+import com.delaynomore.backend.domain.auth.repository.InMemoryAuthRepository;
+import com.delaynomore.backend.global.auth.OwnerArgumentResolver;
 import com.delaynomore.backend.global.error.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +40,7 @@ class PlanControllerTest {
         PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), auditEventService);
         // 이 테스트는 X-Guest-Id 헤더 계약만 검증하며 추천 엔드포인트를 호출하지 않으므로 추천 서비스는 null.
         mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService, null))
+                .setCustomArgumentResolvers(new OwnerArgumentResolver(new InMemoryAuthRepository()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .addInterceptors(new WebConfig.NoStoreInterceptor())
                 .build();

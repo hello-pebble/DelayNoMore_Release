@@ -53,6 +53,9 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 | `OPENROUTER_MODEL` | backend | 사용할 모델 ID (선택). |
 | `OPENROUTER_TOOL_CALLING` | backend | 에이전트(도구 호출) 경로 on/off (선택, 기본 `true`). 도구 미지원 모델로 바꿀 때 `false`. |
 | `OPENROUTER_STREAM_USAGE` | backend | 스트리밍 응답 끝의 usage 청크 요청 on/off (선택, 기본 `true`). 끄면 스트리밍 경로의 토큰 사용량 로그만 사라지고 스트리밍 자체는 그대로 동작한다. |
+| `GOOGLE_CLIENT_ID` | backend | Google 로그인(GIS) 클라이언트 ID (선택, v0.22.0). 미설정 시 로그인 기능이 통째로 꺼지고 프론트 버튼이 숨는다. GIS는 https(또는 localhost) 오리진 필수 — 배포 스크립트의 `DOMAIN` 옵션으로 HTTPS를 먼저 켠다([DEPLOY_OCI.md](DEPLOY_OCI.md)). |
+| `GOOGLE_LOGIN_ENABLED` | backend | 로그인 긴급 오프 스위치 (선택, 기본 `true`). 클라이언트 ID를 지우지 않고 로그인만 끈다. |
+| `DOMAIN` | 배포 스크립트 | HTTPS 도메인 (선택). 설정하면 Caddy 컨테이너가 80/443에 서고 Let's Encrypt 인증서를 자동 발급한다. |
 
 > **토큰 사용량 보기** — 모든 LLM 호출이 `ai.usage`로 시작하는 로그 한 줄을 남깁니다.
 > 경로별 비교는 `site` 라벨로 합니다(`chat.stream` = 에이전트 이전 경로, `agent.total` = 에이전트

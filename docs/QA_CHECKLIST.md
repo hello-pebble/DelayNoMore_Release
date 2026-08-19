@@ -1,6 +1,6 @@
 # 기능 점검 체크리스트 (QA)
 
-- **대상 버전**: `v0.19.0`
+- **대상 버전**: `v0.21.0`
 - **범위**: 대화형 투두리스트 생성 데모 — 모바일 전용 UI(하단 탭바: 대화/오늘 할 일/체크리스트), 슬롯필링, 계획 생성/수정, mock 폴백, 여러 계획 보관(브라우저별 보관함), 오늘 할 일(오늘 보기), 오늘 마무리(일일 회고)·지난 회고 목록, 미완료 항목 내일로 이동, 계획 변경 이력(Audit), 서버 규칙 강제(고정 가드·형식 검증·날짜 산출/검증·채팅 patch 병합), 서버 계산 진행률·이월 도메인 액션·회고/이력 선택지 메타 API. **v0.9.2**: 자유 대화 patch 병합 서버 이관. **v0.9.3**: 이관 backlog 정리(문서 전용, 신규 QA 항목 없음). **v0.10.0**: 주간 완료율 요약(주 단위 완료율 API + 요약 카드). **v0.11.0**: 브라우저 단위 개인화(게스트 ID `X-Guest-Id` 헤더 격리, 닉네임은 표시용 라벨, 소유자당 10 + 전역 200 한도, 응답 no-store). **v0.12.0**: DB 영속화(`postgres` 프로필은 PostgreSQL(Supabase)에 영속되어 서버 재시작에도 데이터 유지, 기본 프로필은 기존처럼 휘발성 — 두 경우 모두 데이터 접근 키는 여전히 브라우저 게스트 ID라 이를 잃으면 닉네임만으로 재연결 불가). **v0.13.0**: 다음 계획 분량 추천(서버가 수행 기록 계산 + 규칙 분량 결정, AI는 이유·내용만, 승인 전 미저장 — F-22). **v0.13.1**: 추천 통계를 같은 목표의 최근 계획 최대 3건으로 합산(스키마 변경 없음 — F-22). **v0.14.x**: 계획 상태 수명주기(명시적 전이 명령·종결 전면 잠금 — F-23)·이월의 실행 단계화·지난 날짜 완료 체크 잠금(`PAST_TASK_LOCKED`). **v0.15.x**: AI 코치의 에이전트화(도구 호출 — F-25)·토큰 사용량 로그. **v0.16.x**: 도구 선택 평가 하네스(자동, CI). **v0.17.0**: 상태별 에이전트 프로필(F-26, `/agent/tools` 응답이 `{profile, tools}`로 변경). **v0.18.0**: 모바일 전용 화면(F-27 — 가로 3칸 폐지, 하단 탭바 전환, 넓은 화면도 폰 폭 컬럼. 프론트 전용 변경이라 API 영향 없음)
 - **사용법**: 배포 URL(`http://<PUBLIC_IP>` 또는 배포 주소)에 접속해 아래 항목을 순서대로 확인.
 - **버전 갱신 시**: 새 버전에서 바뀐 항목을 추가하고 "대상 버전"을 올린다.
@@ -461,6 +461,108 @@
   done
   # 기대: try 1~5 = 200, try 6 = 429 (본문 code = PLAN_DAILY_LIMIT_EXCEEDED)
   ```
+
+## F-30. Goal Challenge — 정원 한정 참가 (v0.21.0)
+
+> 정원이 한정된 챌린지에 여러 사람이 **동시에** 참가를 요청해도 정확히 정원까지만 성공해야 하고,
+> 실패한 사람의 포인트는 차감되지 않아야 한다. 정원 판정은 서버의 조건부 UPDATE 한 문장이
+> 단독으로 한다(`docs/CONCURRENCY.md`). 초기 포인트는 게스트당 1000P.
+
+- [ ] 하단 탭바에 **챌린지** 탭(4번째)이 있고, 열면 우측 상단에 내 포인트(최초 1000P)가 보인다
+- [ ] "챌린지 개설" → 제목·기간·정원·참가비 입력 후 개설 → 목록에 카드가 뜨고 `0/정원`으로 표시된다
+- [ ] 개설자 본인의 카드에도 참가 버튼이 활성화되어 있고(개설 ≠ 참가), 참가하면 `1/정원` + 포인트가 참가비만큼 줄어든다
+- [ ] 참가한 카드의 버튼이 **"참가 중"**으로 바뀌고 비활성화된다. 새로고침해도 유지된다
+- [ ] 정원을 모두 채운 챌린지는 버튼이 **"모집 마감"**으로 비활성화된다
+- [ ] 다른 브라우저(다른 게스트 ID)에서도 **같은 챌린지가 보인다**(공개 모집 게시판 — 계획 보관함과 달리 소유자별로 격리되지 않는다)
+- [ ] 포인트가 참가비보다 적은 상태에서 참가 → "포인트가 부족해 참가할 수 없어요" 안내가 뜨고 인원수는 늘지 않는다
+- [ ] 서버 확인(curl) — **동시 참가에서 정확히 1명만 성공**:
+
+  ```bash
+  # 1) 정원 5명 챌린지 개설 → id 확인
+  CID=$(curl -s -X POST http://localhost/api/v1/challenges \
+    -H "Content-Type: application/json" -H "X-Guest-Id: qa-challenge-host" \
+    -d '{"title":"cert study 14d","durationDays":14,"capacity":5,"entryFee":100}' \
+    | sed -E 's/.*"id":([0-9]+).*/\1/')
+  # 2) 먼저 4명을 채워 남은 자리를 1개로 만든다
+  for g in qa-seat-0001 qa-seat-0002 qa-seat-0003 qa-seat-0004; do
+    curl -s -o /dev/null -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: $g"
+  done
+  # 3) 5명이 동시에 참가 요청 (백그라운드로 한꺼번에 발사)
+  for g in qa-race-0001 qa-race-0002 qa-race-0003 qa-race-0004 qa-race-0005; do
+    curl -s -o /dev/null -w "$g: %{http_code}\n" -X POST \
+      http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: $g" &
+  done; wait
+  # 기대: 200이 정확히 1건, 409가 4건 (409 본문 code = CHALLENGE_FULL)
+  ```
+
+- [ ] 위 실행 후 목록 조회에서 **인원이 정확히 5/5**다(6 이상이면 정원 초과 = 실패):
+
+  ```bash
+  curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: qa-challenge-host"
+  # 기대: 해당 챌린지의 participantCount = 5, remainingSeats = 0, full = true
+  ```
+
+- [ ] **탈락자의 포인트가 차감되지 않았다** — 409를 받은 게스트로 목록을 조회하면 잔액이 1000P 그대로다:
+
+  ```bash
+  for g in qa-race-0001 qa-race-0002 qa-race-0003 qa-race-0004 qa-race-0005; do
+    echo -n "$g: "; curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: $g" \
+      | sed -E 's/.*"balance":([0-9]+).*/\1/'
+  done
+  # 기대: 정확히 1명만 900, 나머지 4명은 1000 (자리를 못 얻었는데 참가비만 잃는 일 없음)
+  ```
+
+- [ ] 같은 게스트로 참가를 **두 번** 호출 → 두 번째는 409 `CHALLENGE_ALREADY_JOINED`이고 인원수·잔액이 더 변하지 않는다:
+
+  ```bash
+  curl -s -o /dev/null -w "1st: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: qa-dup-0001"
+  curl -s -o /dev/null -w "2nd: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: qa-dup-0001"
+  # 기대: 1st = 200(자리가 남아 있다면) 또는 409 CHALLENGE_FULL, 2nd = 409 CHALLENGE_ALREADY_JOINED
+  ```
+
+- [ ] `X-Guest-Id` 없이 `GET /api/v1/challenges` → 400 `GUEST_ID_REQUIRED`(목록은 공개지만 잔액·참가 여부가 게스트별이라 헤더는 필수)
+- [ ] 응답 헤더에 `Cache-Control: no-store`가 붙는다(`curl -sI` 또는 DevTools Network)
+
+## F-31. Google 로그인 + 게스트 흡수 + HTTPS (v0.22.0)
+
+> 로그인하면 그 브라우저의 게스트 데이터가 계정으로 흡수(re-key)되고, 어느 기기에서든 같은
+> 계정 = 같은 보관함이다. 세션은 서버 발급 토큰(30일, `Authorization: Bearer`)이고, 만료 시
+> 401을 받으면 프론트가 자동으로 게스트로 복귀한다. GIS는 https(또는 localhost) 오리진에서만
+> 동작한다 — 배포 화면 확인은 반드시 `https://` 주소에서.
+
+- [ ] `https://<도메인>` 접속 → 주소창 자물쇠(유효한 인증서)가 보이고, `http://`로 접속하면 https로 리다이렉트된다
+- [ ] 헤더에 **Google 로그인 아이콘 버튼**이 보인다 (서버에 `GOOGLE_CLIENT_ID` 미설정이면 버튼이 없어야 정상)
+- [ ] 게스트 상태로 계획을 1개 생성해 둔다 → Google 로그인 → **방금 만든 계획이 그대로 보인다**(게스트 보관함 흡수)
+- [ ] 로그인 후 헤더 닉네임이 유지되고(가입 시 로컬 닉네임이 서버로 이관), 로그인 버튼 자리가 **로그아웃** 버튼으로 바뀐다
+- [ ] **다른 브라우저**(또는 시크릿 창)에서 같은 Google 계정으로 로그인 → **같은 계획 목록이 보인다**(기기 간 재연결 — 이번 릴리스의 핵심)
+- [ ] 두 번째 브라우저에서 로그인 **전** 챌린지에 참가해 지갑을 만든 뒤 로그인 → 챌린지 탭 포인트가 **두 지갑의 합**이다(지갑 병합)
+- [ ] 로그아웃 → 게스트 보관함(로그인 전에 쓰던 브라우저별 데이터)으로 돌아가고, 다시 로그인하면 계정 데이터가 보인다
+- [ ] 서버 확인(curl) — 로그인 설정 조회(비밀값 아님):
+
+  ```bash
+  curl -s https://<도메인>/api/v1/auth/config
+  # 기대: {"success":true,"data":{"enabled":true,"clientId":"....apps.googleusercontent.com"},...}
+  # GOOGLE_CLIENT_ID 미설정 배포면 enabled=false, clientId=null
+  ```
+
+- [ ] 서버 확인(curl) — **만료·위조 토큰은 401이고 게스트로 조용히 폴백하지 않는다**:
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" https://<도메인>/api/v1/plans \
+    -H "Authorization: Bearer fake-token-000" -H "X-Guest-Id: qa-auth-0001"
+  # 기대: 401 (본문 code = AUTH_TOKEN_INVALID). X-Guest-Id가 있어도 게스트로 처리되면 안 된다
+  ```
+
+- [ ] 서버 확인(curl) — 위조 credential 로그인 거부:
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" -X POST https://<도메인>/api/v1/auth/google \
+    -H "Content-Type: application/json" -d '{"credential":"not-a-real-google-token"}'
+  # 기대: 401 (본문 code = AUTH_GOOGLE_INVALID)
+  ```
+
+- [ ] 로그인/로그아웃 응답 헤더에 `Cache-Control: no-store`가 붙는다(`/api/v1/auth/**` 전체)
+- [ ] (선택) DB에서 `auth_sessions.expires_at`을 과거로 UPDATE 후 앱 새로고침 → 첫 요청이 401 → 자동으로 게스트 화면 복귀 + 재로그인 가능
 
 ## G. 화면 폭 (v0.18.0 — 모바일 전용)
 > v0.5.1의 "좁히면 위아래 스택" 반응형은 폐지됐다. 폭과 무관하게 **모바일 UI 하나**만 렌더한다.

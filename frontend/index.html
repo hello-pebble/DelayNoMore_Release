@@ -9,6 +9,9 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="description" content="대화를 통해 하루 단위 실행 계획(투두리스트)을 생성하는 AI 코치 데모, DelayNoMore" />
     <title>DelayNoMore | 대화형 투두리스트 생성 데모</title>
+    <!-- Google Identity Services — 로그인 버튼(GIS 팝업). async라 로드 완료는 App.jsx가
+         재시도로 기다리고, 로그인 기능이 꺼져 있으면(클라이언트 ID 미설정) 쓰이지 않는다. -->
+    <script src="https://accounts.google.com/gsi/client" async></script>
   </head>
   <body>
     <div id="root"></div>

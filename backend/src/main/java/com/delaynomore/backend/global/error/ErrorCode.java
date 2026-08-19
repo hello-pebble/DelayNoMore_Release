@@ -34,6 +34,23 @@ public enum ErrorCode {
     // 이월 규칙이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친 것으로 확정되며, 사후 체크로
     // 완료율을 소급 조작할 수 없다. 리소스 상태(날짜 경과)와의 충돌이므로 409.
     PAST_TASK_LOCKED(HttpStatus.CONFLICT, "지난 날짜의 완료 체크는 변경할 수 없습니다."),
+    CHALLENGE_NOT_FOUND(HttpStatus.NOT_FOUND, "챌린지를 찾을 수 없습니다. 이미 삭제되었을 수 있어요."),
+    // 정원 마감 — 요청 형식은 옳고 "리소스의 현재 상태와 충돌"이므로 PLAN_LOCKED 계열의 409다.
+    // 판정은 조건부 UPDATE(WHERE participant_count < capacity)가 0행을 갱신했을 때만 내려진다 —
+    // 서비스가 미리 세어 본 값으로 던지지 않는다(그러면 동시 요청에서 정원을 넘긴다).
+    CHALLENGE_FULL(HttpStatus.CONFLICT, "모집이 마감되었습니다. 다른 참가자가 마지막 자리를 가져갔어요."),
+    // 중복 참가 — 판정 주체는 challenge_participants의 복합 PK(인메모리는 참가자 집합)다.
+    CHALLENGE_ALREADY_JOINED(HttpStatus.CONFLICT, "이미 참가한 챌린지입니다."),
+    // 포인트 부족 — 사용자가 (다른 챌린지를 덜 참가해서) 해소할 수 있는 조건이므로 400.
+    POINTS_INSUFFICIENT(HttpStatus.BAD_REQUEST, "포인트가 부족해 참가할 수 없습니다."),
+    // 세션 토큰 불일치·만료 — 401. 프론트는 이 응답을 받으면 저장된 auth를 지우고 게스트로
+    // 복귀한다. 게스트로 조용히 폴백하지 않는 이유: 만료를 숨기면 이후 쓰기가 게스트 보관함에
+    // 잘못 귀속되고, 사용자는 로그인돼 있다고 믿은 채 데이터가 갈라진다.
+    AUTH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인이 만료되었습니다. 다시 로그인해주세요."),
+    // Google ID 토큰 검증 실패(서명·aud 불일치·만료) — 사용자가 재로그인으로 해소하므로 401.
+    AUTH_GOOGLE_INVALID(HttpStatus.UNAUTHORIZED, "Google 인증에 실패했습니다. 다시 시도해주세요."),
+    // 로그인 기능이 꺼져 있음(클라이언트 ID 미설정 또는 스위치 오프) — 사용자 잘못이 아니라 503.
+    AUTH_DISABLED(HttpStatus.SERVICE_UNAVAILABLE, "로그인 기능이 현재 비활성화되어 있습니다."),
     REFLECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 날짜의 회고가 아직 없습니다."),
     REFLECTION_DATE_INVALID(HttpStatus.BAD_REQUEST, "날짜 형식이 올바르지 않습니다(YYYY-MM-DD)."),
     REFLECTION_DATE_NOT_TODAY(HttpStatus.BAD_REQUEST, "회고는 오늘(한국 시간 기준) 날짜에만 저장할 수 있습니다."),

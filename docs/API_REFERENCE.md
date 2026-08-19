@@ -13,6 +13,7 @@
 | `X-Guest-Id` | 요청 | `/api/v1/plans*` 전부(GET 포함) | **필수** | 브라우저가 생성한 소유자 키(안정 식별자). 값 규칙 `^[A-Za-z0-9-]{8,64}$`(예: `550e8400-e29b-41d4-a716-446655440000`). 누락 → 400 `GUEST_ID_REQUIRED`, 형식 위반 → 400 `GUEST_ID_INVALID`. **닉네임은 이 헤더에 담기지 않으며 서버로 전송되지 않는다**(화면 표시용 라벨). |
 | `X-Guest-Id` | 요청 | `/api/v1/ai/plan-draft-sessions*`, `/api/v1/dashboard/today` | **필수** | 작성 세션의 소유자와 오늘 읽기 모델의 범위를 정한다(v0.19.0). |
 | `X-Session-Id` | 요청 | `/plans` POST·PUT·DELETE, 회고 PUT | 선택 | 변경 이력의 "이 브라우저/다른 세션" 귀속용. 없으면 이력에 `sessionId: null`. 읽기(GET)에는 받지 않는다. |
+| `Authorization: Bearer <token>` | 요청 | 소유자 스코프 전 엔드포인트 | 선택 (v0.22.0) | 로그인 세션 토큰(`POST /auth/google` 응답). 있으면 서버가 `X-Guest-Id` 대신 **계정을 소유자로 해석**한다(`@Owner` 리졸버). 무효·만료면 401 `AUTH_TOKEN_INVALID` — 게스트로 조용히 폴백하지 않는다. 없으면 기존 게스트 해석 그대로. |
 | `Cache-Control: no-store` | 응답 | `/api/v1/plans*`, `/dashboard/today`, `/ai/plan-draft-sessions*` | — | 소유자별 개인 데이터·작성 중 입력이라 프록시·브라우저 캐시 금지(`global/config/WebConfig`, v0.19.0 범위 확장). |
 | `Access-Control-Allow-Headers: X-Guest-Id` | 응답(프리플라이트) | OPTIONS | — | CORS 프리플라이트에서 `X-Guest-Id` 요청 헤더 허용(`@CrossOrigin` 기본 allowedHeaders). |
 
@@ -52,7 +53,44 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `PLAN_STORE_FULL` | 503 | 전역 저장소 상한 초과(서버 메모리 보호, 최대 200개) |
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
+| `AUTH_TOKEN_INVALID` | 401 | Bearer 세션 토큰이 무효·만료 (v0.22.0 — 프론트는 저장된 auth를 지우고 게스트로 복귀) |
+| `AUTH_GOOGLE_INVALID` | 401 | Google ID 토큰 검증 실패(서명·aud 불일치·만료) |
+| `AUTH_DISABLED` | 503 | 로그인 기능 꺼짐(`GOOGLE_CLIENT_ID` 미설정 또는 `GOOGLE_LOGIN_ENABLED=false`) |
 | `INTERNAL_ERROR` | 500 | 그 외 서버 오류 |
+
+---
+
+## 인증 (`/api/v1/auth`) — v0.22.0
+
+### A-1. GET /auth/config — 로그인 설정 (프론트 버튼 게이팅)
+
+```json
+{ "success": true, "data": { "enabled": true, "clientId": "xxxx.apps.googleusercontent.com" }, "error": null }
+```
+`enabled=false`면 `clientId=null`이고 프론트는 로그인 버튼을 그리지 않는다.
+
+### A-2. POST /auth/google — Google 로그인 (게스트 흡수 + 세션 발급)
+
+요청 — `credential`은 GIS 팝업이 준 Google ID 토큰. `nickname`은 선택(최초 가입 시만
+`users.nickname`에 저장, 형식 위반이면 조용히 버림). `X-Guest-Id` 헤더가 유효하면 **그 게스트의
+모든 데이터(계획·이력·챌린지·지갑)가 이 계정으로 흡수**된다 — 매 로그인마다 멱등 실행.
+
+```json
+{ "credential": "eyJhbGciOi...", "nickname": "집중왕" }
+```
+
+응답 — `token`은 30일 세션 토큰. 이 응답에 한 번만 실리고 서버는 SHA-256 해시만 보관한다.
+
+```json
+{ "success": true, "data": { "token": "Zx0...43자", "nickname": "집중왕", "email": "user@gmail.com" }, "error": null }
+```
+
+실패: 401 `AUTH_GOOGLE_INVALID`(토큰 무효) · 503 `AUTH_DISABLED`(기능 꺼짐).
+
+### A-3. POST /auth/logout — 서버 세션 삭제
+
+`Authorization: Bearer` 헤더의 세션을 지운다. 토큰이 없거나 무효여도 200(멱등 — 목표 상태는
+"세션 없음"이다). 응답 `data: null`.
 
 ---
 

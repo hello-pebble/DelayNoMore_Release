@@ -4,6 +4,7 @@
 
 import { getSessionId } from './session_id';
 import { getGuestId } from './guest_id';
+import { getAuth, clearAuth } from './auth';
 
 const API_BASE = '/api/v1';
 
@@ -21,6 +22,12 @@ const requestJson = async (path, payload, method = 'POST') => {
   // 시점의 소유자로만 나간다 — 로그인 도입 후 guestId→memberId 전환 대비). guestId는 ASCII라
   // 인코딩이 필요 없다. AI·메타 엔드포인트는 이 헤더를 무시한다(경로 분기 불필요).
   headers['X-Guest-Id'] = getGuestId();
+  // 로그인 상태면 세션 토큰을 함께 보낸다 — 서버는 Bearer가 있으면 게스트 ID 대신 계정을
+  // 소유자로 해석한다(OwnerArgumentResolver). guestId는 계속 실린다(위 주석: 흡수 재료).
+  const auth = getAuth();
+  if (auth?.token) {
+    headers['Authorization'] = `Bearer ${auth.token}`;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -38,6 +45,11 @@ const requestJson = async (path, payload, method = 'POST') => {
   }
 
   if (!response.ok || !body || body.success !== true) {
+    // 세션 만료(401) — 저장된 auth를 지워 다음 요청부터 게스트로 복귀한다. 예외는 그대로
+    // 던져 호출부의 기존 오류 UI("로그인이 만료되었습니다...")를 재사용한다.
+    if (response.status === 401) {
+      clearAuth();
+    }
     const fieldErrors = body?.error?.fieldErrors;
     const firstFieldError = fieldErrors && Object.values(fieldErrors)[0];
     const message = firstFieldError || body?.error?.message || `HTTP ${response.status}`;
@@ -67,19 +79,27 @@ export const postAiChat = (payload) => requestJson('/ai/chats', payload);
 // SSE(fetch + ReadableStream) 공통 파서 — EventSource는 POST를 못 하므로 직접 파싱한다.
 // 각 이벤트는 "data: <JSON>\n\n" 형태. path의 엔드포인트가 흘려보내는 JSON을 onEvent로 넘긴다.
 const consumeSse = async (path, payload, onEvent) => {
+  // 에이전트 경로는 도구로 소유 데이터(계획·회고·이월)를 다루므로 소유자 스코프가 필수다.
+  // 기존 AI 엔드포인트는 이 헤더를 무시하므로 경로 분기 없이 항상 붙인다(requestJson과 같은 관례).
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-Guest-Id': getGuestId(),
+    'X-Session-Id': getSessionId(),
+  };
+  const auth = getAuth();
+  if (auth?.token) {
+    headers['Authorization'] = `Bearer ${auth.token}`;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
-    // 에이전트 경로는 도구로 소유 데이터(계획·회고·이월)를 다루므로 소유자 스코프가 필수다.
-    // 기존 AI 엔드포인트는 이 헤더를 무시하므로 경로 분기 없이 항상 붙인다(requestJson과 같은 관례).
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Guest-Id': getGuestId(),
-      'X-Session-Id': getSessionId(),
-    },
+    headers,
     body: JSON.stringify(payload),
   });
 
   if (!response.ok || !response.body) {
+    if (response.status === 401) {
+      clearAuth(); // requestJson과 같은 규칙 — 만료 세션은 지우고 게스트로 복귀
+    }
     throw new Error(`HTTP ${response.status}`);
   }
 
@@ -155,6 +175,16 @@ export const fetchPlan = (id) => requestJson(`/plans/${id}`, null, 'GET');
 export const deletePlan = (id) => requestJson(`/plans/${id}`, null, 'DELETE');
 export const fetchTodayDashboard = () => requestJson('/dashboard/today', null, 'GET');
 
+// Goal Challenge — 정원이 한정된 목표 챌린지(v0.21.0). 목록은 소유자 스코프가 없다(공개 모집
+// 게시판)지만 응답의 balance·joined는 내 게스트 ID 기준이라 X-Guest-Id는 읽기에도 필요하다.
+// 응답 data: { balance, challenges: [{ id, title, durationDays, capacity, entryFee,
+//              participantCount, remainingSeats, full, mine, joined, createdAt }] }
+// joinChallenge 실패는 err.code로 분기한다 — CHALLENGE_FULL(409, 마지막 자리를 남이 가져감) /
+// CHALLENGE_ALREADY_JOINED(409) / POINTS_INSUFFICIENT(400) / CHALLENGE_NOT_FOUND(404).
+export const fetchChallenges = () => requestJson('/challenges', null, 'GET');
+export const createChallenge = (payload) => requestJson('/challenges', payload);
+export const joinChallenge = (id) => requestJson(`/challenges/${id}/join`, null);
+
 // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
 // 서버 소유(plan.tasks 기준)라 프론트는 표시만 한다. 응답 data: { planId, startDate, endDate,
 // totalDone, totalTotal, weeks: [{ index, startDate, endDate, done, total, rate }] }
@@ -189,6 +219,20 @@ export const fetchPlanStatuses = () => requestJson('/meta/plan-statuses', null, 
 export const fetchAuditEvents = (planId) => requestJson(`/plans/${planId}/audit-events`, null, 'GET');
 export const fetchReflection = (planId, date) => requestJson(`/plans/${planId}/reflections/${date}`, null, 'GET');
 export const fetchReflections = (planId) => requestJson(`/plans/${planId}/reflections`, null, 'GET');
+
+// 인증 — Google 로그인(v0.22.0). 흐름: GIS 팝업이 준 credential(ID 토큰)을 서버로 보내면
+// 서버가 검증·게스트 흡수 후 세션 토큰을 내려준다. 호출부(App.jsx)가 setAuth로 보관한다.
+// config는 로그인 버튼 게이팅용 — enabled=false거나 요청 실패면 버튼을 그리지 않는다.
+export const fetchAuthConfig = async () => {
+  try {
+    return await requestJson('/auth/config', null, 'GET');
+  } catch {
+    return { enabled: false, clientId: null };
+  }
+};
+export const postGoogleLogin = (credential, nickname) =>
+  requestJson('/auth/google', { credential, nickname });
+export const postLogout = () => requestJson('/auth/logout', null);
 
 // AI 연결 상태 LED용 헬스체크 — 실패해도 예외를 던지지 않고 상태 객체를 반환한다.
 // 백엔드 data({connected, reason, toolCalling})를 기존 화면 계약({success, reason})에 맞춰 돌려주고,
