@@ -2,7 +2,7 @@ package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.plan.dto.AuditEventResponse;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
-import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
+import com.delaynomore.backend.global.auth.Owner;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -34,7 +34,7 @@ public class AuditEventController {
     @Operation(summary = "계획 변경 이력 조회 (최신순 · 게스트 ID별)")
     @GetMapping
     public ApiResponse<List<AuditEventResponse>> getAll(@PathVariable long planId,
-                                                        @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(auditEventService.getEvents(planId, OwnerGuestId.resolve(rawGuestId)));
+                                                        @Owner String owner) {
+        return ApiResponse.ok(auditEventService.getEvents(planId, owner));
     }
 }

@@ -14,6 +14,114 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.22.0]
+
+**브라우저에 갇혀 있던 보관함이 처음으로 계정을 얻었다.** 지금까지 데이터의 소유자 키는
+브라우저 localStorage의 게스트 UUID뿐이라, 브라우저 데이터를 지우거나 기기를 바꾸면 DB에
+데이터가 남아 있어도 다시 열 방법이 없었다(로드맵 6번의 알려진 간극). 이번 릴리스는 **Google
+로그인**을 넣어 이 간극을 닫는다: GIS(Google Identity Services) 팝업이 준 ID 토큰을 서버가
+검증하고, 서버 발급 세션 토큰(30일)이 `Authorization: Bearer`로 실리며, **로그인하는 순간 그
+브라우저의 게스트 데이터가 계정으로 흡수(re-key)된다.** 다른 기기에서 같은 계정으로 로그인하면
+같은 보관함이 열리고, 그 기기의 게스트 데이터도 로그인 시 자동으로 합쳐진다.
+
+**핵심 결정은 "게스트 흡수를 매 로그인마다, 멱등하게"이다.** `plans.owner` 등 5개 owner 컬럼이
+FK 없는 TEXT로 설계돼 있어(V4 주석) 흡수는 `UPDATE ... SET owner = 사용자ID WHERE owner =
+게스트ID` 값 치환으로 끝난다. 이미 흡수된 게스트는 전부 0-row no-op이라 신규/기존 가입을 구분할
+필요가 없다. 충돌 규칙은 둘뿐: 지갑은 잔액 합산, 같은 챌린지 중복 참가는 게스트 행 폐기(참가비
+환불 없음). Spring Security는 넣지 않았다 — 소유자 판정이 `@Owner` ArgumentResolver 한 지점에
+모이므로 프레임워크 없이 헤더 → 세션 조회 → 폴백(게스트) 규칙 하나면 충분하다.
+
+### Added — Google 로그인 + 게스트 흡수
+
+- 새 도메인 `domain/auth/` — `POST /auth/google`(GIS credential 검증 → upsert → 게스트 흡수 →
+  세션 발급) · `POST /auth/logout` · `GET /auth/config`(프론트 버튼 게이팅 + 클라이언트 ID 전달).
+  ID 토큰 검증은 Google tokeninfo 엔드포인트에 위임(의존성 0) — aud 대조만 서버가 직접 한다.
+- 마이그레이션 `V5__auth_sessions.sql` — 세션은 SHA-256 해시로만 저장(DB 유출 시 세션 탈취
+  방지), 만료 판정은 `WHERE expires_at > now()`(DB 시계 단일화), 청소는 로그인 시 DELETE 한 줄.
+- `@Owner` ArgumentResolver — 21개 핸들러의 `X-Guest-Id` 수동 해석을 대체. Bearer가 있으면
+  세션 사용자, 없으면 기존 게스트 해석 폴백. **만료 세션은 게스트로 조용히 폴백하지 않고 401**
+  (숨기면 쓰기가 게스트 보관함에 잘못 귀속된다) — 프론트가 401을 받으면 auth를 지우고 복귀.
+- 프론트 `auth.js`(localStorage `delaynomore:auth`) + 헤더의 GIS 아이콘 버튼/로그아웃 버튼.
+  가입 시 로컬 닉네임을 서버(`users.nickname`)로 이관하고, 표시는 서버 닉네임 우선.
+- 새 에러 코드 셋 — `AUTH_TOKEN_INVALID`(401) · `AUTH_GOOGLE_INVALID`(401) · `AUTH_DISABLED`(503).
+
+### Added — HTTPS (Caddy)
+
+- 배포 스크립트(`oci-pull.sh`/`oci-setup.sh`)에 `DOMAIN` 옵션 — 설정하면 Caddy 컨테이너가
+  80/443에 서고 Let's Encrypt 인증서를 자동 발급·갱신한다(인증서는 `caddy_data` 볼륨에 보존).
+  GIS가 https(또는 localhost) 오리진을 요구하므로 로그인의 선행조건이다. 미설정 시 기존 HTTP
+  단독 모드 그대로.
+
+### 알려진 한계
+
+- 새 게스트를 반복 생성해 로그인하면 초기 지급 포인트(1000P)가 합산 적립될 수 있다 — 포인트가
+  비금전 게이미피케이션이라 수용(문제 시 초기 지급분 차감 합산으로 전환).
+- 계정 병합·탈퇴·멀티 프로바이더 연결은 미지원(1계정 1프로바이더, Google만).
+
+## [0.21.0]
+
+**처음으로 여러 사람이 같은 자원을 두고 다투는 기능을 넣었다.** 지금까지 이 앱의 모든 쓰기는
+한 사람이 자기 데이터를 고치는 흐름이었다 — 경합이라 해 봐야 같은 사람의 중복 클릭 정도였고,
+동시성 대책도 단일 인스턴스 JVM 락(`PlanService.create`의 `synchronized`) 하나뿐이었다.
+**Goal Challenge**는 정원이 한정된 챌린지에 여러 게스트가 동시에 참가를 요청하는, 성격이 다른
+문제를 들여온다: 남은 자리 1개에 5명이 거의 동시에 도착해도 **정확히 1명만** 성공해야 하고,
+실패한 4명은 **참가비도 잃지 않아야** 한다.
+
+**핵심 결정은 "판정을 쓰기 안으로 넣는다"이다.** `SELECT`로 인원을 세어 자바에서 `if`로
+판정하면 두 문장 사이가 열려 정원을 넘긴다(TOCTOU). 정원 조건을 UPDATE의 WHERE 절로 옮기면
+(`WHERE participant_count < capacity`) READ COMMITTED의 행 락 + 조건 재평가가 검사와 증가를
+하나로 묶어 준다. 갱신된 행 수 0이 곧 "마감"이다. 근거와 대안 비교는 `docs/CONCURRENCY.md`.
+
+### Added — Goal Challenge
+
+- 새 도메인 `domain/challenge/` — 기존 `domain/plan/`의 관례를 그대로 따른다(record 엔티티·DTO,
+  `ApiResponse` 직접 반환, `InMemory*`/`Jdbc*` 리포지토리 쌍, `OwnerGuestId` 재사용).
+  엔드포인트는 `POST /challenges`(개설) · `GET /challenges`(목록 + 내 잔액) ·
+  `POST /challenges/{id}/join`(참가) 셋이다.
+- 마이그레이션 `V3__goal_challenge.sql` — `challenges` · `challenge_participants` ·
+  `point_wallets`. 지갑은 최초 접근 시 1000P로 지연 생성된다(`ON CONFLICT DO NOTHING`이라
+  동시 최초 접근이 겹쳐도 안전).
+- 새 에러 코드 넷. `CHALLENGE_FULL`(409)은 기존 `PLAN_LOCKED`와 같은 "리소스 현재 상태와의
+  충돌" 계열이고, `POINTS_INSUFFICIENT`는 사용자가 해소 가능하므로 400이다.
+- 프론트에 **챌린지 탭**(4번째 탭) 추가 — `challenge_panel.jsx` 단일 컴포넌트.
+  이 화면은 정원 판정을 하지 않는다: 화면이 본 인원수는 이미 낡았을 수 있으므로 항상 서버에
+  요청하고 `err.code`로 결과를 읽는다(마감 버튼 비활성화는 표시상의 편의일 뿐 방어가 아니다).
+
+### Changed — 정합성 결정들
+
+- **정원·중복·잔액을 애플리케이션이 판정하지 않는다.** 정원은 조건부 UPDATE의 WHERE가,
+  중복은 `challenge_participants` 복합 PK가, 잔액은 `WHERE balance >= :fee`가 판정한다.
+  `ChallengeService.join`에 `if (full)` 같은 검사가 없는 것은 누락이 아니라 규칙이다 —
+  서비스가 미리 세어 보고 던지면 그 순간 TOCTOU로 돌아간다.
+- **참가 실패는 통째로 되돌아간다.** 참가자 등록 → 참가비 차감 → 자리 예약이 하나의
+  `@Transactional`이라, 마지막 단계에서 마감으로 밀리면 앞선 둘이 롤백으로 사라진다.
+  잠금 순서는 모든 스레드가 "자기 행(참가자·지갑) → 경합 행(챌린지)"으로 같아 교착이 없다.
+- **`FOR UPDATE`를 쓰지 않았다.** `JdbcPlanRepository`는 행 전체를 읽어 자바에서 가공해야 해서
+  비관적 락으로 원자 구간을 연다. 여기서 필요한 건 카운터 하나의 비교-후-증가뿐이라 조건부
+  UPDATE 한 문장이 왕복도 락 보유 시간도 짧다. 도구가 바뀐 게 아니라 문제가 다르다.
+- **`CHECK (participant_count <= capacity)`를 일부러 넣지 않았다.** 제약이 있으면 naive 구현이
+  정원을 넘길 때 오버부킹 대신 제약 위반으로 끝나, "틀린 구현은 실제로 정원을 넘는다"는 증거가
+  사라진다. 불변식을 지키는 것은 조건부 UPDATE 하나이며 그 사실이 테스트로 드러나는 편이 낫다.
+  운영 방어를 한 겹 더 원하면 그때 추가한다(마이그레이션 주석에 명시).
+- 인메모리 구현은 `computeIfPresent`의 키 단위 원자 구간으로 같은 계약을 지킨다. 트랜잭션이
+  없어 롤백도 없으므로 **세 검사를 세 변경보다 앞에 두는 순서**가 롤백의 역할을 대신한다.
+- `AbstractPostgresIntegrationTest`를 public으로 바꾸고 TRUNCATE 목록에 새 세 테이블을 더했다
+  (다른 패키지의 IT가 상속할 수 있도록).
+
+### Verification
+
+- `ChallengeJoinConcurrencyIT` — 실제 PostgreSQL 17(Testcontainers)에서 **같은 시나리오를 두 번**
+  돌린다. naive(검사-후-쓰기)는 `participant_count > capacity`를 assert해 정원 초과를 재현하고,
+  safe(`ChallengeService.join`)는 성공 1건 · 409 4건 · 카운터와 참가자 행 수 일치 · **탈락자
+  잔액 원복**을 assert한다. naive 코드는 테스트 파일 안에만 있다(프로덕션에 unsafe 분기 없음).
+- `ChallengeServiceConcurrencyTest` — Docker 없이도 도는 인메모리 판본. 잔여 1자리 동시 5건 →
+  1명, 같은 게스트 연타 8회 → 자리·참가비 각 1회, 정원 20에 동시 100건 → 정확히 20명 성공하고
+  탈락한 80명의 잔액은 그대로.
+- `ChallengeServiceTest` — 단일 스레드 규칙(정원 마감 409 · 중복 409 · 잔액 부족 400 · 부재 404)과
+  각 실패에서 포인트·자리가 소모되지 않음.
+- 새 문서 `docs/CONCURRENCY.md` — 깨지는 인터리빙 표, 조건부 UPDATE가 막는 지점,
+  애플리케이션 락 / `FOR UPDATE` / 낙관적 락 / `SERIALIZABLE`과의 비교, 검증 테스트 목록.
+
 ## [0.20.0]
 
 **계획 생성에 처음으로 시간 기반 한도를 걸었다.** 지금까지의 한도는 모두 "보관 개수"(소유자 10 ·

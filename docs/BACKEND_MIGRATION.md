@@ -77,7 +77,11 @@
    직접 조회해 `localStorage.setItem('delaynomore:guestId', '<UUID>')`로 수동 복원하는 것 외에
    방법이 없음). 이 간극은 로그인 도입(#2, owner를 guestId→memberId로 re-key) 전까지 구조적으로
    남는다
-2. **사용자 인증/격리** — 브라우저 게스트 ID(X-Guest-Id 헤더) 기반 격리는 v0.11.0에서 완료(계획
-   owner 필드 = guestId + 소유권 가드 + 이벤트 소유자 기록). 다만 비밀번호가 없어 인증은 아니고
-   데이터를 여는 bearer 성격이다 — 로그인 도입 시 owner 컬럼을 guestId→memberId로 re-key 하는
-   형태로 발전 예정(닉네임은 표시용 라벨이라 이전 대상이 아니다)
+2. ~~**사용자 인증/격리**~~ — **v0.22.0에서 완료**. 브라우저 게스트 ID(X-Guest-Id 헤더) 기반
+   격리(v0.11.0) 위에 Google 로그인이 얹혔다: 로그인하면 owner 컬럼 5개(plans.owner,
+   audit_events.owner_id, challenges.owner, challenge_participants.owner, point_wallets.owner)를
+   guestId→users.id(UUID 문자열)로 re-key 하는 흡수 트랜잭션이 매 로그인마다 멱등하게 실행된다
+   (`JdbcAuthRepository.absorbGuest`). 소유자 해석은 `@Owner` ArgumentResolver 한 지점 — Bearer
+   세션이 있으면 사용자, 없으면 기존 게스트 해석 폴백. 닉네임은 원래 "표시용 라벨이라 이전 대상이
+   아니다"였으나, 기기 간 표시 일관성을 위해 **최초 가입 시 1회 서버(users.nickname)로 이관**하는
+   것으로 변경했다(이후 로그인은 덮어쓰지 않음, 서버 닉네임 수정 API는 없음)

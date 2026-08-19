@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ChatCoach from './components/chat_coach';
 import NicknameSetup from './components/nickname_setup';
 import { checkOpenRouterConnection } from './ai_engine';
 import { getNickname, setNickname } from './nickname';
 import { getGuestId, isGuestIdPersisted } from './guest_id';
+import { getAuth, setAuth, clearAuth } from './auth';
+import { fetchAuthConfig, postGoogleLogin, postLogout } from './db_service';
 
 export default function App() {
   // AI 연결 상태: 'checking' | 'connected' | 'error'
@@ -25,6 +27,62 @@ export default function App() {
   // 모바일 폭에서는 헤더에 긴 문구를 둘 자리가 없다. 데모 안내와 AI 상태 문구는 헤더 아래
   // 한 줄 배너로 접어 두고, 상태 LED를 누르면 펼친다(정보는 그대로 두고 자리만 옮긴 것).
   const [infoOpen, setInfoOpen] = useState(false);
+
+  // 로그인 상태(v0.22.0) — {token, nickname, email} 또는 null. 데이터 소유자 전환은 서버가
+  // Authorization 헤더로 판정하므로(db_service.js), 여기서는 상태 보관과 버튼 표시만 한다.
+  const [auth, setAuthState] = useState(() => getAuth());
+  const [authConfig, setAuthConfig] = useState(null);
+  const googleBtnRef = useRef(null);
+
+  const handleGoogleCredential = async (response) => {
+    try {
+      // 현재 localStorage 닉네임을 함께 보낸다 — 최초 가입 시 서버 닉네임으로 이관된다.
+      const data = await postGoogleLogin(response.credential, getNickname());
+      setAuth(data);
+      setAuthState(data);
+    } catch (err) {
+      alert(err?.message || '로그인에 실패했습니다. 다시 시도해주세요.');
+    }
+  };
+
+  const handleLogout = () => {
+    postLogout().catch(() => {}); // 서버 세션 삭제가 실패해도 로컬 로그아웃은 진행한다
+    clearAuth();
+    setAuthState(null);
+  };
+
+  // 로그인 설정 조회 — 서버에 클라이언트 ID가 없으면 enabled=false라 버튼 자체가 안 그려진다.
+  useEffect(() => {
+    let active = true;
+    fetchAuthConfig().then((cfg) => {
+      if (active) setAuthConfig(cfg);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // GIS 버튼 렌더 — gsi/client 스크립트(index.html)가 async 로드라 준비될 때까지 짧게 재시도한다.
+  useEffect(() => {
+    if (!authConfig?.enabled || auth || !googleBtnRef.current) return undefined;
+    let cancelled = false;
+    let tries = 0;
+    const tryRender = () => {
+      if (cancelled) return;
+      const gis = window.google?.accounts?.id;
+      if (!gis) {
+        if (tries++ < 50) setTimeout(tryRender, 200); // 최대 ~10초 대기 후 조용히 포기(게스트 흐름 유지)
+        return;
+      }
+      gis.initialize({ client_id: authConfig.clientId, callback: handleGoogleCredential });
+      // 헤더가 좁아(모바일 480px) 아이콘형 버튼만 그린다.
+      gis.renderButton(googleBtnRef.current, { type: 'icon', shape: 'circle', size: 'medium' });
+    };
+    tryRender();
+    return () => {
+      cancelled = true;
+    };
+  }, [authConfig, auth]);
 
   const handleNicknameSubmit = (value) => {
     setNickname(value); // 표시 이름 localStorage 보관
@@ -92,6 +150,7 @@ export default function App() {
         <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)', minWidth: 0 }}>
           <span
+            title={auth?.email || undefined}
             style={{
               fontWeight: 600,
               color: 'var(--text-main)',
@@ -101,8 +160,32 @@ export default function App() {
               whiteSpace: 'nowrap'
             }}
           >
-            {nickname}
+            {auth?.nickname || nickname}
           </span>
+          {/* 로그인(v0.22.0) — 비로그인 + 기능 활성일 때만 GIS 아이콘 버튼 컨테이너를 그린다.
+              로그인 상태면 로그아웃 버튼으로 교체된다. */}
+          {!auth && authConfig?.enabled && (
+            <div ref={googleBtnRef} style={{ flexShrink: 0, height: '32px' }} />
+          )}
+          {auth && (
+            <button
+              onClick={handleLogout}
+              title="로그아웃 — 이 브라우저의 게스트 보관함으로 돌아갑니다"
+              style={{
+                padding: '0 10px',
+                minHeight: '32px',
+                flexShrink: 0,
+                background: 'var(--bg-card)',
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border)',
+                borderRadius: '6px',
+                fontSize: '12px',
+                cursor: 'pointer'
+              }}
+            >
+              로그아웃
+            </button>
+          )}
           <button
             onClick={() => setEditingNickname(true)}
             title="표시 이름만 바뀝니다 — 보관함 데이터는 그대로 유지됩니다"

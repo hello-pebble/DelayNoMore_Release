@@ -8,6 +8,8 @@ import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.domain.plan.repository.InMemoryReflectionRepository;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
+import com.delaynomore.backend.domain.auth.repository.InMemoryAuthRepository;
+import com.delaynomore.backend.global.auth.OwnerArgumentResolver;
 import com.delaynomore.backend.global.error.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -32,6 +34,7 @@ class ReflectionControllerTest {
         ReflectionService reflectionService =
                 new ReflectionService(planRepository, new InMemoryReflectionRepository(), auditEventService);
         mvc = MockMvcBuilders.standaloneSetup(new ReflectionController(reflectionService))
+                .setCustomArgumentResolvers(new OwnerArgumentResolver(new InMemoryAuthRepository()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

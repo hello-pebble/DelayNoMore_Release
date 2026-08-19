@@ -20,7 +20,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @ActiveProfiles("postgres")
 @Testcontainers(disabledWithoutDocker = true)
-abstract class AbstractPostgresIntegrationTest {
+public abstract class AbstractPostgresIntegrationTest {
 
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17-alpine");
 
@@ -39,9 +39,10 @@ abstract class AbstractPostgresIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    // 각 테스트 사이 격리 — 세 테이블을 비우고 IDENTITY 시퀀스를 초기화한다(감사/계획 id 예측 가능).
+    // 각 테스트 사이 격리 — 모든 테이블을 비우고 IDENTITY 시퀀스를 초기화한다(감사/계획 id 예측 가능).
     @BeforeEach
     void truncateAll() {
-        jdbcTemplate.execute("TRUNCATE plans, reflections, audit_events RESTART IDENTITY CASCADE");
+        jdbcTemplate.execute("TRUNCATE plans, reflections, audit_events, "
+                + "challenges, challenge_participants, point_wallets, users, auth_sessions RESTART IDENTITY CASCADE");
     }
 }

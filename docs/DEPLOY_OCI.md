@@ -25,6 +25,7 @@ OCI는 **① 보안 목록(클라우드)** 과 **② 인스턴스 방화벽(OS)*
   - Source CIDR: `0.0.0.0/0`
   - IP Protocol: `TCP`
   - Destination Port Range: `80` (아래 스크립트 기본값)
+  - HTTPS 모드(`DOMAIN` 설정 시)면 `443`도 같은 방법으로 추가
 
 ### ② OS 방화벽
 - 아래 `oci-setup.sh`가 iptables 규칙을 자동으로 추가한다.
@@ -49,6 +50,11 @@ cd DelayNoMore_Release
 cat > ~/.delaynomore.env <<'EOF'
 OPENROUTER_API_KEY=sk-or-여기에_실제_키
 OPENROUTER_MODEL=qwen/qwen3.7-plus
+# HTTPS(선택) — 설정하면 Caddy 컨테이너가 함께 떠서 Let's Encrypt 인증서를 자동 발급한다.
+# Google 로그인은 https 오리진에서만 동작하므로 로그인을 쓰려면 필수.
+DOMAIN=delaynomoreapp.duckdns.org
+# Google 로그인(선택) — GCP 콘솔의 OAuth 클라이언트 ID. 미설정 시 로그인 버튼이 숨는다.
+GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
 EOF
 chmod 600 ~/.delaynomore.env
 
@@ -79,6 +85,17 @@ sudo docker ps
 curl -s http://localhost/api/v1/ai/health      # {"success":true,"data":{"connected":...},...}
 ```
 브라우저에서 **http://<VM_PUBLIC_IP>** 접속.
+
+HTTPS 모드(`DOMAIN` 설정 시):
+
+```bash
+sudo docker ps                                  # delaynomore + caddy 두 컨테이너
+curl -sI http://<도메인>                         # → 308 (HTTPS로 리다이렉트)
+curl -s https://<도메인>/api/v1/ai/health
+```
+브라우저에서 **https://<도메인>** 접속. 최초 기동 직후에는 인증서 발급에 수십 초 걸릴 수 있다
+(`sudo docker logs caddy`로 진행 확인). 인증서는 `caddy_data` 볼륨에 보존되므로 재배포해도
+재발급되지 않는다.
 
 ## 5. 운영 팁
 

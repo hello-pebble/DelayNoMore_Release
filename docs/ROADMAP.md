@@ -22,7 +22,13 @@
    최대 3건으로 합산**한다(스키마 변경 없음, 하루 평균은 최근 계획 기준, 1건이면 v0.13.0과 동일).
    목표명이 자유 텍스트라 이름을 바꾸면 합산 그룹이 갈라지는 한계가 있어, **구조적 계보
    (`source_plan_id` 컬럼)** 기반의 이름 변경에 강한 추적은 v0.14.0 후보로 남겨 둔다)
-6. 로그인과 개인별 영구 저장 (이후 HTTPS 적용)
+6. ~~로그인과 개인별 영구 저장 (이후 HTTPS 적용)~~ — **v0.22.0에서 완료** (Google 로그인(GIS
+   팝업 + tokeninfo 검증, Spring Security 미도입) + 서버 발급 세션 토큰(30일, Bearer 헤더) +
+   로그인 시 게스트 데이터 흡수(owner re-key, 멱등) + HTTPS(Caddy·Let's Encrypt). 이로써
+   v0.12.0의 알려진 간극(브라우저를 잃으면 재연결 불가)이 닫혔다. 비밀번호 인증은 Google
+   OIDC로 대체되어 불필요. 남은 것: 계정 병합·탈퇴·멀티 프로바이더는 미지원)
+   - ~~`users` 테이블 스키마~~ — **완료** (V4__users.sql — UUID PK, provider+provider_subject
+     UNIQUE, Google 1계정 1프로바이더. 세션은 V5__auth_sessions.sql)
    - ~~영구 저장(DB)~~ — **v0.12.0에서 완료** (저장소를 휘발성 인메모리 → PostgreSQL(Supabase
      관리형)로 이관. Flyway 스키마 + NamedParameterJdbcTemplate 리포지토리 + 서비스 트랜잭션으로
      계획·회고·이력이 서버 재시작 후에도 복원·누적된다. 인메모리 구현체는 롤백·단위 테스트용으로

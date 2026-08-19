@@ -3,7 +3,7 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.dto.ReflectionResponse;
 import com.delaynomore.backend.domain.plan.dto.ReflectionSaveRequest;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
-import com.delaynomore.backend.domain.plan.support.OwnerGuestId;
+import com.delaynomore.backend.global.auth.Owner;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -42,24 +42,24 @@ public class ReflectionController {
     public ApiResponse<ReflectionResponse> save(@PathVariable long planId,
                                                 @PathVariable String date,
                                                 @Valid @RequestBody ReflectionSaveRequest request,
-                                                @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId,
+                                                @Owner String owner,
                                                 @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to save reflection for plan {} on {}", planId, date);
         return ApiResponse.ok(reflectionService.save(planId, date, request,
-                OwnerGuestId.resolve(rawGuestId), sessionId));
+                owner, sessionId));
     }
 
     @Operation(summary = "특정 날짜의 회고 조회")
     @GetMapping("/{date}")
     public ApiResponse<ReflectionResponse> get(@PathVariable long planId, @PathVariable String date,
-                                               @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(reflectionService.get(planId, date, OwnerGuestId.resolve(rawGuestId)));
+                                               @Owner String owner) {
+        return ApiResponse.ok(reflectionService.get(planId, date, owner));
     }
 
     @Operation(summary = "계획의 회고 목록 조회 (날짜 내림차순)")
     @GetMapping
     public ApiResponse<List<ReflectionResponse>> getAll(@PathVariable long planId,
-                                                        @RequestHeader(value = "X-Guest-Id", required = false) String rawGuestId) {
-        return ApiResponse.ok(reflectionService.getAll(planId, OwnerGuestId.resolve(rawGuestId)));
+                                                        @Owner String owner) {
+        return ApiResponse.ok(reflectionService.getAll(planId, owner));
     }
 }

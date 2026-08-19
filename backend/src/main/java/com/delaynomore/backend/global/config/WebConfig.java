@@ -1,25 +1,45 @@
 package com.delaynomore.backend.global.config;
 
+import com.delaynomore.backend.domain.auth.repository.AuthRepository;
+import com.delaynomore.backend.global.auth.OwnerArgumentResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
+import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+
+import java.util.List;
 
 // 계획 보관함 응답에 Cache-Control: no-store를 강제한다. 응답은 소유자(X-Guest-Id)별로 갈리는
 // 개인 데이터라, 프록시·브라우저 캐시에 남아 다른 소유자에게 재사용되면 안 된다(guestId는 인증이
 // 아니라 데이터를 여는 bearer 성격이라 특히 주의). CORS는 컨트롤러 @CrossOrigin(origins="*",
 // 기본 allowedHeaders="*")가 X-Guest-Id 프리플라이트까지 허용하므로 별도 설정을 두지 않는다.
+// 소유자 해석(@Owner) 리졸버도 여기서 등록한다.
 @Configuration
+@RequiredArgsConstructor
 public class WebConfig implements WebMvcConfigurer {
+
+    private final AuthRepository authRepository;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new NoStoreInterceptor()).addPathPatterns(
                 "/api/v1/plans/**", "/api/v1/plans",
-                "/api/v1/dashboard/**", "/api/v1/ai/plan-draft-sessions/**", "/api/v1/ai/plan-draft-sessions");
+                // 챌린지 목록은 공개 모집 게시판이지만 응답에 내 잔액·참가 여부가 실려 소유자별로
+                // 갈린다 — 계획 보관함과 같은 이유로 캐시 금지.
+                "/api/v1/challenges/**", "/api/v1/challenges",
+                "/api/v1/dashboard/**", "/api/v1/ai/plan-draft-sessions/**", "/api/v1/ai/plan-draft-sessions",
+                // 로그인 응답에는 세션 토큰이 실린다 — 어떤 캐시에도 남으면 안 된다.
+                "/api/v1/auth/**");
+    }
+
+    @Override
+    public void addArgumentResolvers(List<HandlerMethodArgumentResolver> resolvers) {
+        resolvers.add(new OwnerArgumentResolver(authRepository));
     }
 
     public static class NoStoreInterceptor implements HandlerInterceptor {

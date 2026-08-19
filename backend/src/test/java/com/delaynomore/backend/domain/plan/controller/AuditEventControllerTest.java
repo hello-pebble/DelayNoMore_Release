@@ -3,6 +3,8 @@ package com.delaynomore.backend.domain.plan.controller;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.service.AuditEventService;
+import com.delaynomore.backend.domain.auth.repository.InMemoryAuthRepository;
+import com.delaynomore.backend.global.auth.OwnerArgumentResolver;
 import com.delaynomore.backend.global.error.GlobalExceptionHandler;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ class AuditEventControllerTest {
     void setUp() {
         AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         mvc = MockMvcBuilders.standaloneSetup(new AuditEventController(auditEventService))
+                .setCustomArgumentResolvers(new OwnerArgumentResolver(new InMemoryAuthRepository()))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
