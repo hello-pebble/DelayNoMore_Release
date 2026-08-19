@@ -11,16 +11,17 @@ DelayNoMore_Release/
 ├── Dockerfile  # 단일 배포: 프론트 빌드 → 백엔드 static 포함 → 하나의 jar/컨테이너
 ├── frontend/   # React 19 + Vite (순수 JS/JSX) — 심플 디자인(시스템 폰트, 무배경)
 │   └── src/
-│       ├── App.jsx                    # 닉네임 게이트 + 헤더(표시 이름·변경) + 저장소 경고 + 코치 화면 마운트
+│       ├── App.jsx                    # 시작 화면(Google 로그인/게스트 시작, v0.22.0) + 헤더(표시 이름·변경·로그인) + 저장소 경고 + 코치 화면 마운트
 │       ├── ai_engine.js               # 초안 이후 자유 대화·에이전트 대화 + 4단 폴백 (작성 슬롯은 서버 세션으로 이관, v0.19.0)
 │       ├── db_service.js              # 백엔드 호출(단일 REST 클라이언트) — 작성 세션 + 작업 명령 + Dashboard + 계획 보관함
 │       ├── session_id.js              # 브라우저 단위 익명 세션 ID(localStorage) — 변경 이력 귀속용 X-Session-Id
 │       ├── guest_id.js                # 게스트 ID(localStorage) — 데이터 소유 키, 계획 API의 X-Guest-Id
-│       ├── nickname.js                # 닉네임(localStorage) — 화면 표시용 라벨(서버로 전송 안 함)
+│       ├── nickname.js                # 닉네임(localStorage) — 표시용 라벨 + 게스트 랜덤 생성(가입 시 1회 서버 이관, v0.22.0)
+│       ├── auth.js                    # 로그인 상태(localStorage) — 세션 토큰·닉네임·이메일 (Authorization: Bearer, v0.22.0)
 │       ├── date_utils.js              # 로컬 기준 'YYYY-MM-DD' 포맷/파싱/오늘 날짜 유틸
 │       └── components/
-│           ├── chat_coach.jsx         # 하단 탭 3개: 대화 패널(+에이전트 실행 추적) · 오늘 할 일(+미완료 이월) · 체크리스트/보관함(+변경 이력) 패널
-│           └── nickname_setup.jsx     # 닉네임(표시 이름) 설정 화면(최초 진입 게이트·변경 오버레이)
+│           ├── chat_coach.jsx         # 하단 탭 4개: 대화 패널(+에이전트 실행 추적) · 오늘 할 일(+미완료 이월) · 체크리스트/보관함(+변경 이력) · 챌린지
+│           └── nickname_setup.jsx     # 닉네임(표시 이름) 변경 오버레이(v0.22.0부터 최초 진입 게이트에서는 빠짐)
 └── backend/    # Spring Boot 4.1 / Java 21 (AI 프록시 + 계획 보관함 + 정적 화면 서빙)
     └── src/main/java/.../
         ├── domain/ai/   # controller·service·client·dto — /api/v1/ai/{health,drafts,chats}(+/stream) + plan-draft-sessions
@@ -29,7 +30,10 @@ DelayNoMore_Release/
         │                #   루프는 service/AgentRunner — /api/v1/ai/agent/{tools, chats/stream}
         ├── domain/plan/ # 계획 보관함+일일 회고+변경 이력(InMemory/Jdbc 프로필 분리, 기본은 인메모리) — /api/v1/plans CRUD
         │                #   + 단일 작업 완료 명령 + /dashboard/today 읽기 모델 + reflections/audit-events
+        ├── domain/challenge/ # 정원 한정 챌린지(조건부 UPDATE 정원 판정, v0.21.0) — /api/v1/challenges
+        ├── domain/auth/ # Google 로그인 + 세션 + 게스트 흡수(re-key) (v0.22.0) — /api/v1/auth/{google,logout,config}
         └── global/      # 공통: response(ApiResponse) · error(ErrorCode, GlobalExceptionHandler) · config
+                         #   + auth(@Owner ArgumentResolver — Bearer 세션이면 회원, 없으면 게스트 폴백, v0.22.0)
 ```
 
 ## API 개요

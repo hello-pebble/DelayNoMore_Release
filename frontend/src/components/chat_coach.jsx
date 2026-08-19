@@ -2982,7 +2982,9 @@ export default function ChatCoach({ agentEnabled = false }) {
         .tab-bar {
           flex-shrink: 0;
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          /* 탭 수만큼 균등 분배 — 열 수를 고정하면 탭이 늘어날 때 두 줄로 꺾인다(v0.21.0 챌린지 추가 때 실제로 겪음). */
+          grid-auto-flow: column;
+          grid-auto-columns: 1fr;
           border-top: 1px solid var(--border);
           background: var(--bg-card);
         }

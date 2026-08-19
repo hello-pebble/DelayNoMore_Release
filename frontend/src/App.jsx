@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ChatCoach from './components/chat_coach';
 import NicknameSetup from './components/nickname_setup';
 import { checkOpenRouterConnection } from './ai_engine';
-import { getNickname, setNickname } from './nickname';
+import { getNickname, setNickname, randomGuestNickname } from './nickname';
 import { getGuestId, isGuestIdPersisted } from './guest_id';
 import { getAuth, setAuth, clearAuth } from './auth';
 import { fetchAuthConfig, postGoogleLogin, postLogout } from './db_service';
@@ -63,6 +63,9 @@ export default function App() {
   }, []);
 
   // GIS 버튼 렌더 — gsi/client 스크립트(index.html)가 async 로드라 준비될 때까지 짧게 재시도한다.
+  // 버튼 컨테이너(googleBtnRef)는 화면에 따라 다른 곳에 마운트된다: 닉네임 게이트(첫 방문)에서는
+  // 전체 폭 버튼, 게이트 통과 후 헤더에서는 아이콘형. nickname이 deps에 있는 이유 — 게이트 ↔
+  // 본화면 전환 시 컨테이너 div가 갈리므로 새 컨테이너에 다시 그려야 한다.
   useEffect(() => {
     if (!authConfig?.enabled || auth || !googleBtnRef.current) return undefined;
     let cancelled = false;
@@ -75,14 +78,15 @@ export default function App() {
         return;
       }
       gis.initialize({ client_id: authConfig.clientId, callback: handleGoogleCredential });
-      // 헤더가 좁아(모바일 480px) 아이콘형 버튼만 그린다.
-      gis.renderButton(googleBtnRef.current, { type: 'icon', shape: 'circle', size: 'medium' });
+      gis.renderButton(googleBtnRef.current, nickname
+        ? { type: 'icon', shape: 'circle', size: 'medium' } // 헤더가 좁아(모바일 480px) 아이콘형
+        : { type: 'standard', text: 'continue_with', shape: 'pill', size: 'large' }); // 게이트는 자리가 넉넉
     };
     tryRender();
     return () => {
       cancelled = true;
     };
-  }, [authConfig, auth]);
+  }, [authConfig, auth, nickname]);
 
   const handleNicknameSubmit = (value) => {
     setNickname(value); // 표시 이름 localStorage 보관
@@ -126,10 +130,63 @@ export default function App() {
     apiStatus === 'error' ? (apiReason || 'AI 미연결 (mock 사용)') :
     '연결 확인 중...';
 
-  // 최초 진입(닉네임 없음)에만 전체 화면 게이트를 렌더한다. "변경"은 오버레이(아래)로 처리해
-  // ChatCoach를 언마운트하지 않는다 — 표시 이름만 바꾸는데 대화·계획이 초기화되면 안 되므로.
-  if (!nickname) {
-    return <NicknameSetup initialValue="" onSubmit={handleNicknameSubmit} />;
+  // 최초 진입(닉네임도 로그인도 없음) 시작 화면 — 두 갈래뿐이다:
+  //   ① Google로 바로 시작(로그인 기능이 켜져 있을 때만) ② 게스트로 시작(닉네임 랜덤 자동생성).
+  // 닉네임 수동 입력 게이트(NicknameSetup)는 시작 흐름에서 빠졌다 — 이름은 시작을 막을 이유가
+  // 없고, 바꾸고 싶으면 헤더의 "변경" 오버레이가 그대로 있다. 로그인 상태면 이 화면 자체를
+  // 건너뛴다(표시는 로컬 닉네임 → 서버 닉네임 → 이메일 순 폴백).
+  if (!nickname && !auth) {
+    return (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '12px',
+          padding: '24px',
+          textAlign: 'center'
+        }}
+      >
+        <div style={{ fontSize: '24px', fontWeight: 700 }}>DelayNoMore</div>
+        <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '12px' }}>
+          AI 코치와 대화해 하루 단위 계획을 만들고,
+          <br />
+          매일 체크하며 미루기 습관을 끊습니다.
+        </div>
+
+        {authConfig?.enabled && (
+          <>
+            {/* Google 시작 — 어느 기기에서든 같은 계정이면 같은 보관함이 열린다. */}
+            <div ref={googleBtnRef} style={{ minHeight: '44px' }} />
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>또는</div>
+          </>
+        )}
+
+        <button
+          onClick={() => handleNicknameSubmit(randomGuestNickname())}
+          style={{
+            padding: '12px 24px',
+            background: 'var(--bg-card)',
+            color: 'var(--text-main)',
+            border: '1px solid var(--border)',
+            borderRadius: '999px',
+            fontSize: '14px',
+            fontWeight: 600,
+            cursor: 'pointer'
+          }}
+        >
+          게스트로 시작하기
+        </button>
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          게스트 데이터는 이 브라우저에만 연결됩니다.
+          <br />
+          닉네임은 자동 생성되며 나중에 바꿀 수 있어요.
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -160,7 +217,9 @@ export default function App() {
               whiteSpace: 'nowrap'
             }}
           >
-            {auth?.nickname || nickname}
+            {/* 이 브라우저에서 정한 닉네임이 있으면 그게 우선("변경" 버튼이 즉시 반영되도록),
+                없으면 서버 닉네임(다른 기기에서 가입한 경우) → 이메일 순 폴백. */}
+            {nickname || auth?.nickname || auth?.email || '사용자'}
           </span>
           {/* 로그인(v0.22.0) — 비로그인 + 기능 활성일 때만 GIS 아이콘 버튼 컨테이너를 그린다.
               로그인 상태면 로그아웃 버튼으로 교체된다. */}
