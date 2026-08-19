@@ -64,6 +64,17 @@ body {
   flex-direction: column;
 }
 
+/* 넓은 화면(≥1024px)에서만 폰 폭 제한을 풀어 2분할이 화면을 꽉 채우게 한다 —
+   왼쪽 대화 고정 + 오른쪽 탭 전환(칸 배치와 구분선은 chat_coach.jsx의 미디어쿼리에 있다).
+   좁은 폭은 위의 폰 컬럼 규칙 그대로다. body 배경은 480~1023 구간에서 여전히 쓰인다. */
+@media (min-width: 1024px) {
+  #root {
+    max-width: none;
+    border-left: none;
+    border-right: none;
+  }
+}
+
 /* 하단 안전영역(홈 인디케이터) 확보 — 하단 고정 요소에 붙인다. */
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
