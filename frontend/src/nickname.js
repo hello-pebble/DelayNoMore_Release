@@ -33,6 +33,17 @@ export function getNickname() {
   return inMemoryNickname;
 }
 
+// "게스트로 시작하기"용 랜덤 닉네임(약 9자) — 표시용 라벨일 뿐이라 충돌해도 무해하고(데이터
+// 격리는 게스트 ID가 한다), NICKNAME_PATTERN을 항상 통과하는 문자만 쓴다.
+export function randomGuestNickname() {
+  let suffix = '';
+  const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
+  for (let i = 0; i < 6; i++) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return `게스트${suffix}`;
+}
+
 // 검증된 값만 저장한다는 전제(호출부가 validateNickname을 먼저 통과시킨다).
 export function setNickname(nickname) {
   inMemoryNickname = nickname;

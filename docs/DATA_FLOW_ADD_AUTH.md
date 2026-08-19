@@ -73,7 +73,7 @@ sequenceDiagram
     participant B as ⚙️ 백엔드
     participant D as 🗄️ DB
 
-    U->>F: 헤더의 Google 버튼 클릭
+    U->>F: Google 버튼 클릭 (시작 화면 또는 헤더)
     F->>G: GIS 팝업 (Google이 직접 그림)
     G-->>F: credential (ID 토큰)
     Note over F,G: 비밀번호는 Google 화면에만 입력<br/>우리 서버는 구경도 못 한다
