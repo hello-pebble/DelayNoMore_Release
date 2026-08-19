@@ -20,7 +20,7 @@ import {
 } from '../ai_engine';
 import {
   createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
-  fetchReflection, fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
+  fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
   updateTaskCompletion, fetchTodayDashboard
@@ -1810,7 +1810,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       setReflections((prev) => ({ ...prev, ...nextReflections }));
       setReflectionErrors((prev) => ({ ...prev, ...nextErrors }));
     } catch {
-      setReflectionErrors((prev) => Object.fromEntries(todayGroups.map((group) => [group.planId, true])));
+      setReflectionErrors(() => Object.fromEntries(todayGroups.map((group) => [group.planId, true])));
     }
   };
 
