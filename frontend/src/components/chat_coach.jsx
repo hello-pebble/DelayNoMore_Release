@@ -463,10 +463,12 @@ export default function ChatCoach({ agentEnabled = false }) {
   const [reflectionDates, setReflectionDates] = useState({});
   const [todayDashboard, setTodayDashboard] = useState(null);
 
-  // 모바일 전용 화면의 활성 탭 — 대화 / 오늘 할 일 / 체크리스트 중 하나만 보인다.
-  // 세 패널은 항상 마운트해 두고 비활성만 숨기므로(아래 렌더 참고) 탭을 오가도 스크롤 위치와
+  // 활성 탭 — 좁은 폭에서는 이 패널 하나만, 넓은 폭에서는 대화 옆 오른쪽 칸에 이 패널이 보인다.
+  // 네 패널은 항상 마운트해 두고 비활성만 숨기므로(아래 렌더 참고) 탭을 오가도 스크롤 위치와
   // 진행 중인 스트리밍이 끊기지 않는다.
-  const [activeTab, setActiveTab] = useState('chat'); // 'chat' | 'today' | 'checklist'
+  // 초기값: 넓은 화면은 대화가 이미 왼쪽에 있으므로 오른쪽 칸을 체크리스트로 열어 둔다(빈 칸 방지).
+  const [activeTab, setActiveTab] = useState(() =>
+    window.matchMedia('(min-width: 1024px)').matches ? 'checklist' : 'chat'); // 'chat' | 'today' | 'checklist' | 'challenge'
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -2911,9 +2913,10 @@ export default function ChatCoach({ agentEnabled = false }) {
     </div>
   );
 
-  // 모바일 전용 화면 — 한 번에 한 패널만 전체 높이로 쓰고, 하단 고정 탭바로 전환한다.
-  // 세 패널을 모두 마운트한 채 비활성만 display:none으로 숨기는 이유: 언마운트하면 각 패널의
-  // 스크롤 위치가 날아가고(대화 스크롤·보관함 목록), 진행 중인 스트리밍 렌더가 끊긴다.
+  // 좁은 폭: 한 번에 한 패널만 전체 높이로 쓰고 하단 고정 탭바로 전환한다.
+  // 넓은 폭(≥1024px): 왼쪽에 대화가 상시 표시되고 오른쪽 칸만 탭으로 갈아끼운다(아래 미디어쿼리).
+  // 네 패널을 모두 마운트한 채 비활성만 숨기는 이유: 언마운트하면 각 패널의 스크롤 위치가
+  // 날아가고(대화 스크롤·보관함 목록), 진행 중인 스트리밍 렌더가 끊긴다.
   const tabs = [
     { id: 'chat', label: '대화', Icon: MessageSquare, badge: null },
     { id: 'today', label: '오늘', Icon: Sun, badge: todayTotal > 0 ? todayTotal - todayDone : 0 },
@@ -2922,11 +2925,11 @@ export default function ChatCoach({ agentEnabled = false }) {
   ];
 
   return (
-    <div className="mobile-shell">
-      <div className="mobile-pane" style={{ display: activeTab === 'chat' ? 'flex' : 'none' }}>{chatPanel}</div>
-      <div className="mobile-pane" style={{ display: activeTab === 'today' ? 'flex' : 'none' }}>{todayPanel}</div>
-      <div className="mobile-pane" style={{ display: activeTab === 'checklist' ? 'flex' : 'none' }}>{checklistPanel}</div>
-      <div className="mobile-pane" style={{ display: activeTab === 'challenge' ? 'flex' : 'none' }}><ChallengePanel /></div>
+    <div className="mobile-shell" data-tab={activeTab}>
+      <div className="mobile-pane" data-pane="chat" data-active={activeTab === 'chat'}>{chatPanel}</div>
+      <div className="mobile-pane" data-pane="today" data-active={activeTab === 'today'}>{todayPanel}</div>
+      <div className="mobile-pane" data-pane="checklist" data-active={activeTab === 'checklist'}>{checklistPanel}</div>
+      <div className="mobile-pane" data-pane="challenge" data-active={activeTab === 'challenge'}><ChallengePanel /></div>
 
       <nav className="tab-bar safe-bottom" role="tablist" aria-label="화면 전환">
         {tabs.map(({ id, label, Icon, badge }) => (
@@ -2934,6 +2937,7 @@ export default function ChatCoach({ agentEnabled = false }) {
             key={id}
             type="button"
             role="tab"
+            data-tab={id}
             aria-selected={activeTab === id}
             onClick={() => setActiveTab(id)}
           >
@@ -2953,12 +2957,18 @@ export default function ChatCoach({ agentEnabled = false }) {
           display: flex;
           flex-direction: column;
         }
-        /* 활성 패널만 남은 높이를 전부 차지한다. 숨긴 패널은 위 인라인 display:none이 이긴다. */
+        /* 활성 패널만 남은 높이를 전부 차지한다. 표시 여부를 인라인 style이 아니라 data 속성으로
+           두는 이유: 인라인은 CSS가 이길 수 없어 넓은 화면 규칙(아래 미디어쿼리)에서 대화 칸을
+           상시 표시로 덮을 수 없다. */
         .mobile-pane {
           flex: 1;
           min-height: 0;
           overflow: hidden;
+          display: none;
           flex-direction: column;
+        }
+        .mobile-pane[data-active="true"] {
+          display: flex;
         }
         /* 계획 동작 바 — 버튼 2~4개를 폭에 상관없이 한 줄에 균등 분배한다.
            아이콘은 고정, 라벨만 줄어들며(min-width:0), 가장 좁은 기기에서도 줄바꿈되지 않는다. */
@@ -3010,6 +3020,41 @@ export default function ChatCoach({ agentEnabled = false }) {
         .tab-icon {
           position: relative;
           display: flex;
+        }
+        /* ── 넓은 화면(≥1024px): 2분할 ── 왼쪽은 대화 고정, 오른쪽만 탭으로 갈아끼운다.
+           칸을 3개로 늘리지 않는 이유: 오늘·체크리스트는 내용이 겹치고 activePlanId를 공유해
+           한쪽에서 계획을 고르면 다른 쪽이 통째로 갈아끼워진다. 동시에 볼 값어치가 있는 조합은
+           대화 ↔ 나머지 하나뿐이고, 탭 개념을 유지하면 탭이 늘어도 재배치가 필요 없다. */
+        @media (min-width: 1024px) {
+          .mobile-shell {
+            display: grid;
+            /* 행을 minmax(0,1fr)로 잡아야 각 칸이 넘칠 때 셀이 늘어나지 않고 내부에서 스크롤된다. */
+            grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+            grid-template-rows: minmax(0, 1fr) auto;
+          }
+          /* 탭으로 갈아끼우는 패널들의 자리는 오른쪽 칸. 한 번에 하나만 data-active라 겹치지 않는다. */
+          .mobile-pane {
+            grid-row: 1;
+            grid-column: 2;
+          }
+          /* 대화는 상시 표시 — [data-active]와 특이도가 같고 이 블록이 뒤에 와서 이긴다(!important 불필요).
+             폭 캡 460px은 모바일 컬럼(480 - 보더)과 거의 같아 말풍선·입력바가 검증된 폭에서 동작한다. */
+          .mobile-pane[data-pane="chat"] {
+            grid-column: 1;
+            display: flex;
+            border-right: 1px solid var(--border);
+          }
+          /* 좁은 폭에서 넓히면 활성 탭이 '대화'라 오른쪽이 빈다 — 그때만 체크리스트로 채운다. */
+          .mobile-shell[data-tab="chat"] .mobile-pane[data-pane="checklist"] {
+            display: flex;
+          }
+          .tab-bar {
+            grid-column: 1 / -1;
+          }
+          /* 대화는 항상 보이므로 전환 대상이 아니다. 숨긴 버튼은 1fr 분배에서 빠져 3개가 균등해진다. */
+          .tab-bar button[data-tab="chat"] {
+            display: none;
+          }
         }
         .tab-badge {
           position: absolute;
