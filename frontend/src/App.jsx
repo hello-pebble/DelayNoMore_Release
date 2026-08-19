@@ -34,6 +34,10 @@ export default function App() {
   const [authConfig, setAuthConfig] = useState(null);
   const googleBtnRef = useRef(null);
 
+  // 마이페이지 — 헤더의 닉네임을 누르면 열린다. 계정 관련 조작(닉네임 변경·로그인·로그아웃)을
+  // 한곳에 모아 헤더에서 버튼 3개를 덜어냈다(모바일 폭 480px에 이름·버튼들이 다 들어가지 않음).
+  const [myPageOpen, setMyPageOpen] = useState(false);
+
   const handleGoogleCredential = async (response) => {
     try {
       // 현재 localStorage 닉네임을 함께 보낸다 — 최초 가입 시 서버 닉네임으로 이관된다.
@@ -63,9 +67,9 @@ export default function App() {
   }, []);
 
   // GIS 버튼 렌더 — gsi/client 스크립트(index.html)가 async 로드라 준비될 때까지 짧게 재시도한다.
-  // 버튼 컨테이너(googleBtnRef)는 화면에 따라 다른 곳에 마운트된다: 닉네임 게이트(첫 방문)에서는
-  // 전체 폭 버튼, 게이트 통과 후 헤더에서는 아이콘형. nickname이 deps에 있는 이유 — 게이트 ↔
-  // 본화면 전환 시 컨테이너 div가 갈리므로 새 컨테이너에 다시 그려야 한다.
+  // 버튼 컨테이너(googleBtnRef)는 두 곳에만 마운트된다: 시작 화면(첫 방문)과 마이페이지.
+  // deps에 nickname·myPageOpen이 있는 이유 — 화면이 갈리면 컨테이너 div가 새로 생기므로
+  // 그 새 컨테이너에 다시 그려야 한다(이전 컨테이너에 그린 버튼은 언마운트와 함께 사라짐).
   useEffect(() => {
     if (!authConfig?.enabled || auth || !googleBtnRef.current) return undefined;
     let cancelled = false;
@@ -78,15 +82,14 @@ export default function App() {
         return;
       }
       gis.initialize({ client_id: authConfig.clientId, callback: handleGoogleCredential });
-      gis.renderButton(googleBtnRef.current, nickname
-        ? { type: 'icon', shape: 'circle', size: 'medium' } // 헤더가 좁아(모바일 480px) 아이콘형
-        : { type: 'standard', text: 'continue_with', shape: 'pill', size: 'large' }); // 게이트는 자리가 넉넉
+      gis.renderButton(googleBtnRef.current,
+        { type: 'standard', text: 'continue_with', shape: 'pill', size: 'large' });
     };
     tryRender();
     return () => {
       cancelled = true;
     };
-  }, [authConfig, auth, nickname]);
+  }, [authConfig, auth, nickname, myPageOpen]);
 
   const handleNicknameSubmit = (value) => {
     setNickname(value); // 표시 이름 localStorage 보관
@@ -206,61 +209,38 @@ export default function App() {
       >
         <div style={{ fontSize: '17px', fontWeight: 700, flexShrink: 0 }}>DelayNoMore</div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)', minWidth: 0 }}>
-          <span
-            title={auth?.email || undefined}
-            style={{
-              fontWeight: 600,
-              color: 'var(--text-main)',
-              maxWidth: '84px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            {/* 이 브라우저에서 정한 닉네임이 있으면 그게 우선("변경" 버튼이 즉시 반영되도록),
-                없으면 서버 닉네임(다른 기기에서 가입한 경우) → 이메일 순 폴백. */}
-            {nickname || auth?.nickname || auth?.email || '사용자'}
-          </span>
-          {/* 로그인(v0.22.0) — 비로그인 + 기능 활성일 때만 GIS 아이콘 버튼 컨테이너를 그린다.
-              로그인 상태면 로그아웃 버튼으로 교체된다. */}
-          {!auth && authConfig?.enabled && (
-            <div ref={googleBtnRef} style={{ flexShrink: 0, height: '32px' }} />
-          )}
-          {auth && (
-            <button
-              onClick={handleLogout}
-              title="로그아웃 — 이 브라우저의 게스트 보관함으로 돌아갑니다"
-              style={{
-                padding: '0 10px',
-                minHeight: '32px',
-                flexShrink: 0,
-                background: 'var(--bg-card)',
-                color: 'var(--text-muted)',
-                border: '1px solid var(--border)',
-                borderRadius: '6px',
-                fontSize: '12px',
-                cursor: 'pointer'
-              }}
-            >
-              로그아웃
-            </button>
-          )}
+          {/* 닉네임 = 마이페이지 진입점. 계정 조작(변경·로그인·로그아웃)은 전부 그 안에 있다.
+              표시 우선순위: 이 브라우저에서 정한 닉네임 → 서버 닉네임(다른 기기 가입) → 이메일. */}
           <button
-            onClick={() => setEditingNickname(true)}
-            title="표시 이름만 바뀝니다 — 보관함 데이터는 그대로 유지됩니다"
+            type="button"
+            onClick={() => setMyPageOpen(true)}
+            title="마이페이지 — 닉네임 변경·로그인"
             style={{
-              padding: '0 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              maxWidth: '150px',
               minHeight: '32px',
-              flexShrink: 0,
+              padding: '0 10px',
               background: 'var(--bg-card)',
-              color: 'var(--text-muted)',
               border: '1px solid var(--border)',
-              borderRadius: '6px',
-              fontSize: '12px',
+              borderRadius: '999px',
               cursor: 'pointer'
             }}
           >
-            변경
+            <span
+              style={{
+                fontSize: '12px',
+                fontWeight: 600,
+                color: 'var(--text-main)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              {nickname || auth?.nickname || auth?.email || '사용자'}
+            </span>
+            <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>⚙</span>
           </button>
           {/* 상태 LED — 좁은 폭에서는 점만 두고, 누르면 아래 배너에 전체 문구가 펼쳐진다. */}
           <button
@@ -334,8 +314,135 @@ export default function App() {
       {/* 데이터 스코프는 게스트 ID(안정)라 닉네임이 바뀌어도 ChatCoach를 리마운트하지 않는다. */}
       <ChatCoach agentEnabled={agentEnabled} />
 
-      {/* "변경"은 오버레이로 — ChatCoach가 마운트된 채 위에 얹혀, 대화·계획 상태가 유지된다.
-          모바일 전용 컬럼(#root 최대 480px) 안에 맞춰 가운데 정렬한다. */}
+      {/* 마이페이지 — 헤더 닉네임으로 연다. 오버레이라 ChatCoach가 마운트된 채 위에 얹혀
+          대화·계획 상태가 유지된다(닉네임 변경 오버레이와 같은 이유). */}
+      {myPageOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.4)',
+            display: 'flex',
+            justifyContent: 'center',
+            zIndex: 40
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '480px',
+              background: 'var(--bg-card)',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <div
+              style={{
+                height: '52px',
+                flexShrink: 0,
+                padding: '0 12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                borderBottom: '1px solid var(--border)'
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setMyPageOpen(false)}
+                aria-label="닫기"
+                style={{
+                  width: '32px',
+                  minHeight: '32px',
+                  background: 'transparent',
+                  border: 'none',
+                  fontSize: '18px',
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)'
+                }}
+              >
+                ←
+              </button>
+              <div style={{ fontSize: '16px', fontWeight: 700 }}>마이페이지</div>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 16px 28px' }}>
+              {/* 프로필 — 표시 이름과 계정 상태(게스트/로그인)를 한눈에. */}
+              <div
+                style={{
+                  padding: '16px',
+                  border: '1px solid var(--border)',
+                  borderRadius: '12px',
+                  background: 'var(--bg-panel)'
+                }}
+              >
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>표시 이름</div>
+                <div style={{ fontSize: '18px', fontWeight: 700, wordBreak: 'break-all' }}>
+                  {nickname || auth?.nickname || auth?.email || '사용자'}
+                </div>
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', lineHeight: 1.5 }}>
+                  {auth
+                    ? `Google 계정으로 로그인됨${auth.email ? ` · ${auth.email}` : ''}`
+                    : '게스트 — 이 브라우저에만 데이터가 연결됩니다'}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setEditingNickname(true)}
+                style={{
+                  width: '100%',
+                  marginTop: '12px',
+                  padding: '12px',
+                  background: 'var(--bg-card)',
+                  color: 'var(--text-main)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  cursor: 'pointer'
+                }}
+              >
+                닉네임 변경
+              </button>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', lineHeight: 1.5 }}>
+                표시 이름만 바뀝니다 — 계획·회고 데이터는 그대로 유지됩니다.
+              </div>
+
+              {/* 계정 — 비로그인이면 Google 로그인, 로그인 상태면 로그아웃. */}
+              <div style={{ marginTop: '24px', borderTop: '1px solid var(--border)', paddingTop: '20px' }}>
+                {!auth && authConfig?.enabled && (
+                  <>
+                    <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>계정으로 이어서 쓰기</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '12px' }}>
+                      로그인하면 지금 이 브라우저의 계획·회고·포인트가 계정으로 옮겨지고,
+                      다른 기기에서도 같은 보관함이 열립니다.
+                    </div>
+                    <div ref={googleBtnRef} style={{ display: 'flex', justifyContent: 'center' }} />
+                  </>
+                )}
+                {auth && (
+                  <button
+                    onClick={handleLogout}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      background: 'var(--bg-card)',
+                      color: 'var(--text-muted)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '8px',
+                      fontSize: '14px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    로그아웃
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 닉네임 변경 오버레이 — 마이페이지 위에 겹쳐 뜬다(zIndex가 더 높음). */}
       {editingNickname && (
         <div
           style={{

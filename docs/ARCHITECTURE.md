@@ -11,7 +11,7 @@ DelayNoMore_Release/
 ├── Dockerfile  # 단일 배포: 프론트 빌드 → 백엔드 static 포함 → 하나의 jar/컨테이너
 ├── frontend/   # React 19 + Vite (순수 JS/JSX) — 심플 디자인(시스템 폰트, 무배경)
 │   └── src/
-│       ├── App.jsx                    # 시작 화면(Google 로그인/게스트 시작, v0.22.0) + 헤더(표시 이름·변경·로그인) + 저장소 경고 + 코치 화면 마운트
+│       ├── App.jsx                    # 시작 화면(Google 로그인/게스트 시작) + 헤더(닉네임→마이페이지·LED) + 마이페이지(닉네임 변경·로그인/로그아웃) + 저장소 경고 + 코치 화면 마운트
 │       ├── ai_engine.js               # 초안 이후 자유 대화·에이전트 대화 + 4단 폴백 (작성 슬롯은 서버 세션으로 이관, v0.19.0)
 │       ├── db_service.js              # 백엔드 호출(단일 REST 클라이언트) — 작성 세션 + 작업 명령 + Dashboard + 계획 보관함
 │       ├── session_id.js              # 브라우저 단위 익명 세션 ID(localStorage) — 변경 이력 귀속용 X-Session-Id
