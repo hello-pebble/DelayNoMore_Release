@@ -53,7 +53,7 @@ public class EvalFixtures {
             return new Prepared(owner, null, tasks);
         }
 
-        PlanResponse plan = planService.create(saveRequest(tasks), owner, "eval-session");
+        PlanResponse plan = planService.create(saveRequest(tasks), owner, "eval-session", null);
         long planId = plan.id();
 
         if (testCase.fixture() == EvalFixture.WEEK_PARTIAL_WITH_REFLECTION) {

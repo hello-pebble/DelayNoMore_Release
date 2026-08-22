@@ -1,8 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Users, Coins, Plus } from 'lucide-react';
-import { fetchChallenges, createChallenge, joinChallenge } from '../db_service';
+import { Users, Coins } from 'lucide-react';
+import { fetchChallenges, joinChallenge } from '../db_service';
 
-// Goal Challenge 패널 — 정원이 한정된 목표 챌린지의 목록·개설·참가(v0.21.0).
+// Goal Challenge 패널 — 정원이 한정된 목표 챌린지의 목록·참가(v0.21.0).
+// 개설 폼은 없다(v0.23.0): 챌린지는 사용자가 만드는 것이 아니라, 비슷한 조건(기간 + 목적)의
+// 체크리스트가 모이면 서버가 계획 고정 시점에 자동으로 연다. 화면이 하는 일은 참가뿐이다.
+//
 // 이 화면은 판정을 하지 않는다: "정원이 찼는가"를 프론트에서 미리 막지 않고 항상 서버에 요청한 뒤
 // err.code로 결과를 읽는다. 화면이 본 인원수는 이미 낡았을 수 있고(다른 사람이 방금 참가),
 // 정원 판정의 소유권은 서버의 원자 구간에 있기 때문이다(docs/CONCURRENCY.md).
@@ -15,16 +18,12 @@ const JOIN_ERROR_LABEL = {
   CHALLENGE_NOT_FOUND: '챌린지를 찾을 수 없어요. 이미 삭제되었을 수 있습니다.'
 };
 
-const EMPTY_FORM = { title: '', durationDays: 14, capacity: 5, entryFee: 100 };
-
 export default function ChallengePanel() {
   const [balance, setBalance] = useState(null);
   const [challenges, setChallenges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
   const [notice, setNotice] = useState('');
-  const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
 
   const reload = useCallback(async () => {
     try {
@@ -59,41 +58,6 @@ export default function ChallengePanel() {
     }
   };
 
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    setNotice('');
-    try {
-      await createChallenge({
-        title: form.title,
-        durationDays: Number(form.durationDays),
-        capacity: Number(form.capacity),
-        entryFee: Number(form.entryFee)
-      });
-      setForm(EMPTY_FORM);
-      setFormOpen(false);
-      reload();
-    } catch (err) {
-      setNotice(err.message);
-    }
-  };
-
-  const field = (label, key, min, max) => (
-    <label style={{ flex: 1, fontSize: '12px', color: 'var(--text-muted)' }}>
-      {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={form[key]}
-        onChange={(e) => setForm({ ...form, [key]: e.target.value })}
-        style={{
-          width: '100%', marginTop: '4px', padding: '8px 10px', fontSize: '16px',
-          border: '1px solid var(--border)', borderRadius: '8px', outline: 'none'
-        }}
-      />
-    </label>
-  );
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, background: 'var(--bg-panel)' }}>
       <div style={{
@@ -108,46 +72,6 @@ export default function ChallengePanel() {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 24px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <button
-          type="button"
-          onClick={() => setFormOpen((open) => !open)}
-          style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-            padding: '10px 0', background: 'var(--bg-card)', color: 'var(--text-muted)',
-            border: '1px dashed var(--border)', borderRadius: '10px', fontSize: '14px', cursor: 'pointer'
-          }}
-        >
-          <Plus size={15} /> 챌린지 개설
-        </button>
-
-        {formOpen && (
-          <form onSubmit={handleCreate} style={{
-            display: 'flex', flexDirection: 'column', gap: '10px', padding: '14px',
-            background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: '10px'
-          }}>
-            <input
-              value={form.title}
-              onChange={(e) => setForm({ ...form, title: e.target.value })}
-              placeholder="예: 자격증 공부 14일 챌린지"
-              style={{
-                padding: '10px 12px', fontSize: '16px', border: '1px solid var(--border)',
-                borderRadius: '8px', outline: 'none'
-              }}
-            />
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {field('기간(일)', 'durationDays', 1, 365)}
-              {field('정원(명)', 'capacity', 2, 20)}
-              {field('참가비(P)', 'entryFee', 0, 1000)}
-            </div>
-            <button type="submit" style={{
-              padding: '10px 0', background: 'var(--primary)', color: '#fff', border: 'none',
-              borderRadius: '8px', fontSize: '15px', fontWeight: 600, cursor: 'pointer'
-            }}>
-              개설하기
-            </button>
-          </form>
-        )}
-
         {notice && (
           <div style={{
             padding: '10px 12px', fontSize: '13px', lineHeight: 1.5, borderRadius: '8px',
@@ -161,7 +85,7 @@ export default function ChallengePanel() {
 
         {!loading && challenges.length === 0 && (
           <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.6, padding: '24px 0', textAlign: 'center' }}>
-            아직 열린 챌린지가 없어요.<br />첫 챌린지를 개설해 보세요.
+            아직 열린 챌린지가 없어요.<br />비슷한 목표·기간의 체크리스트가 모이면<br />챌린지가 자동으로 열려요.
           </div>
         )}
 

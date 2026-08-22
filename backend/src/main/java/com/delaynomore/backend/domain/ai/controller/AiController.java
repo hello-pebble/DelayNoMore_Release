@@ -76,7 +76,9 @@ public class AiController {
     @PostMapping("/drafts")
     public ApiResponse<Object> createDraft(@Valid @RequestBody AiDraftRequest request) {
         log.info("Received request for draft");
-        return ApiResponse.ok(aiService.createDraft(request));
+        // 카테고리는 응답에 싣지 않는다 — 이 레거시 엔드포인트의 계약(날짜맵)을 그대로 두기 위해서다.
+        // 카테고리를 쓰는 경로(초안 세션)는 서비스를 직접 부른다.
+        return ApiResponse.ok(aiService.createDraft(request).plan());
     }
 
     @Operation(summary = "계획 초안 생성 (SSE 스트리밍)")

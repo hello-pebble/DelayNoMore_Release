@@ -94,8 +94,10 @@ public class WorkloadRecommendationService {
         Map<String, Object> tasks;
         boolean aiUsed;
         try {
-            Object generated = aiService.createDraft(AiDraftRequest.fromSource(source, selectedTasksPerDay));
-            tasks = toTaskObjects(asMap(generated));   // {날짜:[문자열]} → {날짜:[{id,content,completed}]}
+            // 카테고리는 여기서 쓰지 않는다 — 후속 계획은 원본 계획의 목적을 그대로 잇고(confirm 참조),
+            // 승인은 이 호출과 다른 요청이라 값을 들고 다닐 자리도 없다.
+            tasks = toTaskObjects(aiService.createDraft(
+                    AiDraftRequest.fromSource(source, selectedTasksPerDay)).plan());
             aiUsed = true;
         } catch (BusinessException e) {
             // AI_UPSTREAM_ERROR(키 미설정·업스트림 오류) 또는 AI_RESPONSE_INVALID(정확개수 불일치) —
@@ -116,7 +118,8 @@ public class WorkloadRecommendationService {
                 source.goalName(), source.duration(), source.dailyHours(), source.currentLevel(),
                 body.tasks(), PlanStatus.DRAFT.name(), null, null, endDate, Instant.now().toString());
         // 한도 검사·synchronized·PLAN_CREATED는 PlanService.create를 그대로 재사용(수정 없음).
-        PlanResponse saved = planService.create(request, owner, sessionId);
+        // 후속 계획은 같은 목표의 연장이므로 원본의 카테고리를 승계한다 — 다시 분류할 이유가 없다.
+        PlanResponse saved = planService.create(request, owner, sessionId, source.category());
         auditEventService.recordRecommendationDecision(saved.id(), owner,
                 body.selectedTasksPerDay(), body.recommendedTasksPerDay(), body.accepted(), sessionId);
         auditEventService.recordPlanCreatedFromRecommendation(saved.id(), owner, source.id(),

@@ -1,8 +1,11 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
+import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
@@ -37,7 +40,8 @@ class PlanServiceTest {
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
-            auditEventService);
+            auditEventService,
+                new ChallengeService(new InMemoryChallengeRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(
@@ -62,9 +66,34 @@ class PlanServiceTest {
 
     // 생성 → 고정 PUT을 거쳐 CONFIRMED 상태의 계획을 만든다(프론트의 "계획 저장(고정)" 경로 재현).
     private PlanResponse createConfirmedPlan() {
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         return planService.update(saved.id(),
                 confirmedRequest("토익 900", tasksOf(false), "CONFIRMED", CONFIRMED_AT, 3, "2026-07-18"), OWNER, null);
+    }
+
+    @Test
+    void update_카테고리를_보존한다() {
+        // 카테고리는 클라이언트가 보내지 않는 서버 소유 값이라, update가 잇지 않으면 대화로 계획을
+        // 한 번 고칠 때마다 조용히 null이 된다 — 그러면 챌린지 조건도 함께 사라진다.
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, "어학");
+        assertThat(planRepository.findById(saved.id()).orElseThrow().conditionKey()).isEqualTo("어학:7");
+
+        planService.update(saved.id(), request("토익 900점 달성"), OWNER, null);
+
+        Plan updated = planRepository.findById(saved.id()).orElseThrow();
+        assertThat(updated.category()).isEqualTo("어학");
+        assertThat(updated.conditionKey()).isEqualTo("어학:7");
+    }
+
+    @Test
+    void 전이와_이월도_카테고리를_잃지_않는다() {
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, "어학");
+
+        planService.confirm(saved.id(), OWNER, null);
+        assertThat(planRepository.findById(saved.id()).orElseThrow().category()).isEqualTo("어학");
+
+        planService.complete(saved.id(), OWNER, null);
+        assertThat(planRepository.findById(saved.id()).orElseThrow().category()).isEqualTo("어학");
     }
 
     @Test
@@ -73,7 +102,7 @@ class PlanServiceTest {
         PlanSaveRequest request = request("토익 900");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then
         assertThat(saved.id()).isPositive();
@@ -97,7 +126,7 @@ class PlanServiceTest {
                 null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then — 완료율 계산은 서버 소유
         assertThat(saved.progress()).isEqualTo(new PlanResponse.Progress(2, 5));
@@ -113,7 +142,7 @@ class PlanServiceTest {
                 null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then — 비정상 날짜는 0건 취급, 정상 날짜만 집계
         assertThat(saved.progress()).isEqualTo(new PlanResponse.Progress(1, 1));
@@ -132,7 +161,7 @@ class PlanServiceTest {
                 null, null, "2099-01-01", "2026-07-18", "2026-07-16T00:00:00Z");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then — 서버가 tasks 최초 날짜 키로 산출(클라이언트 startDate 무시)
         assertThat(saved.startDate()).isEqualTo("2026-07-16");
@@ -147,7 +176,7 @@ class PlanServiceTest {
                 null, null, "2026-07-16", "2026-07-18", "2026-07-16T00:00:00Z");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then — span(07-16, 07-18) = 3
         assertThat(saved.duration()).isEqualTo(3);
@@ -162,7 +191,7 @@ class PlanServiceTest {
                 null, null, "2026-07-16", "2026-07-16", "2026-07-16T00:00:00Z");
 
         // when
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // then
         assertThat(saved.duration()).isEqualTo(1);
@@ -171,7 +200,7 @@ class PlanServiceTest {
     @Test
     void update_startDate불변_클라이언트값무시() {
         // given — 생성 시 startDate=2026-07-16, 이후 클라이언트가 다른 값을 보내도 보존
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         PlanSaveRequest updateRequest = new PlanSaveRequest("토익 900", 3, 2, "완전 초보",
                 saved.tasks(), null, null, "2000-01-01", "2026-07-18", saved.createdAt());
 
@@ -185,7 +214,7 @@ class PlanServiceTest {
     @Test
     void update_duration재산출_클라이언트값무시() {
         // given — endDate를 07-20으로 늘리고 어긋난 duration(99)을 보낸다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         PlanSaveRequest updateRequest = new PlanSaveRequest("토익 900", 99, 2, "완전 초보",
                 saved.tasks(), null, null, saved.startDate(), "2026-07-20", saved.createdAt());
 
@@ -199,7 +228,7 @@ class PlanServiceTest {
     // 보관 개수 한도 테스트용 시딩 — 리포지토리에 직접 저장해 감사 이벤트(PLAN_CREATED)를 남기지
     // 않는다. 일일 생성 한도(5) < 보관 한도(10)라, create로 채우면 일일 한도에 먼저 걸린다.
     private void seedPlan(String goalName, String owner) {
-        planRepository.save(request(goalName).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, owner));
+        planRepository.save(request(goalName).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, owner, null));
     }
 
     @Test
@@ -211,11 +240,11 @@ class PlanServiceTest {
 
         // when — OWNER의 11번째는 거부되지만
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.create(request("한도 초과"), OWNER, null));
+                BusinessException.class, () -> planService.create(request("한도 초과"), OWNER, null, null));
 
         // then — 소유자당 한도(내 보관함 가득참), 다른 소유자는 여전히 생성 가능(격리 증명)
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_LIMIT_EXCEEDED);
-        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null).id()).isPositive();
+        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null, null).id()).isPositive();
     }
 
     @Test
@@ -230,7 +259,7 @@ class PlanServiceTest {
 
         // when — 자기 보관함은 0건인 신규 소유자라도 전역이 가득 차 저장 불가
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.create(request("전역 초과"), "guest-new", null));
+                BusinessException.class, () -> planService.create(request("전역 초과"), "guest-new", null, null));
 
         // then — 서버 메모리 보호(503 성격)
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_STORE_FULL);
@@ -240,37 +269,37 @@ class PlanServiceTest {
     void create_일일한도5회초과_PLAN_DAILY_LIMIT_EXCEEDED예외_타소유자는영향없음() {
         // given — OWNER가 오늘의 생성 한도(5)를 채운다
         for (int i = 0; i < 5; i++) {
-            planService.create(request("목표 " + i), OWNER, null);
+            planService.create(request("목표 " + i), OWNER, null, null);
         }
 
         // when — 6번째는 거부
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.create(request("6번째"), OWNER, null));
+                BusinessException.class, () -> planService.create(request("6번째"), OWNER, null, null));
 
         // then — 일일 한도(429 성격), 다른 소유자는 여전히 생성 가능(격리 증명)
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
-        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null).id()).isPositive();
+        assertThat(planService.create(request("타인 계획"), OTHER_OWNER, null, null).id()).isPositive();
     }
 
     @Test
     void create_일일한도_삭제해도카운트유지_재생성우회불가() {
         // given — 생성→삭제를 5회 반복(보관함은 항상 비어 있음)
         for (int i = 0; i < 5; i++) {
-            PlanResponse saved = planService.create(request("목표 " + i), OWNER, null);
+            PlanResponse saved = planService.create(request("목표 " + i), OWNER, null, null);
             planService.delete(saved.id(), OWNER, null);
         }
 
         // when/then — 카운트 소스는 삭제를 살아남는 감사 이력이라 6번째도 차단
         BusinessException exception = catchThrowableOfType(
-                BusinessException.class, () -> planService.create(request("우회 시도"), OWNER, null));
+                BusinessException.class, () -> planService.create(request("우회 시도"), OWNER, null, null));
         assertThat(exception.getErrorCode()).isEqualTo(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
     }
 
     @Test
     void getPlans_여러건저장_최근저장순정렬() throws InterruptedException {
         // given
-        PlanResponse first = planService.create(request("첫 번째"), OWNER, null);
-        PlanResponse second = planService.create(request("두 번째"), OWNER, null);
+        PlanResponse first = planService.create(request("첫 번째"), OWNER, null, null);
+        PlanResponse second = planService.create(request("두 번째"), OWNER, null, null);
 
         // when — 첫 번째를 다시 수정하면 savedAt이 갱신되어 목록 선두로 온다
         // (연속 호출은 같은 밀리초에 몰릴 수 있어, savedAt이 확실히 커지도록 잠깐 기다린다)
@@ -287,7 +316,7 @@ class PlanServiceTest {
     @Test
     void getPlan_존재하는ID_해당계획반환() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         PlanResponse found = planService.getPlan(saved.id(), OWNER);
@@ -321,7 +350,7 @@ class PlanServiceTest {
                         Map.of("id", "t-3", "content", "총정리", "completed", true)));
         PlanSaveRequest request = new PlanSaveRequest("토익 900", 8, 2, "완전 초보", tasks,
                 null, null, "2026-07-16", "2026-07-23", "2026-07-16T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // when
         WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id(), OWNER);
@@ -349,7 +378,7 @@ class PlanServiceTest {
                         Map.of("id", "t-4", "content", "d", "completed", true)));
         PlanSaveRequest request = new PlanSaveRequest("토익 900", 9, 2, "완전 초보", tasks,
                 null, null, "2026-07-16", "2026-07-24", "2026-07-16T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // when
         WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id(), OWNER);
@@ -371,7 +400,7 @@ class PlanServiceTest {
                         Map.of("id", "t-3", "content", "c", "completed", false)));
         PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
                 null, null, "2026-07-16", "2026-07-16", "2026-07-16T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // when
         WeeklySummaryResponse summary = planService.getWeeklySummary(saved.id(), OWNER);
@@ -394,7 +423,7 @@ class PlanServiceTest {
     @Test
     void update_존재하는계획_내용과savedAt갱신() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         PlanSaveRequest updateRequest = new PlanSaveRequest("토익 950", 5, 3, "실전 경험 있음",
                 saved.tasks(), "CONFIRMED", "2026-07-16T12:00:00Z",
                 saved.startDate(), saved.endDate(), saved.createdAt());
@@ -542,7 +571,7 @@ class PlanServiceTest {
     private PlanResponse confirmedPlanWithTask(String date, boolean completed) {
         PlanSaveRequest request = new PlanSaveRequest("토익 900", null, 2, "완전 초보",
                 taskMapOf(date, completed), null, null, date, TOMORROW, date + "T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
         return planService.confirm(saved.id(), OWNER, null);
     }
 
@@ -600,7 +629,7 @@ class PlanServiceTest {
         // given — DRAFT는 자유 수정 단계라 날짜 잠금 미적용(구조 변경도 되는데 토글만 막는 건 무의미)
         PlanSaveRequest request = new PlanSaveRequest("토익 900", null, 2, "완전 초보",
                 taskMapOf(YESTERDAY, false), null, null, YESTERDAY, TOMORROW, YESTERDAY + "T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // when
         PlanResponse updated = planService.update(saved.id(),
@@ -613,7 +642,7 @@ class PlanServiceTest {
     @Test
     void update_DRAFT계획_구조변경_허용() {
         // given — 가드는 CONFIRMED에만 걸린다(회귀 확인)
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         PlanResponse updated = planService.update(saved.id(), request("토익 990"), OWNER, null);
@@ -625,7 +654,7 @@ class PlanServiceTest {
     @Test
     void update_DRAFT에서_수정과고정이한PUT으로_허용() {
         // given — 600ms 디바운스 안에 내용 수정 + "계획 저장(고정)"이 한 PUT으로 합쳐지는 실제 시나리오
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         PlanResponse updated = planService.update(saved.id(),
@@ -641,7 +670,7 @@ class PlanServiceTest {
     @Test
     void confirm_DRAFT계획_CONFIRMED전환_서버시각발급_이력발행() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         PlanResponse confirmed = planService.confirm(saved.id(), OWNER, "session-a");
@@ -656,7 +685,7 @@ class PlanServiceTest {
     @Test
     void confirm_이미CONFIRMED_INVALID_STATUS_TRANSITION예외() {
         // given — self-loop는 전이표에 없다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
 
         // when
@@ -670,7 +699,7 @@ class PlanServiceTest {
     @Test
     void complete_CONFIRMED계획_COMPLETED전환_완료시각과진행률이력발행() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
 
         // when
@@ -688,7 +717,7 @@ class PlanServiceTest {
     @Test
     void complete_DRAFT계획_INVALID_STATUS_TRANSITION예외() {
         // given — DRAFT→COMPLETED 간선은 없다(고정을 거쳐야 완료할 수 있다)
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         BusinessException exception = catchThrowableOfType(
@@ -701,7 +730,7 @@ class PlanServiceTest {
     @Test
     void cancel_DRAFT계획_CANCELLED전환_이력발행() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         PlanResponse cancelled = planService.cancel(saved.id(), OWNER, null);
@@ -718,7 +747,7 @@ class PlanServiceTest {
     @Test
     void cancel_CONFIRMED계획_CANCELLED전환() {
         // given — 실행 중(고정) 계획도 중단할 수 있다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
 
         // when
@@ -731,7 +760,7 @@ class PlanServiceTest {
     @Test
     void 종결상태_모든전이거부_저장소원상태유지() {
         // given — COMPLETED는 나가는 간선이 없다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
         planService.complete(saved.id(), OWNER, null);
         int eventCountBefore = auditEventService.getEvents(saved.id(), OWNER).size();
@@ -751,7 +780,7 @@ class PlanServiceTest {
     @Test
     void update_종결계획_완료토글PUT도_PLAN_LOCKED예외() {
         // given — COMPLETED는 전면 잠금: CONFIRMED에서 허용되던 토글-only PUT도 거부된다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
         String confirmedAt = planService.complete(saved.id(), OWNER, null).confirmedAt();
 
@@ -770,7 +799,7 @@ class PlanServiceTest {
     @Test
     void carryOver_종결계획_PLAN_LOCKED예외() {
         // given — 이월은 구조 변경이므로 종결 상태에도 고정과 같은 판정
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         planService.cancel(saved.id(), OWNER, null);
 
         // when
@@ -784,7 +813,7 @@ class PlanServiceTest {
     @Test
     void confirm_다른소유자또는없는ID_PLAN_NOT_FOUND예외() {
         // given — 전이도 소유자 스코프: 남의 계획은 존재 자체를 숨긴다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when·then
         assertThat(catchThrowableOfType(BusinessException.class,
@@ -822,7 +851,7 @@ class PlanServiceTest {
     private PlanResponse createPlanWithTasks(Map<String, Object> tasks, Integer duration, String endDate) {
         PlanSaveRequest request = new PlanSaveRequest("토익 900", duration, 2, "완전 초보", tasks,
                 null, null, TODAY, endDate, TODAY + "T00:00:00Z");
-        return planService.create(request, OWNER, null);
+        return planService.create(request, OWNER, null, null);
     }
 
     @Test
@@ -922,7 +951,7 @@ class PlanServiceTest {
                 Map.of("id", "t-1", "content", "총정리", "completed", false)));
         PlanSaveRequest request = new PlanSaveRequest("토익 900", 1, 2, "완전 초보", tasks,
                 null, null, TODAY, TODAY, TODAY + "T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
         planService.confirm(saved.id(), OWNER, null);
 
         // when
@@ -947,7 +976,7 @@ class PlanServiceTest {
                 TODAY, List.of(Map.of("id", "t-1", "content", "오늘 미완료", "completed", false)));
         PlanSaveRequest request = new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
                 null, null, yesterday, TOMORROW, yesterday + "T00:00:00Z");
-        PlanResponse saved = planService.create(request, OWNER, null);
+        PlanResponse saved = planService.create(request, OWNER, null, null);
 
         // when
         CarryOverResponse result = planService.carryOver(saved.id(), OWNER, null);
@@ -974,7 +1003,7 @@ class PlanServiceTest {
     @Test
     void delete_존재하는계획_목록에서제거() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         planService.delete(saved.id(), OWNER, null);
@@ -1000,7 +1029,7 @@ class PlanServiceTest {
     @Test
     void getPlans_다른소유자_빈목록() {
         // given
-        planService.create(request("토익 900"), OWNER, null);
+        planService.create(request("토익 900"), OWNER, null, null);
 
         // when — 다른 닉네임으로 목록 조회
         List<PlanResponse> othersPlans = planService.getPlans(OTHER_OWNER);
@@ -1013,7 +1042,7 @@ class PlanServiceTest {
     @Test
     void getPlan_다른소유자_PLAN_NOT_FOUND예외() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         BusinessException exception = catchThrowableOfType(
@@ -1026,7 +1055,7 @@ class PlanServiceTest {
     @Test
     void update_다른소유자_PLAN_NOT_FOUND예외_저장소원상태유지() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         BusinessException exception = catchThrowableOfType(
@@ -1056,7 +1085,7 @@ class PlanServiceTest {
     @Test
     void delete_다른소유자_PLAN_NOT_FOUND예외_계획유지() {
         // given
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
 
         // when
         BusinessException exception = catchThrowableOfType(
@@ -1070,7 +1099,7 @@ class PlanServiceTest {
     @Test
     void getEvents_다른소유자_빈목록() {
         // given — 소유자에게는 PLAN_CREATED 이력이 보인다
-        PlanResponse saved = planService.create(request("토익 900"), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900"), OWNER, null, null);
         assertThat(auditEventService.getEvents(saved.id(), OWNER)).isNotEmpty();
 
         // when — 다른 닉네임으로 이력 조회
