@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
@@ -40,6 +41,8 @@ public class PlanService {
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
     private final AuditEventService auditEventService;
+    // 고정된 계획을 챌린지 자동 생성의 씨앗으로 넘기기 위한 단방향 의존 — 챌린지는 계획을 모른다.
+    private final ChallengeService challengeService;
 
     // synchronized: 두 한도 검사(count·countByOwner)와 저장(save)을 원자적으로 묶는다. 동시에
     // 생성하면 각자 검사를 통과한 뒤 저장해 상한을 넘길 수 있는데(TOCTOU), 생성 경로를 직렬화해
@@ -51,8 +54,11 @@ public class PlanService {
     // 시 count 검사가 직전 insert를 못 봐 상한을 최대 1 초과할 수 있다. 다중 서버가 범위 밖인 단일
     // 서버 데모에서는 허용 가능한 오차이며, 강화(자기호출 내부 트랜잭션 or pg_advisory_xact_lock)는
     // 다중 서버 마일스톤으로 이연한다.
+    // category는 요청 바디가 아니라 호출부가 넘긴다 — 초안 세션·추천 경로는 LLM이 판정한 값을,
+    // 레거시 POST /plans는 null을 넘기고 Plan.conditionKey()의 키워드 폴백이 받는다.
     @Transactional
-    public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId) {
+    public synchronized PlanResponse create(PlanSaveRequest request, String owner, String sessionId,
+                                            String category) {
         Instant kstDayStart = KstDates.today().atStartOfDay(KstDates.KST).toInstant();
         if (auditEventService.countPlansCreatedSince(owner, kstDayStart) >= MAX_PLANS_CREATED_PER_DAY) {
             throw new BusinessException(ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED);
@@ -68,7 +74,7 @@ public class PlanService {
         String startDate = PlanDates.minTaskKey(request.tasks());
         int duration = PlanDates.spanDays(startDate, request.endDate());
         Plan saved = planRepository.save(
-                request.toPlan(null, System.currentTimeMillis(), startDate, duration, owner));
+                request.toPlan(null, System.currentTimeMillis(), startDate, duration, owner, category));
         auditEventService.recordPlanCreated(saved, sessionId);
         return PlanResponse.from(saved);
     }
@@ -106,7 +112,10 @@ public class PlanService {
         Plan current = requireOwnedPlan(id, owner);
         String startDate = current.startDate();
         int duration = PlanDates.spanDays(startDate, request.endDate());
-        Plan updated = request.toPlan(id, System.currentTimeMillis(), startDate, duration, owner);
+        // 카테고리는 startDate와 같은 이유로 보존한다 — 클라이언트가 보내지 않는 서버 소유 값이라,
+        // 여기서 잇지 않으면 대화로 계획을 한 번 고칠 때마다 조용히 null이 된다.
+        Plan updated = request.toPlan(id, System.currentTimeMillis(), startDate, duration, owner,
+                current.category());
         // 고정·소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 조회·검사·교체 사이에 다른
         // 쓰기(예: 다른 브라우저의 고정)가 끼어들 수 없어 check-then-act 레이스가 없다.
         // (위 requireOwnedPlan은 startDate를 읽기 위한 사전 조회일 뿐, 판정은 이 원자 구간이 최종이다.)
@@ -125,6 +134,11 @@ public class PlanService {
         // 모든 변경(내용 수정·고정·완료 토글)이 이 PUT 하나로 들어오므로, 이전 상태와 diff해
         // 이벤트 종류(PLAN_CONFIRMED/TASK_*/PLAN_UPDATED)를 서버가 판별·기록한다.
         auditEventService.recordPlanUpdated(previous, updated, sessionId);
+        // PUT으로도 DRAFT→CONFIRMED 고정이 가능하므로(레거시 경로) 여기서도 씨앗을 남긴다.
+        // recordSeed가 멱등이라 confirm 엔드포인트와 겹쳐 불려도 안전하다.
+        if (!previous.isConfirmed() && updated.isConfirmed()) {
+            challengeService.onPlanConfirmed(owner, updated.conditionKey());
+        }
         return PlanResponse.from(updated);
     }
 
@@ -149,7 +163,7 @@ public class PlanService {
             return new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
                     current.dailyHours(), current.currentLevel(), mutation.tasks(), current.status(),
                     current.confirmedAt(), current.completedAt(), current.startDate(), current.endDate(),
-                    current.createdAt(), System.currentTimeMillis());
+                    current.createdAt(), System.currentTimeMillis(), current.category());
         });
         if (updated == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -240,25 +254,32 @@ public class PlanService {
     // 시각(confirmedAt·completedAt)은 서버가 발급하며(클라이언트 시각을 믿지 않음), 이력은 diff
     // 역추론 없이 전이명 그대로 발행된다(recordCarryOver와 같은 직접 발행 관례).
 
+    // 고정은 챌린지 자동 생성의 유일한 트리거다 — 비슷한 조건(기간 + 목적)의 계획이 셋 모이면
+    // 그 자리에서 챌린지가 열린다. 스케줄러를 두지 않은 이유: 조건이 채워지는 순간이 바로 여기다.
+    // 조건은 계획이 이미 들고 있는 값(conditionKey)을 그대로 넘긴다 — 분류가 두 군데서 일어나지 않게.
     @Transactional
     public PlanResponse confirm(long id, String owner, String sessionId) {
-        return transition(id, owner, PlanStatus.CONFIRMED, sessionId);
+        Plan confirmed = transition(id, owner, PlanStatus.CONFIRMED, sessionId);
+        challengeService.onPlanConfirmed(owner, confirmed.conditionKey());
+        return PlanResponse.from(confirmed);
     }
 
     @Transactional
     public PlanResponse complete(long id, String owner, String sessionId) {
-        return transition(id, owner, PlanStatus.COMPLETED, sessionId);
+        return PlanResponse.from(transition(id, owner, PlanStatus.COMPLETED, sessionId));
     }
 
     @Transactional
     public PlanResponse cancel(long id, String owner, String sessionId) {
-        return transition(id, owner, PlanStatus.CANCELLED, sessionId);
+        return PlanResponse.from(transition(id, owner, PlanStatus.CANCELLED, sessionId));
     }
 
     // 공통 전이 실행기 — 가드·판정·교체가 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼
     // check-then-act 레이스가 없다(carryOver와 같은 계약). 소유자 불일치·부재는 404로 존재를
     // 숨기고(requireOwnedPlan과 같은 기준), 전이표에 없는 전이는 INVALID_STATUS_TRANSITION(409).
-    private PlanResponse transition(long id, String owner, PlanStatus target, String sessionId) {
+    // PlanResponse가 아니라 Plan을 돌려준다 — confirm이 응답에 없는 내부 값(conditionKey)을 써야 하기
+    // 때문이다. 응답 변환은 호출부가 한 줄로 한다.
+    private Plan transition(long id, String owner, PlanStatus target, String sessionId) {
         Plan updated = planRepository.mutate(id, current -> {
             if (!owner.equals(current.owner())) {
                 throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -272,7 +293,7 @@ public class PlanService {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
         }
         auditEventService.recordTransition(updated, target, sessionId);
-        return PlanResponse.from(updated);
+        return updated;
     }
 
     // 전이 결과 조립 — 상태와 해당 전이의 타임스탬프만 바꾸고 내용(tasks 등)은 그대로 둔다.
@@ -284,7 +305,7 @@ public class PlanService {
         return new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
                 current.dailyHours(), current.currentLevel(), current.tasks(),
                 target.name(), confirmedAt, completedAt, current.startDate(), current.endDate(),
-                current.createdAt(), System.currentTimeMillis());
+                current.createdAt(), System.currentTimeMillis(), current.category());
     }
 
     // 미완료 이월 도메인 액션 — 오늘(KST) 미완료를 내일로 옮긴다. 예전엔 프론트가 계산해 PUT으로
@@ -322,7 +343,7 @@ public class PlanService {
                     current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
                     current.confirmedAt(), current.completedAt(), current.startDate(),
                     newEndDate, current.createdAt(),
-                    System.currentTimeMillis());
+                    System.currentTimeMillis(), current.category());
         });
         if (updated == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);

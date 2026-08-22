@@ -350,6 +350,8 @@ erDiagram
         text start_date "시작일"
         text end_date "종료일"
         bigint saved_at "정렬 기준"
+        text category "목적 (LLM이 초안과 함께 판정)"
+        text condition_key "어떤 조건으로 묶이나 (파생)"
     }
 
     reflections {
@@ -375,13 +377,20 @@ erDiagram
 
     challenges {
         bigint id PK "챌린지 번호"
-        text owner "개설자"
+        text owner "자동 생성분은 system"
         text title "제목"
         int duration_days "기간(일)"
         int capacity "정원"
         int entry_fee "참가비"
         int participant_count "현재 인원"
-        text created_at "개설 시각"
+        text created_at "생성 시각"
+        text condition_key "어떤 조건으로 열렸나"
+    }
+
+    challenge_seeds {
+        text condition_key PK "조건 (예: 어학:14)"
+        text owner PK "그 조건의 계획을 고정한 사람"
+        text seeded_at "언제"
     }
 
     challenge_participants {
@@ -400,10 +409,11 @@ erDiagram
 
 | 표 | 무엇을 담나 | 눈여겨볼 점 |
 | :--- | :--- | :--- |
-| `plans` | 계획 1개 = 1줄 | 할 일 목록은 `tasks` 한 칸에 **JSON 덩어리**로 통째로 들어감 |
+| `plans` | 계획 1개 = 1줄 | 할 일 목록은 `tasks` 한 칸에 **JSON 덩어리**로 통째로 들어감. `category`는 초안을 만든 LLM이 함께 고른 목적, `condition_key`는 거기서 파생된 챌린지 조건 — **앱은 이 칸을 읽지 않고 쓰기만 함**(나중에 붙일 집계용) |
 | `reflections` | 하루 마무리 회고 | 열쇠가 `(계획, 날짜)` **두 개 조합** → 하루에 1개만 |
 | `audit_events` | 모든 변경 기록 | **일부러 FK를 안 걸었음** → 계획이 지워져도 기록은 남음 |
-| `challenges` | 챌린지 모집글 | `capacity`와 `participant_count`가 경쟁의 핵심 |
+| `challenges` | 챌린지 모집글 | `capacity`와 `participant_count`가 경쟁의 핵심. `condition_key`는 **자동 생성의 근거**(v0.23.0) |
+| `challenge_seeds` | 조건별로 계획을 고정한 사람들 | 열쇠가 `(조건, 사람)` → **한 사람은 몇 번 고정해도 1명**. 3명이 모이면 챌린지가 열림 |
 | `challenge_participants` | 누가 어디 참가했나 | 열쇠가 `(챌린지, 사람)` → **중복 참가를 DB가 막음** |
 | `point_wallets` | 포인트 지갑 | 처음 쓸 때 1000P로 자동 생성 |
 
@@ -493,7 +503,7 @@ flowchart TB
         B3 --> B4["완료 / 중단"]
     end
     subgraph 경쟁하기
-        C1["챌린지 개설<br/>정원 N명"] --> C2["포인트 내고 참가"]
+        C1["비슷한 조건 3명 모임<br/>→ 챌린지 자동 개설"] --> C2["포인트 내고 참가"]
         C2 --> C3["동시에 몰려도<br/>정확히 정원까지만 ⭐"]
     end
     B2 -.->|미완료| B5["내일로 이월"]

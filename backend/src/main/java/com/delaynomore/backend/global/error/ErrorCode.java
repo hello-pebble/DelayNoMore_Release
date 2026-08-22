@@ -9,6 +9,9 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     INVALID_INPUT(HttpStatus.BAD_REQUEST, "입력값을 다시 확인해주세요."),
+    // 없어진 엔드포인트를 아직 부르는 예전 프론트(예: v0.22.0의 챌린지 개설 POST)가 500을 받지
+    // 않도록 — 서버 오류가 아니라 "그 메서드는 지원하지 않는다"가 정확한 사실이다.
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 요청 방식입니다."),
     GUEST_ID_REQUIRED(HttpStatus.BAD_REQUEST, "게스트 식별자가 필요합니다. X-Guest-Id 헤더를 확인해주세요."),
     GUEST_ID_INVALID(HttpStatus.BAD_REQUEST, "게스트 식별자 형식이 올바르지 않습니다(영문·숫자·하이픈 8~64자)."),
     AI_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY, "AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해주세요."),

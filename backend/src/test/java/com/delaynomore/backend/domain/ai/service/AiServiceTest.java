@@ -76,7 +76,7 @@ class AiServiceTest {
         AiDraftRequest request = new AiDraftRequest("토익 900점", 3, 2, "600점대", null, null, null);
 
         // when
-        Object plan = aiService.createDraft(request);
+        Object plan = aiService.createDraft(request).plan();
 
         // then — 코드펜스 제거 + 비한국어 CJK(한자) 제거까지 끝난 계획이 돌아온다.
         assertThat(plan).isEqualTo(Map.of("2026-07-16", List.of("핵심 개념 정리")));
@@ -91,7 +91,7 @@ class AiServiceTest {
         AiDraftRequest request = new AiDraftRequest("토익 900점", 2, 2, "600점대", null, null, null);
 
         // when
-        Object plan = aiService.createDraft(request);
+        Object plan = aiService.createDraft(request).plan();
 
         // then — 합성 날짜도, 프롬프트의 대상 날짜도 모두 KST 오늘부터 시작한다.
         String today = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();

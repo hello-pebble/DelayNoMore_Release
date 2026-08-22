@@ -52,6 +52,34 @@ class AiResponseParserTest {
         assertThat(e.getErrorCode()).isEqualTo(ErrorCode.AI_RESPONSE_INVALID);
     }
 
+    // === 목적 카테고리(extractCategory) — 초안과 같은 응답에 형제 키로 실려 온다 ===
+
+    @Test
+    void extractCategory_목록에_있는_라벨만_받아들인다() {
+        assertThat(parser.extractCategory(Map.of("category", "어학"))).contains("어학");
+        assertThat(parser.extractCategory(Map.of("category", " 요리 "))).contains("요리"); // 앞뒤 공백 허용
+        assertThat(parser.extractCategory(Map.of("category", "기타"))).isEmpty();          // 모델의 탈출구
+        assertThat(parser.extractCategory(Map.of("category", "영어공부"))).isEmpty();      // 목록 밖 환각
+        assertThat(parser.extractCategory(Map.of("category", 7))).isEmpty();               // 문자열이 아님
+        assertThat(parser.extractCategory(Map.of("2026-07-20", List.of("할 일")))).isEmpty(); // 키 없음
+        assertThat(parser.extractCategory(List.of("배열"))).isEmpty();
+    }
+
+    @Test
+    void category_키가_있어도_날짜맵_정규화_결과는_그대로다() {
+        // 이 테스트가 형제 키 방식의 근거다 — 카테고리를 요구해도 계획 파싱 경로는 무변경이어야 한다.
+        Map<String, Object> parsed = new java.util.LinkedHashMap<>();
+        parsed.put("category", "어학");
+        parsed.put("2026-07-20", List.of("핵심 개념 정리하기"));
+        parsed.put("2026-07-21", List.of("예제 풀이"));
+
+        Map<String, Object> plan = parser.normalizeDraftPlan(parsed, START);
+
+        // category는 날짜 키 집합에도, 위치 기반 재키잉 판정(allDates)에도 끼어들지 않는다.
+        assertThat(plan).containsOnlyKeys("2026-07-20", "2026-07-21");
+        assertThat(plan.get("2026-07-20")).isEqualTo(List.of("핵심 개념 정리하기"));
+    }
+
     // === 초안 날짜 키 정규화(normalizeDraftPlan) — LLM이 계약을 어긴 출력도 날짜 맵으로 강제 ===
 
     private static final java.time.LocalDate START = java.time.LocalDate.of(2026, 7, 19);

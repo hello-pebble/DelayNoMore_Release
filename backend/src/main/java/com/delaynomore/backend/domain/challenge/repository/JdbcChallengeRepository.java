@@ -56,19 +56,26 @@ public class JdbcChallengeRepository implements ChallengeRepository {
     @Override
     public Challenge save(Challenge challenge) {
         String sql = """
-                INSERT INTO challenges (owner, title, duration_days, capacity, entry_fee, participant_count, created_at)
-                VALUES (:owner, :title, :durationDays, :capacity, :entryFee, :participantCount, :createdAt)
+                INSERT INTO challenges (owner, title, duration_days, capacity, entry_fee, participant_count,
+                                        created_at, condition_key)
+                VALUES (:owner, :title, :durationDays, :capacity, :entryFee, :participantCount,
+                        :createdAt, :conditionKey)
                 RETURNING id
                 """;
-        Long id = jdbc.queryForObject(sql, new MapSqlParameterSource()
+        Long id = jdbc.queryForObject(sql, params(challenge), Long.class);
+        return challenge.withId(id);
+    }
+
+    private static MapSqlParameterSource params(Challenge challenge) {
+        return new MapSqlParameterSource()
                 .addValue("owner", challenge.owner())
                 .addValue("title", challenge.title())
                 .addValue("durationDays", challenge.durationDays())
                 .addValue("capacity", challenge.capacity())
                 .addValue("entryFee", challenge.entryFee())
                 .addValue("participantCount", challenge.participantCount())
-                .addValue("createdAt", challenge.createdAt()), Long.class);
-        return challenge.withId(id);
+                .addValue("createdAt", challenge.createdAt())
+                .addValue("conditionKey", challenge.conditionKey());
     }
 
     @Override
@@ -143,6 +150,41 @@ public class JdbcChallengeRepository implements ChallengeRepository {
         return findById(challengeId).orElseThrow(() -> new BusinessException(ErrorCode.CHALLENGE_NOT_FOUND));
     }
 
+    // 씨앗 등록 — 복합 PK(condition_key, owner)가 "같은 사람 중복 카운트"를 DB에서 막는다.
+    // ON CONFLICT DO NOTHING이라 재고정·동시 고정에도 예외 없이 멱등하다(계획 고정 트랜잭션을
+    // 오염시키지 않는 것이 계약이다).
+    @Override
+    public int recordSeed(String conditionKey, String owner, String seededAt) {
+        jdbc.update("""
+                INSERT INTO challenge_seeds (condition_key, owner, seeded_at)
+                VALUES (:conditionKey, :owner, :seededAt)
+                ON CONFLICT (condition_key, owner) DO NOTHING
+                """, new MapSqlParameterSource()
+                .addValue("conditionKey", conditionKey)
+                .addValue("owner", owner)
+                .addValue("seededAt", seededAt));
+        Integer count = jdbc.queryForObject(
+                "SELECT count(*) FROM challenge_seeds WHERE condition_key = :conditionKey",
+                new MapSqlParameterSource("conditionKey", conditionKey), Integer.class);
+        return count == null ? 0 : count;
+    }
+
+    // 조건별 생성 — 정원 판정과 같은 원칙이다. "같은 조건의 모집 중 챌린지가 있나?"를 자바에서
+    // 확인하고 INSERT하면 그 사이가 열려 동시 고정 두 건이 같은 챌린지를 둘 만든다(TOCTOU).
+    // 판정은 부분 UNIQUE 인덱스(uq_challenges_open_condition, WHERE participant_count < capacity)가
+    // 단독으로 하고, 충돌은 ON CONFLICT DO NOTHING으로 흡수한다. 인덱스의 WHERE 덕분에 정원이 찬
+    // 챌린지는 인덱스에서 빠져 같은 조건의 다음 챌린지가 열릴 수 있다.
+    @Override
+    public void createIfNoOpenCondition(Challenge challenge) {
+        jdbc.update("""
+                INSERT INTO challenges (owner, title, duration_days, capacity, entry_fee, participant_count,
+                                        created_at, condition_key)
+                VALUES (:owner, :title, :durationDays, :capacity, :entryFee, :participantCount,
+                        :createdAt, :conditionKey)
+                ON CONFLICT DO NOTHING
+                """, params(challenge));
+    }
+
     private void ensureWallet(String owner) {
         jdbc.update("""
                 INSERT INTO point_wallets (owner, balance) VALUES (:owner, :initial)
@@ -159,6 +201,7 @@ public class JdbcChallengeRepository implements ChallengeRepository {
                 rs.getInt("capacity"),
                 rs.getInt("entry_fee"),
                 rs.getInt("participant_count"),
-                rs.getString("created_at"));
+                rs.getString("created_at"),
+                rs.getString("condition_key"));
     }
 }

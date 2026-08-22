@@ -22,12 +22,50 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     @Autowired
     private ReflectionRepository reflectionRepository;
 
+    // 베이스 클래스의 JdbcTemplate은 private이라 여기서 따로 받는다 — 읽지 않는 컬럼을 SQL로 확인한다.
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     private static Plan draft(String owner, String goal, long savedAt) {
         Map<String, Object> tasks = Map.of(
                 "2026-07-21", List.of(Map.of("id", "t1", "content", "1강 수강", "completed", true)),
                 "2026-07-22", List.of(Map.of("id", "t2", "content", "2강 수강", "completed", false)));
         return new Plan(null, owner, goal, 2, 3, "초급", tasks,
-                "DRAFT", null, null, "2026-07-21", "2026-07-22", "2026-07-21T09:00:00Z", savedAt);
+                "DRAFT", null, null, "2026-07-21", "2026-07-22", "2026-07-21T09:00:00Z", savedAt, null);
+    }
+
+    @Test
+    void 카테고리와_파생된_조건키가_컬럼에_기록된다() {
+        // condition_key는 애플리케이션이 읽지 않는 쓰기 전용 투영이라(mapPlan이 SELECT하지 않는다)
+        // 실제로 기록되는지는 SQL로만 확인할 수 있다. 나중에 붙일 집계가 이 컬럼을 읽는다.
+        Map<String, Object> tasks = Map.of(
+                "2026-07-21", List.of(Map.of("id", "t1", "content", "단어 암기", "completed", false)));
+        Plan saved = planRepository.save(new Plan(null, "guest-1", "토익 900점", 14, 2, "초급", tasks,
+                "DRAFT", null, null, "2026-07-21", "2026-08-03", "2026-07-21T09:00:00Z", 1000L, "어학"));
+
+        assertThat(columns(saved.id())).containsExactly("어학", "어학:14");
+        assertThat(planRepository.findById(saved.id()).orElseThrow().category()).isEqualTo("어학");
+
+        // 기간이 버킷을 넘어가면 다음 저장 때 조건 키도 따라 바뀐다(동기화 코드 없이).
+        planRepository.mutate(saved.id(), current -> new Plan(current.id(), current.owner(),
+                current.goalName(), 30, current.dailyHours(), current.currentLevel(), current.tasks(),
+                current.status(), null, null, current.startDate(), "2026-08-19",
+                current.createdAt(), 2000L, current.category()));
+
+        assertThat(columns(saved.id())).containsExactly("어학", "어학:30");
+    }
+
+    // 카테고리가 없으면 목표명 키워드 폴백이 조건 키를 만든다(레거시 계획·mock 폴백 경로).
+    @Test
+    void 카테고리가_없어도_목표명_폴백으로_조건키가_기록된다() {
+        Plan saved = planRepository.save(draft("guest-1", "토익 900점", 1000L));
+
+        assertThat(columns(saved.id())).containsExactly(null, "어학:7");
+    }
+
+    private List<String> columns(long id) {
+        return jdbcTemplate.queryForObject("SELECT category, condition_key FROM plans WHERE id = ?",
+                (rs, rowNum) -> java.util.Arrays.asList(rs.getString(1), rs.getString(2)), id);
     }
 
     @Test
@@ -78,7 +116,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     void update_returnsPreviousRow_andPersistsNewValues() {
         Plan saved = planRepository.save(draft("guest-1", "원래 목표", 1L));
         Plan updated = new Plan(saved.id(), "guest-1", "바뀐 목표", 2, 3, "중급",
-                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
+                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L, null);
 
         Plan previous = planRepository.update(updated, current -> { /* no guard */ });
 
@@ -90,7 +128,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     void update_whenGuardThrows_rollsBackAndRowUnchanged() {
         Plan saved = planRepository.save(draft("guest-1", "원래 목표", 1L));
         Plan attempted = new Plan(saved.id(), "guest-1", "침범 시도", 2, 3, "중급",
-                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L);
+                saved.tasks(), "DRAFT", null, null, "2026-07-21", "2026-07-22", saved.createdAt(), 2L, null);
 
         assertThatThrownBy(() -> planRepository.update(attempted, current -> {
             throw new IllegalStateException("가드 거부");
@@ -103,7 +141,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
     @Test
     void update_returnsNull_whenAbsent() {
         Plan ghost = new Plan(9999L, "guest-1", "없음", 1, 1, "초급", Map.of(),
-                "DRAFT", null, null, "2026-07-21", "2026-07-21", "x", 1L);
+                "DRAFT", null, null, "2026-07-21", "2026-07-21", "x", 1L, null);
         assertThat(planRepository.update(ghost, current -> { })).isNull();
     }
 
@@ -114,7 +152,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
         Plan result = planRepository.mutate(saved.id(), current -> new Plan(
                 current.id(), current.owner(), current.goalName(), 3, current.dailyHours(),
                 current.currentLevel(), current.tasks(), current.status(), current.confirmedAt(),
-                current.completedAt(), current.startDate(), "2026-07-23", current.createdAt(), 5L));
+                current.completedAt(), current.startDate(), "2026-07-23", current.createdAt(), 5L, null));
 
         assertThat(result.duration()).isEqualTo(3);
         assertThat(result.endDate()).isEqualTo("2026-07-23");
@@ -128,7 +166,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
                 "2026-07-21", List.of(Map.of("id", "t1", "content", "1강 수강", "completed", true)));
         Plan completed = new Plan(null, "guest-1", "완료된 계획", 1, 3, "초급", tasks,
                 "COMPLETED", "2026-07-21T09:00:00Z", "2026-07-22T09:00:00Z",
-                "2026-07-21", "2026-07-21", "2026-07-21T09:00:00Z", 1L);
+                "2026-07-21", "2026-07-21", "2026-07-21T09:00:00Z", 1L, null);
 
         Plan saved = planRepository.save(completed);
 
@@ -143,7 +181,7 @@ class JdbcPlanRepositoryIT extends AbstractPostgresIntegrationTest {
         // 상태 규칙 소유권은 PlanStatus enum이지만, DB CHECK 제약(V2)이 최후 안전망으로
         // 알 수 없는 상태 문자열을 거부하는지 확인한다.
         Plan bogus = new Plan(null, "guest-1", "이상 상태", 1, 1, "초급", Map.of(),
-                "ACTIVE", null, null, "2026-07-21", "2026-07-21", "x", 1L);
+                "ACTIVE", null, null, "2026-07-21", "2026-07-21", "x", 1L, null);
 
         assertThatThrownBy(() -> planRepository.save(bogus))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);

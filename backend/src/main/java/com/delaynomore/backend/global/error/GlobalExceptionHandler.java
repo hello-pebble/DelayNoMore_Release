@@ -4,6 +4,7 @@ import com.delaynomore.backend.global.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -56,6 +57,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<Void> handleNoResourceFound(NoResourceFoundException e) {
         return ResponseEntity.notFound().build();
+    }
+
+    // 경로는 있는데 메서드가 없는 경우(예: 제거된 POST /api/v1/challenges) — 캐치올로 흘러가면
+    // 500 + 에러 로그가 되므로 여기서 405로 끊는다.
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException e) {
+        return ResponseEntity.status(ErrorCode.METHOD_NOT_ALLOWED.getStatus())
+                .body(ApiResponse.error(ErrorResponse.of(ErrorCode.METHOD_NOT_ALLOWED)));
     }
 
     @ExceptionHandler(Exception.class)

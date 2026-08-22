@@ -177,12 +177,13 @@ export const fetchTodayDashboard = () => requestJson('/dashboard/today', null, '
 
 // Goal Challenge — 정원이 한정된 목표 챌린지(v0.21.0). 목록은 소유자 스코프가 없다(공개 모집
 // 게시판)지만 응답의 balance·joined는 내 게스트 ID 기준이라 X-Guest-Id는 읽기에도 필요하다.
+// 개설 API는 없다(v0.23.0) — 챌린지는 비슷한 조건(기간 + 목적)의 체크리스트가 모이면 서버가
+// 계획 고정 시점에 자동으로 연다. 프론트가 할 수 있는 일은 목록 조회와 참가뿐이다.
 // 응답 data: { balance, challenges: [{ id, title, durationDays, capacity, entryFee,
-//              participantCount, remainingSeats, full, mine, joined, createdAt }] }
+//              participantCount, remainingSeats, full, joined, createdAt }] }
 // joinChallenge 실패는 err.code로 분기한다 — CHALLENGE_FULL(409, 마지막 자리를 남이 가져감) /
 // CHALLENGE_ALREADY_JOINED(409) / POINTS_INSUFFICIENT(400) / CHALLENGE_NOT_FOUND(404).
 export const fetchChallenges = () => requestJson('/challenges', null, 'GET');
-export const createChallenge = (payload) => requestJson('/challenges', payload);
 export const joinChallenge = (id) => requestJson(`/challenges/${id}/join`, null);
 
 // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
