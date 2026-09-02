@@ -1627,12 +1627,54 @@ export default function ChatCoach({ agentEnabled = false }) {
     currentSlot === REQUIRED_SLOTS.CURRENT_LEVEL ? LEVEL_PRESETS :
     [];
 
+  // 실행 모드 브리핑 — 고정된 계획에서 헤더 아래 한 줄로 보여줄 진행 스냅샷. 전부 이미 화면에
+  // 있는 서버 소유 값(라이브 tasks·서버 산출 endDate)에서 파생하며 LLM 호출이 없다(토큰 0).
+  const briefing = (() => {
+    if (activeStatus !== 'CONFIRMED' || !draftChecklist?.tasks) return null;
+    const { done, total } = getPlanProgress(draftChecklist.tasks);
+    const todayTasks = draftChecklist.tasks[todayStr()] || [];
+    let ddayLabel = null;
+    if (draftChecklist.endDate) {
+      const days = Math.round((Date.parse(draftChecklist.endDate) - Date.parse(todayStr())) / 86400000);
+      ddayLabel = days > 0 ? `D-${days}` : days === 0 ? 'D-Day' : '기간 종료';
+    }
+    return {
+      todayDone: todayTasks.filter((t) => t.completed).length,
+      todayTotal: todayTasks.length,
+      done,
+      total,
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+      ddayLabel
+    };
+  })();
+
   // === 대화 패널 (하단 탭: 대화) ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
       <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
         {chatHeaderLabel}
       </div>
+
+      {/* 실행 모드 브리핑 스트립 — "지금 어디까지 왔는가"를 대화 시작 전에 보여준다. 자세한
+          목록·조작은 체크리스트/오늘 탭의 몫이고 여기는 요약 한 줄만 담당한다. */}
+      {briefing && (
+        <div style={{
+          padding: '7px 12px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          gap: '14px',
+          flexWrap: 'wrap',
+          fontSize: '12px',
+          color: 'var(--text-muted)',
+          flexShrink: 0
+        }}>
+          <span>오늘 <strong style={{ color: 'var(--text-main)' }}>{briefing.todayDone}/{briefing.todayTotal}</strong></span>
+          <span>전체 <strong style={{ color: 'var(--text-main)' }}>{briefing.done}/{briefing.total}</strong> ({briefing.percent}%)</span>
+          {briefing.ddayLabel && (
+            <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{briefing.ddayLabel}</span>
+          )}
+        </div>
+      )}
 
       {/* 대화 영역 */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0 }}>
