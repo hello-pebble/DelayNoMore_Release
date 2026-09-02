@@ -52,7 +52,7 @@ class WorkloadRecommendationServiceTest {
         reflectionRepository = new InMemoryReflectionRepository();
         auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
         aiService = mock(AiService.class);
         reasonWriter = mock(RecommendationReasonWriter.class);
         service = new WorkloadRecommendationService(planRepository, reflectionRepository, auditEventService,

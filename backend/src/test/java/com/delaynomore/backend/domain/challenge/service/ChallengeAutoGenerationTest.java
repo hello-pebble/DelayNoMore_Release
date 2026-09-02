@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -17,13 +18,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ChallengeAutoGenerationTest {
 
     private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository();
-    private final ChallengeService challengeService = new ChallengeService(challengeRepository);
+    private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
+    private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
 
     // category가 있으면 그것을, 없으면(null) 목표명 키워드 폴백을 태운다.
     private void confirm(String owner, String category, String goalName, int durationDays) {
         Plan plan = new Plan(1L, owner, goalName, durationDays, 2, "초급", Map.of(), "CONFIRMED",
                 null, null, "2026-08-22", "2026-09-04", "2026-08-22T00:00:00Z", 1L, category);
         challengeService.onPlanConfirmed(owner, plan.conditionKey());
+    }
+
+    // 참가 자격(v0.25.0) — 참가자에게 같은 조건("어학:14")의 CONFIRMED 계획을 만들어 준다.
+    private void joinWithPlan(long challengeId, String owner) {
+        String now = java.time.Instant.now().toString();
+        planRepository.save(new Plan(null, owner, "토익 900점", 14, 2, "초급", Map.of(), "CONFIRMED",
+                now, null, "2026-08-22", "2026-09-04", now, System.currentTimeMillis(), "어학"));
+        challengeService.join(challengeId, owner);
     }
 
     @Test
@@ -108,7 +118,7 @@ class ChallengeAutoGenerationTest {
         confirm("guest-c-0001", "어학", "오픽 준비", 14);
         long first = challengeRepository.findAll().getFirst().id();
         for (int i = 0; i < 5; i++) {
-            challengeService.join(first, "guest-filler-" + i);
+            joinWithPlan(first, "guest-filler-" + i);
         }
 
         confirm("guest-d-0001", "어학", "토플 준비", 14);
@@ -131,7 +141,7 @@ class ChallengeAutoGenerationTest {
     void 기존_사용자_개설_챌린지는_조건_판정에_끼어들지_않는다() {
         // condition_key가 없는 레거시 행(v0.22.0 이전 개설분)이 있어도 자동 생성은 정상 동작한다.
         challengeRepository.save(new Challenge(null, "guest-legacy", "옛날 챌린지", 14, 5, 100, 0,
-                java.time.Instant.now().toString(), null));
+                java.time.Instant.now().toString(), null, null, null));
 
         confirm("guest-a-0001", "어학", "토익 900점", 14);
         confirm("guest-b-0001", "어학", "영어 회화", 14);

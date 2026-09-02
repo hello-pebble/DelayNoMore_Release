@@ -68,14 +68,14 @@ class JdbcAuthRepositoryIT extends AbstractPostgresIntegrationTest {
         String userId = authRepository.upsertUser("google", "sub-1", null, null).id();
 
         // 게스트의 계획 1건 + 챌린지 참가로 지갑 생성(1000 - 100 = 900)
-        planRepository.save(new Plan(null, guestId, "목표", 1, 1, "초급",
+        Plan guestPlan = planRepository.save(new Plan(null, guestId, "목표", 1, 1, "초급",
                 Map.of(), "DRAFT", null, null, "2026-08-19", "2026-08-19", "2026-08-19T09:00:00Z", 1L, null));
         Challenge challenge = challengeRepository.save(new Challenge(null, guestId, "같이 달리기",
-                7, 10, 100, 0, "2026-08-19T09:00:00Z", null));
-        challengeRepository.join(challenge.id(), guestId, "2026-08-19T09:10:00Z");
+                7, 10, 100, 0, "2026-08-19T09:00:00Z", null, null, null));
+        challengeRepository.join(challenge.id(), guestId, "2026-08-19T09:10:00Z", guestPlan.id());
 
         // 사용자도 같은 챌린지에 이미 참가(1000 - 100 = 900) — 흡수 시 게스트 참가 행은 버려져야 한다.
-        challengeRepository.join(challenge.id(), userId, "2026-08-19T09:20:00Z");
+        challengeRepository.join(challenge.id(), userId, "2026-08-19T09:20:00Z", guestPlan.id());
 
         authRepository.absorbGuest(userId, guestId);
 
@@ -89,7 +89,7 @@ class JdbcAuthRepositoryIT extends AbstractPostgresIntegrationTest {
                 "SELECT count(*) FROM challenge_participants WHERE challenge_id = :id",
                 new MapSqlParameterSource("id", challenge.id()), Integer.class);
         assertThat(participantRows).isEqualTo(1);
-        assertThat(challengeRepository.findJoinedChallengeIds(userId)).containsExactly(challenge.id());
+        assertThat(challengeRepository.findMyParticipations(userId).keySet()).containsExactly(challenge.id());
 
         // 지갑은 합산(900 + 900) 후 게스트 행 삭제
         assertThat(challengeRepository.balanceOf(userId)).isEqualTo(1800);

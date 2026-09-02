@@ -52,19 +52,34 @@ class ChallengeJoinConcurrencyIT extends AbstractPostgresIntegrationTest {
     private ChallengeRepository challengeRepository;
 
     @Autowired
+    private com.delaynomore.backend.domain.plan.repository.PlanRepository planRepository;
+
+    @Autowired
     private JdbcTemplate jdbc;
 
     private long openChallenge(String title) {
         return challengeRepository.save(new Challenge(null, HOST, title, 14, CAPACITY, ENTRY_FEE, 0,
-                java.time.Instant.now().toString(), null)).id();
+                java.time.Instant.now().toString(), "자격증:14", null, null)).id();
+    }
+
+    // 참가 자격(v0.25.0) — 참가자마다 같은 조건("자격증:14")의 CONFIRMED 계획을 미리 만든다.
+    // 계획 생성은 경합 대상이 아니므로 레이스 전에 끝낸다.
+    private void plan(String owner) {
+        String now = java.time.Instant.now().toString();
+        planRepository.save(new com.delaynomore.backend.domain.plan.entity.Plan(
+                null, owner, "정보처리기사 실기", 14, 2, "초급", java.util.Map.of(), "CONFIRMED",
+                now, null, "2026-09-01", "2026-09-14", now, System.currentTimeMillis(), "자격증"));
     }
 
     // 정원 CAPACITY, 이미 CAPACITY-1명이 참가해 남은 자리가 정확히 1개인 챌린지를 만든다.
     private long challengeWithOneSeatLeft() {
         long id = openChallenge("자격증 공부 14일");
         for (int i = 0; i < CAPACITY - 1; i++) {
-            challengeService.join(id, "guest-early-000" + i);
+            String early = "guest-early-000" + i;
+            plan(early);
+            challengeService.join(id, early);
         }
+        CONTENDERS.forEach(this::plan);
         assertThat(participantCount(id)).isEqualTo(CAPACITY - 1);
         return id;
     }

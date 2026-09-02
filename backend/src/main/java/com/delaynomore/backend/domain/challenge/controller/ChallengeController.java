@@ -40,10 +40,14 @@ public class ChallengeController {
 
     private final ChallengeService challengeService;
 
-    @Operation(summary = "챌린지 목록 + 내 포인트 잔액")
+    // 목록 진입이 정산의 트리거다(v0.25.0) — 이 저장소에는 스케줄러가 없어, 만기 챌린지는
+    // 누군가 목록을 보는 순간 정산된다. settleDue와 list를 컨트롤러에서 따로 호출하는 이유:
+    // 같은 빈 내부에서 부르면(self-invocation) 프록시를 안 거쳐 @Transactional이 무력화된다.
+    @Operation(summary = "챌린지 목록 + 내 포인트 잔액 (만기 챌린지 lazy 정산 포함)")
     @GetMapping
     public ApiResponse<ChallengeListResponse> list(
             @Owner String owner) {
+        challengeService.settleDue();
         return ApiResponse.ok(challengeService.list(owner));
     }
 

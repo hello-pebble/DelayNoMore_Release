@@ -46,6 +46,12 @@ public enum ErrorCode {
     CHALLENGE_ALREADY_JOINED(HttpStatus.CONFLICT, "이미 참가한 챌린지입니다."),
     // 포인트 부족 — 사용자가 (다른 챌린지를 덜 참가해서) 해소할 수 있는 조건이므로 400.
     POINTS_INSUFFICIENT(HttpStatus.BAD_REQUEST, "포인트가 부족해 참가할 수 없습니다."),
+    // 참가 자격 미달(v0.25.0) — 완주 판정에 계획 연결이 필요하므로 같은 조건의 고정된 계획이
+    // 있어야 참가할 수 있다. 사용자가 계획을 고정해서 해소할 수 있으므로 400.
+    CHALLENGE_PLAN_REQUIRED(HttpStatus.BAD_REQUEST, "같은 조건의 고정된 계획이 있어야 참가할 수 있습니다. 계획을 먼저 고정해주세요."),
+    // 정산 마감된 챌린지(v0.25.0) — 미달 환불로 마감된 챌린지는 정원이 안 찼어도 닫혀 있다.
+    // 판정은 자리 예약 UPDATE의 WHERE settled_at IS NULL이 하고, 0행 시 재조회로 사유만 고른다.
+    CHALLENGE_CLOSED(HttpStatus.CONFLICT, "이미 종료된 챌린지입니다."),
     // 세션 토큰 불일치·만료 — 401. 프론트는 이 응답을 받으면 저장된 auth를 지우고 게스트로
     // 복귀한다. 게스트로 조용히 폴백하지 않는 이유: 만료를 숨기면 이후 쓰기가 게스트 보관함에
     // 잘못 귀속되고, 사용자는 로그인돼 있다고 믿은 채 데이터가 갈라진다.
