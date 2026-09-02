@@ -503,9 +503,11 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
   // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
   const draftSessionIdRef = useRef(null); // 계획 작성 질문 순서와 입력 해석은 서버 세션이 소유한다.
-  // 잠긴 계획에서 보여줄 추천 질문 칩의 근거 — 서버 도구 카탈로그(그 상태에서 모델에게 실제로
-  // 노출되는 도구 목록). 조회 실패는 빈 배열 = 칩 없음(기능 저하일 뿐 고장이 아니다).
-  const [agentToolChips, setAgentToolChips] = useState([]);
+  // 잠긴 계획의 서버 도구 카탈로그(그 상태에서 모델에게 실제로 노출되는 도구 목록) — 추천 질문
+  // 칩과 "할 수 있는 일" 패널이 같은 조회를 공유한다. 조회 실패는 빈 배열 = 둘 다 안 보임
+  // (기능 저하일 뿐 고장이 아니다).
+  const [agentCatalog, setAgentCatalog] = useState([]);
+  const [showToolCatalog, setShowToolCatalog] = useState(false);
   const activeStatus = planStatusOf(draftChecklist);
   const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
   const isTerminal = !!draftChecklist && isTerminalStatus(activeStatus);
@@ -518,26 +520,20 @@ export default function ChatCoach({ agentEnabled = false }) {
     : isTerminal ? '회고 도우미와 대화'
     : 'AI 코치와 대화';
 
-  // 잠긴 계획으로 전환될 때 도구 카탈로그를 읽어 추천 질문 칩을 만든다. 어떤 칩이 뜰지는
-  // 서버가 노출한 도구가 정하므로(권한 표 재선언 없음), 상태가 바뀌면 칩도 자동으로 따라온다.
-  // mutating 도구는 제외 — 탭 한 번으로 계획이 바뀌는 버튼을 만들지 않는다(질문만 칩이 된다).
+  // 잠긴 계획으로 전환될 때 도구 카탈로그를 읽는다. 어떤 칩·어떤 목록이 뜰지는 서버가 노출한
+  // 도구가 정하므로(권한 표 재선언 없음), 상태가 바뀌면 화면도 자동으로 따라온다.
   useEffect(() => {
     if (!agentEnabled || !isLocked || activePlanId == null) {
-      setAgentToolChips([]);
+      setAgentCatalog([]);
       return;
     }
     let cancelled = false;
     fetchAgentTools(activePlanId)
       .then((catalog) => {
-        if (cancelled) return;
-        const questions = (catalog?.tools || [])
-          .filter((tool) => !tool.mutating)
-          .map((tool) => AGENT_TOOL_QUESTIONS[tool.name])
-          .filter(Boolean);
-        setAgentToolChips(questions);
+        if (!cancelled) setAgentCatalog(catalog?.tools || []);
       })
       .catch(() => {
-        if (!cancelled) setAgentToolChips([]);
+        if (!cancelled) setAgentCatalog([]);
       });
     return () => { cancelled = true; };
   }, [agentEnabled, isLocked, activePlanId, activeStatus]);
@@ -1648,12 +1644,85 @@ export default function ChatCoach({ agentEnabled = false }) {
     };
   })();
 
+  // 추천 질문 칩 — 카탈로그의 비수정 도구만 질문이 된다(탭 한 번으로 계획이 바뀌는 버튼을
+  // 만들지 않는다). 문구 사전(AGENT_TOOL_QUESTIONS)에 없는 도구는 칩을 만들지 않는다.
+  const agentToolChips = agentCatalog
+    .filter((tool) => !tool.mutating)
+    .map((tool) => AGENT_TOOL_QUESTIONS[tool.name])
+    .filter(Boolean);
+
   // === 대화 패널 (하단 탭: 대화) ===
   const chatPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%' }}>
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: '14px', flexShrink: 0 }}>
-        {chatHeaderLabel}
+      <div style={{
+        padding: '10px 12px',
+        borderBottom: '1px solid var(--border)',
+        fontWeight: 600,
+        fontSize: '14px',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '8px'
+      }}>
+        <span>{chatHeaderLabel}</span>
+        {agentCatalog.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowToolCatalog((prev) => !prev)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--text-muted)',
+              fontSize: '12px',
+              fontWeight: 400,
+              padding: '2px 0',
+              flexShrink: 0
+            }}
+          >
+            <Wrench size={12} />
+            도구 {agentCatalog.length}개
+            {showToolCatalog ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+        )}
       </div>
+
+      {/* 도구 카탈로그 패널 — "화면에 보이는 도구 = 모델이 실제로 받은 도구"의 증빙. 목록은
+          서버 카탈로그 그대로이고, description은 모델용 영문이라 한글 라벨과 읽기/변경 배지만
+          보여준다. */}
+      {showToolCatalog && agentCatalog.length > 0 && (
+        <div className="animate-fade-in" style={{
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '5px',
+          fontSize: '12px',
+          flexShrink: 0
+        }}>
+          <span style={{ color: 'var(--text-muted)' }}>
+            이 상태의 계획에서 에이전트가 쓸 수 있는 도구예요 — 목록에 없는 일(예: 고정된 계획 수정)은 요청해도 실행되지 않아요.
+          </span>
+          {agentCatalog.map((tool) => (
+            <span key={tool.name} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: 'var(--text-main)' }}>{agentToolLabel(tool.name)}</span>
+              <span style={{
+                fontSize: '10px',
+                padding: '1px 6px',
+                borderRadius: '999px',
+                border: '1px solid var(--border)',
+                color: tool.mutating ? 'var(--warning)' : 'var(--text-muted)'
+              }}>
+                {tool.mutating ? '변경' : '읽기'}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 실행 모드 브리핑 스트립 — "지금 어디까지 왔는가"를 대화 시작 전에 보여준다. 자세한
           목록·조작은 체크리스트/오늘 탭의 몫이고 여기는 요약 한 줄만 담당한다. */}
