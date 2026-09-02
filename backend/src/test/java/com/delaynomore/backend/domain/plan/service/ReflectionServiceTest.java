@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.ReflectionResponse;
@@ -37,7 +39,8 @@ class ReflectionServiceTest {
     private final ReflectionRepository reflectionRepository = new InMemoryReflectionRepository();
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
-    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
+    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
+                new ChallengeService(new InMemoryChallengeRepository()));
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
     // 오늘 5개 중 3개 완료된 계획을 보관한다(status 지정 가능 — CONFIRMED 회고 허용 검증용).
@@ -49,7 +52,7 @@ class ReflectionServiceTest {
                 Map.of("id", "t-4", "content", "독해 문제", "completed", false),
                 Map.of("id", "t-5", "content", "오답 노트", "completed", false)));
         return planService.create(new PlanSaveRequest("토익 900", 3, 2, "완전 초보", tasks,
-                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"), OWNER, null);
+                status, null, TODAY, TODAY, TODAY + "T00:00:00Z"), OWNER, null, null);
     }
 
     private ReflectionSaveRequest request() {
@@ -98,7 +101,7 @@ class ReflectionServiceTest {
         Map<String, Object> tasks = Map.of("2000-01-01", List.of(
                 Map.of("id", "t-1", "content", "지난 할 일", "completed", false)));
         PlanResponse plan = planService.create(new PlanSaveRequest("옛 계획", 1, 1, "완전 초보", tasks,
-                null, null, null, null, null), OWNER, null);
+                null, null, null, null, null), OWNER, null, null);
 
         // when
         ReflectionResponse saved = reflectionService.save(plan.id(), TODAY, request(), OWNER, null);

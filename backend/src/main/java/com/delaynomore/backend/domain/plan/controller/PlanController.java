@@ -60,7 +60,9 @@ public class PlanController {
                                             @Owner String owner,
                                             @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         log.info("Received request to create plan");
-        return ApiResponse.ok(planService.create(request, owner, sessionId));
+        // 카테고리는 클라이언트가 보내는 값이 아니다 — 이 레거시 경로에는 초안 LLM 판정이 없으므로
+        // null을 넘기고 Plan.conditionKey()의 목표명 키워드 폴백이 받는다.
+        return ApiResponse.ok(planService.create(request, owner, sessionId, null));
     }
 
     @Operation(summary = "보관된 계획 목록 조회 (최근 저장순 · 게스트 ID별)")

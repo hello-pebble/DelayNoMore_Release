@@ -63,14 +63,16 @@ public record PlanSaveRequest(
 
     private static final String DEFAULT_STATUS = "DRAFT";
 
-    // 서버가 산출·해석한 값(startDate·duration·owner)을 주입하는 오버로드 — 클라이언트가 보낸
+    // 서버가 산출·해석한 값(startDate·duration·owner·category)을 주입하는 오버로드 — 클라이언트가 보낸
     // startDate/duration은 무시하고(규칙 소유권은 서버) endDate·나머지 필드만 왕복시킨다.
     // owner는 요청 바디가 아니라 X-Guest-Id 헤더에서만 온다(전송 경로 단일화). PlanService가 사용한다.
-    public Plan toPlan(Long id, long savedAt, String resolvedStartDate, int resolvedDuration, String owner) {
+    // category도 요청 필드가 아니다 — 초안을 만든 LLM 호출이 판정하거나(생성) 기존 값을 잇는다(수정).
+    public Plan toPlan(Long id, long savedAt, String resolvedStartDate, int resolvedDuration, String owner,
+                       String category) {
         String resolvedStatus = (status == null || status.isBlank()) ? DEFAULT_STATUS : status;
         // completedAt은 서버 전용 필드(POST /plans/{id}/complete만 기록) — 요청 바디로는 받지 않고,
         // 이 DTO가 만들 수 있는 상태(DRAFT|CONFIRMED)에서는 불변식상 항상 null이다.
         return new Plan(id, owner, goalName, resolvedDuration, dailyHours, currentLevel, tasks,
-                resolvedStatus, confirmedAt, null, resolvedStartDate, endDate, createdAt, savedAt);
+                resolvedStatus, confirmedAt, null, resolvedStartDate, endDate, createdAt, savedAt, category);
     }
 }

@@ -23,7 +23,7 @@ class JdbcReflectionRepositoryIT extends AbstractPostgresIntegrationTest {
 
     private long newPlanId() {
         Plan saved = planRepository.save(new Plan(null, "guest-1", "목표", 1, 1, "초급",
-                Map.of(), "DRAFT", null, null, "2026-07-21", "2026-07-21", "2026-07-21T09:00:00Z", 1L));
+                Map.of(), "DRAFT", null, null, "2026-07-21", "2026-07-21", "2026-07-21T09:00:00Z", 1L, null));
         return saved.id();
     }
 

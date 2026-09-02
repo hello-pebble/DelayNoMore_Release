@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
@@ -31,7 +33,8 @@ class PlanServiceConcurrencyTest {
 
     private final PlanRepository planRepository = new InMemoryPlanRepository();
     private final PlanService planService = new PlanService(planRepository,
-            new InMemoryReflectionRepository(), new AuditEventService(new InMemoryAuditEventRepository()));
+            new InMemoryReflectionRepository(), new AuditEventService(new InMemoryAuditEventRepository()),
+                new ChallengeService(new InMemoryChallengeRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(
@@ -57,7 +60,7 @@ class PlanServiceConcurrencyTest {
                 ready.countDown();
                 try {
                     start.await();
-                    planService.create(request("목표 " + n), OWNER, null);
+                    planService.create(request("목표 " + n), OWNER, null, null);
                     success.incrementAndGet();
                 } catch (BusinessException e) {
                     if (e.getErrorCode() == ErrorCode.PLAN_DAILY_LIMIT_EXCEEDED) {
@@ -87,7 +90,7 @@ class PlanServiceConcurrencyTest {
         // delete/update 경합이지 생성 한도가 아니다.
         for (int round = 0; round < 50; round++) {
             Plan saved = planRepository.save(
-                    request("r" + round).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, OWNER));
+                    request("r" + round).toPlan(null, System.currentTimeMillis(), "2026-07-16", 3, OWNER, null));
             CountDownLatch start = new CountDownLatch(1);
 
             Thread deleter = new Thread(() -> {

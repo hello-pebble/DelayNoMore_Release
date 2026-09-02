@@ -1,6 +1,8 @@
 package com.delaynomore.backend.domain.ai.service;
 
 import com.delaynomore.backend.domain.ai.agent.AgentProfile;
+import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
+import com.delaynomore.backend.domain.challenge.support.ChallengeCondition;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -101,5 +103,19 @@ class AiPromptBuilderTest {
         assertThat(retro).contains("ended (완료/중단)");
         // 코치·전문가는 CONFIRMED 잠금 안내를 유지한다
         assertThat(builder.agentSystemPrompt(AgentProfile.DOMAIN_EXPERT, null)).contains("is fixed (고정)");
+    }
+
+    @Test
+    void 초안_프롬프트에_카테고리_목록이_그대로_실린다() {
+        // 어휘의 소유자는 ChallengeCondition 하나다 — 목록을 고치면 프롬프트가 따라 바뀌어야 하고,
+        // 프롬프트에 문자열을 따로 적어 두 곳이 벌어지는 것을 이 테스트가 막는다.
+        String system = String.valueOf(builder.draftMessages(
+                new AiDraftRequest("토익 900점", 3, 2, "초급", null, null, null))
+                .getFirst().get("content"));
+
+        assertThat(system).contains("\"category\"");
+        assertThat(system).contains(ChallengeCondition.UNCLASSIFIED);
+        assertThat(ChallengeCondition.CATEGORIES).allSatisfy(category ->
+                assertThat(system).contains(category));
     }
 }

@@ -1,7 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
-import com.delaynomore.backend.domain.challenge.dto.ChallengeCreateRequest;
 import com.delaynomore.backend.domain.challenge.dto.ChallengeResponse;
+import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -32,9 +32,15 @@ class ChallengeServiceConcurrencyTest {
     private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository);
 
+    // 개설 API가 없어졌으므로(v0.23.0) 픽스처는 저장소에 직접 넣는다 — 이 테스트가 검증하는 것은
+    // 참가의 동시성이지 챌린지가 어떻게 생기는지가 아니다.
+    private long open(String title, int capacity) {
+        return challengeRepository.save(new Challenge(null, HOST, title, 14, capacity, ENTRY_FEE, 0,
+                java.time.Instant.now().toString(), null)).id();
+    }
+
     private long openChallengeWithOneSeatLeft() {
-        long id = challengeService.create(
-                new ChallengeCreateRequest("자격증 공부 14일", 14, CAPACITY, ENTRY_FEE), HOST).id();
+        long id = open("자격증 공부 14일", CAPACITY);
         for (int i = 0; i < CAPACITY - 1; i++) {
             challengeService.join(id, "guest-early-000" + i);
         }
@@ -95,8 +101,7 @@ class ChallengeServiceConcurrencyTest {
     @Test
     void join_같은게스트가_동시중복참가_1회만성공하고_포인트도1회만차감() throws Exception {
         // 같은 사람이 참가 버튼을 연타(더블 클릭·재시도)해도 자리 1개와 참가비 1회만 소모돼야 한다.
-        long challengeId = challengeService.create(
-                new ChallengeCreateRequest("중복 참가 테스트", 7, CAPACITY, ENTRY_FEE), HOST).id();
+        long challengeId = open("중복 참가 테스트", CAPACITY);
         String clicker = "guest-click-001";
         int clicks = 8;
 
@@ -134,8 +139,7 @@ class ChallengeServiceConcurrencyTest {
         // 경합 폭을 키운 판본 — 성공 수와 최종 인원이 정확히 정원과 같아야 한다.
         int capacity = 20;
         int racers = 100;
-        long challengeId = challengeService.create(
-                new ChallengeCreateRequest("대규모 경합", 14, capacity, ENTRY_FEE), HOST).id();
+        long challengeId = open("대규모 경합", capacity);
 
         // 가상 스레드 — ready 배리어는 모든 참가자가 "동시에 대기 중"이어야 열리므로, 풀 크기가
         // 참가자 수보다 작으면 뒤쪽 작업이 시작조차 못 해 영영 열리지 않는다(교착).
@@ -185,8 +189,7 @@ class ChallengeServiceConcurrencyTest {
 
     @Test
     void 목록응답의_참가여부와_잔액이_참가결과와_일치한다() {
-        long challengeId = challengeService.create(
-                new ChallengeCreateRequest("목록 확인", 7, CAPACITY, ENTRY_FEE), HOST).id();
+        long challengeId = open("목록 확인", CAPACITY);
         String guest = "guest-view-001";
 
         challengeService.join(challengeId, guest);
@@ -195,7 +198,6 @@ class ChallengeServiceConcurrencyTest {
         assertThat(listed.balance()).isEqualTo(INITIAL_BALANCE - ENTRY_FEE);
         ChallengeResponse view = listed.challenges().getFirst();
         assertThat(view.joined()).isTrue();
-        assertThat(view.mine()).isFalse();
         assertThat(view.participantCount()).isEqualTo(1);
         assertThat(view.remainingSeats()).isEqualTo(CAPACITY - 1);
     }

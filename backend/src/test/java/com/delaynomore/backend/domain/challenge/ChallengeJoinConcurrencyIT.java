@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge;
 
-import com.delaynomore.backend.domain.challenge.dto.ChallengeCreateRequest;
+import com.delaynomore.backend.domain.challenge.entity.Challenge;
+import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.repository.jdbc.AbstractPostgresIntegrationTest;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -45,13 +46,22 @@ class ChallengeJoinConcurrencyIT extends AbstractPostgresIntegrationTest {
     @Autowired
     private ChallengeService challengeService;
 
+    // 개설 API가 없어졌으므로(v0.23.0) 픽스처는 저장소에 직접 넣는다 — 이 테스트가 검증하는 것은
+    // 참가의 동시성이지 챌린지가 어떻게 생기는지가 아니다.
+    @Autowired
+    private ChallengeRepository challengeRepository;
+
     @Autowired
     private JdbcTemplate jdbc;
 
+    private long openChallenge(String title) {
+        return challengeRepository.save(new Challenge(null, HOST, title, 14, CAPACITY, ENTRY_FEE, 0,
+                java.time.Instant.now().toString(), null)).id();
+    }
+
     // 정원 CAPACITY, 이미 CAPACITY-1명이 참가해 남은 자리가 정확히 1개인 챌린지를 만든다.
     private long challengeWithOneSeatLeft() {
-        long id = challengeService.create(
-                new ChallengeCreateRequest("자격증 공부 14일", 14, CAPACITY, ENTRY_FEE), HOST).id();
+        long id = openChallenge("자격증 공부 14일");
         for (int i = 0; i < CAPACITY - 1; i++) {
             challengeService.join(id, "guest-early-000" + i);
         }

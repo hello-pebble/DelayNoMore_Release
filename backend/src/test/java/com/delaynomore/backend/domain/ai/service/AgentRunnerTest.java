@@ -112,7 +112,7 @@ class AgentRunnerTest {
     // 서버 저장본 스텁 — 루프는 상태를 요청 바디가 아니라 여기서 읽는다.
     private void givenStoredPlan(long id, PlanStatus status, Map<String, Object> tasks) {
         Plan plan = new Plan(id, OWNER, "정보처리기사", 3, 2, "초급", tasks, status.name(),
-                null, null, "2026-07-27", "2026-07-29", "2026-07-27T00:00:00Z", 1L);
+                null, null, "2026-07-27", "2026-07-29", "2026-07-27T00:00:00Z", 1L, null);
         when(planService.getPlan(id, OWNER)).thenReturn(PlanResponse.from(plan));
     }
 

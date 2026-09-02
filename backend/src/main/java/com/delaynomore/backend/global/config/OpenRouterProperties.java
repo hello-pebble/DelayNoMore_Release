@@ -26,13 +26,10 @@ public record OpenRouterProperties(String url, String key, String model, Boolean
     }
 
     /**
-     * 스트리밍 응답 끝에 usage 청크를 요청할지(OpenAI 호환 {@code stream_options.include_usage}).
-     * 이걸 켜지 않으면 스트리밍 경로는 토큰 사용량을 <b>알 방법이 없다</b> — 비스트리밍과 달리
-     * 응답 본문에 usage가 들어오지 않기 때문이다.
-     *
-     * <p>다만 이 필드는 업스트림 모델에 따라 무시되거나 다르게 동작할 수 있으므로, 이상이 생기면
-     * 코드 변경 없이 끌 수 있게 스위치로 뒀다(tool-calling 스위치와 같은 이유). 꺼도 계측만
-     * 사라지고 스트리밍 자체는 그대로 동작한다. 값이 없으면 켜진 것으로 본다.
+     * 스트리밍 경로의 토큰 사용량 계측 스위치. v0.24.0부터 요청의 {@code stream_options} 필드는
+     * LangChain4j가 관리하므로, 이 스위치는 usage를 이상하게 내려주는 모델로 갈아끼웠을 때
+     * 코드 변경 없이 계측(로그 기록)만 끄는 탈출구로 남는다. 꺼도 스트리밍 자체는 그대로
+     * 동작한다. 값이 없으면 켜진 것으로 본다.
      */
     public boolean isStreamUsageEnabled() {
         return streamUsage == null || streamUsage;

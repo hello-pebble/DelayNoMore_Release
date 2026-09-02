@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.delaynomore'
-version = '0.22.0'
+version = '0.24.0'
 
 java {
 	toolchain {
@@ -46,6 +46,11 @@ dependencyManagement {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
+	// LLM 전송 계층(v0.24.0) — OpenAI 호환 API 호출·SSE 파싱·tool_calls 추출을 직접 구현하지 않고
+	// LangChain4j에 맡긴다. 스타터가 아니라 단품인 이유: 모델 빈이 하나뿐이고 OpenRouter 특수
+	// 파라미터(reasoning off) 주입이 필요해 자동구성이 주는 게 없다. 내부 Jackson 2는 프로젝트의
+	// Jackson 3(tools.jackson)과 패키지가 달라 충돌하지 않는다.
+	implementation 'dev.langchain4j:langchain4j-open-ai:1.17.2'
 	// Boot 4부터 RestClient 자동구성(RestClient.Builder 빈)이 별도 스타터로 분리됨
 	implementation 'org.springframework.boot:spring-boot-starter-restclient'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'

@@ -1,6 +1,7 @@
 # 동시성 — 정원 경쟁에서 데이터 정합성 지키기
 
 **대상**: Goal Challenge 참가(v0.21.0) · `POST /api/v1/challenges/{id}/join`
+**추가 대상**: 챌린지 자동 생성(v0.23.0) · `POST /api/v1/plans/{id}/confirm` → 7절
 
 이 문서는 하나의 질문에 답한다: **거의 동시에 도착한 여러 참가 요청에서, 정원 5명을 어떻게
 정확히 지키는가.**
@@ -164,6 +165,8 @@ UPDATE challenges
 | `ChallengeServiceConcurrencyTest.join_동시5건_잔여1자리_정확히1명만성공` | 인메모리 | 같은 시나리오, Docker 없이도 도는 판본 |
 | `ChallengeServiceConcurrencyTest.join_같은게스트가_동시중복참가_...` | 인메모리 | 버튼 연타 8회 → 자리 1개·참가비 1회만 소모 |
 | `ChallengeServiceConcurrencyTest.join_정원20_동시100건_...` | 인메모리 | 경합 폭을 키워도 성공 수 == 정원, 탈락자 80명 잔액 무변화 |
+| `ChallengeAutoGenerationIT.임계치를_동시에_넘겨도_같은_조건의_챌린지는_하나만_열린다` | 실제 PostgreSQL | 동시 고정 8건 → 같은 조건의 모집 중 챌린지 1건 (7절) |
+| `ChallengeAutoGenerationTest` (8건) | 인메모리 | 임계치·소유자 단위 계수·중복 생성·마감 후 재개설 |
 
 두 IT는 Testcontainers로 진짜 PostgreSQL 17을 띄운다. Docker가 없는 환경에서는
 `@Testcontainers(disabledWithoutDocker = true)`로 통째로 스킵되고 인메모리 테스트만 돈다.
@@ -173,4 +176,75 @@ cd backend && ./gradlew test --tests '*Challenge*'
 ```
 
 실서버에서 눈으로 확인하는 절차(정원을 채운 뒤 `curl`을 `&`로 동시에 던져 200 1건 / 409 4건)는
-[QA_CHECKLIST.md](QA_CHECKLIST.md)의 `F-30` 절에 있다.
+[QA_CHECKLIST.md](QA_CHECKLIST.md)의 `F-30` 절에, 자동 생성 확인 절차는 `F-32` 절에 있다.
+
+---
+
+## 7. 같은 문제의 두 번째 판본 — 챌린지 자동 생성 (v0.23.0)
+
+v0.23.0부터 챌린지는 사용자가 개설하지 않는다. 비슷한 조건(기간 버킷 + 목적 카테고리)의 계획을
+고정한 소유자가 3명 모이면 **계획 고정 시점에** 서버가 연다. 여기서 지켜야 하는 불변식은 정원과
+성격이 같다:
+
+> 같은 조건의 **모집 중** 챌린지는 언제나 최대 하나다.
+
+틀린 구현은 1절과 판박이다. "이미 있나?"를 자바에서 확인하고 없으면 INSERT하면, 확인과 삽입
+사이가 열려 동시에 임계치를 넘긴 두 고정이 같은 챌린지를 둘 만든다.
+
+```java
+// 틀림 — 확인과 삽입 사이가 열려 있다
+if (challengeRepository.findOpenByCondition(key).isEmpty()) {   // ← 둘 다 "없음"을 본다
+    challengeRepository.save(newChallenge(key));                // ← 둘 다 만든다
+}
+```
+
+**정답도 같다: 판정을 쓰기 안으로 넣는다.** 다만 이번에는 조건부 UPDATE가 아니라 조건부 인덱스다.
+
+```sql
+CREATE UNIQUE INDEX uq_challenges_open_condition
+    ON challenges (condition_key) WHERE participant_count < capacity;
+```
+
+```sql
+INSERT INTO challenges (..., condition_key) VALUES (..., :conditionKey)
+ON CONFLICT DO NOTHING;   -- 0행 = 이미 모집 중인 챌린지가 있다
+```
+
+`WHERE participant_count < capacity`가 부분 인덱스의 조건절이라는 점이 이 설계의 핵심이다.
+정원이 찬 챌린지는 **인덱스에서 스스로 빠지므로**, "마감된 조건은 다시 열릴 수 있다"는 규칙을
+애플리케이션 코드 한 줄 없이 얻는다. 인덱스에 걸린 행은 언제나 "지금 모집 중인 것"뿐이다.
+
+`condition_key`가 NULL인 행(v0.22.0 이전의 사용자 개설분)은 UNIQUE 인덱스에서 서로 충돌하지
+않는다(SQL의 NULL은 서로 같지 않다) — 레거시 행이 자동 생성을 막지 않는다.
+
+**"몇 명이 모였는가"도 같은 방식으로 센다.** 한 사람이 비슷한 계획을 셋 고정한 것은 셋이 아니라
+하나여야 하는데, 이 중복 제거 역시 애플리케이션이 아니라 복합 PK가 한다:
+
+```sql
+CREATE TABLE challenge_seeds (
+    condition_key TEXT NOT NULL,
+    owner         TEXT NOT NULL,
+    seeded_at     TEXT NOT NULL,
+    PRIMARY KEY (condition_key, owner)   -- ← 같은 사람의 재고정은 여기서 흡수된다
+);
+```
+
+**실패해서는 안 된다는 제약이 하나 더 있다.** 이 경로는 계획 고정 트랜잭션 안에서 실행되므로,
+자동 생성이 던진 예외는 계획 고정 자체를 롤백시킨다. "챌린지가 안 열렸다"는 계획을 못 고정할
+이유가 아니다. 그래서 두 문장 모두 `ON CONFLICT DO NOTHING`으로 충돌을 예외가 아닌 0행으로
+흡수하고, `ChallengeService.onPlanConfirmed`에는 try/catch가 없다 — 삼킬 예외 자체를 만들지
+않았기 때문에, 거기서 나는 예외는 전부 진짜 버그다.
+
+인메모리 구현은 같은 계약을 `seeds` 맵의 키 단위 원자 구간(`compute`)으로 제공한다. 조건 키 하나에
+대한 생성이 그 구간에서 직렬화되므로 "없나 확인 → 만든다" 사이가 열리지 않는다.
+
+**분류는 이 경로에 없다.** 조건 키는 계획을 만들 때 이미 정해져 계획 행에 저장돼 있고(초안 생성
+LLM 호출이 목적을 함께 판정한다, `plans.category` → `Plan.conditionKey()`), 고정 시점에는 그 값을
+그대로 넘길 뿐이다 — `ChallengeService.onPlanConfirmed(owner, conditionKey)`. 분류를 두 군데서 하지
+않는 것은 동시성 문제라기보다 정합성 문제다: 같은 계획이 시점에 따라 다른 조건으로 읽히면
+"같은 조건"이라는 말 자체가 흔들린다.
+
+스케줄러(또는 관리자 화면)를 붙일 때 필요한 것도 이 값 하나다. `plans.condition_key`를
+`GROUP BY`로 집계하면 "지금 어떤 조건에 몇 명이 모여 있나"가 나오고, 나온 키는
+`ChallengeCondition.parse`로 그대로 챌린지가 된다. 지금 트리거가 고정 시점인 이유는 단순하다 —
+조건이 채워지는 순간이 바로 그때이고, 즉시 반응이 주기적 반응보다 낫기 때문이다.

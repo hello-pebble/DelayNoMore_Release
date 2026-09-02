@@ -31,6 +31,7 @@ DelayNoMore_Release/
         ├── domain/plan/ # 계획 보관함+일일 회고+변경 이력(InMemory/Jdbc 프로필 분리, 기본은 인메모리) — /api/v1/plans CRUD
         │                #   + 단일 작업 완료 명령 + /dashboard/today 읽기 모델 + reflections/audit-events
         ├── domain/challenge/ # 정원 한정 챌린지(조건부 UPDATE 정원 판정, v0.21.0) — /api/v1/challenges
+        │                     # 개설 없음(v0.23.0) — 계획 고정 시 조건별 자동 생성(support/ChallengeCondition)
         ├── domain/auth/ # Google 로그인 + 세션 + 게스트 흡수(re-key) (v0.22.0) — /api/v1/auth/{google,logout,config}
         └── global/      # 공통: response(ApiResponse) · error(ErrorCode, GlobalExceptionHandler) · config
                          #   + auth(@Owner ArgumentResolver — Bearer 세션이면 회원, 없으면 게스트 폴백, v0.22.0)

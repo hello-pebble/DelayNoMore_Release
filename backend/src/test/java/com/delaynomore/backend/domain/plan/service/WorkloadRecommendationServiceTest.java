@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.ai.service.AiService;
 import com.delaynomore.backend.domain.ai.service.RecommendationReasonWriter;
 import com.delaynomore.backend.domain.plan.dto.AuditEventResponse;
@@ -49,7 +51,8 @@ class WorkloadRecommendationServiceTest {
         planRepository = new InMemoryPlanRepository();
         reflectionRepository = new InMemoryReflectionRepository();
         auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
-        PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
+        PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
+                new ChallengeService(new InMemoryChallengeRepository()));
         aiService = mock(AiService.class);
         reasonWriter = mock(RecommendationReasonWriter.class);
         service = new WorkloadRecommendationService(planRepository, reflectionRepository, auditEventService,
@@ -101,8 +104,8 @@ class WorkloadRecommendationServiceTest {
     void draft_AI성공_객체형tasks반환_미저장() {
         Plan plan = seedPlan("owner", 5, 3, 1);
         long before = planRepository.count();
-        when(aiService.createDraft(any())).thenReturn(new LinkedHashMap<>(Map.of(
-                "2020-02-01", List.of("할 일 A", "할 일 B"))));
+        when(aiService.createDraft(any())).thenReturn(new AiService.DraftResult(new LinkedHashMap<>(Map.of(
+                "2020-02-01", List.of("할 일 A", "할 일 B"))), "어학"));
 
         RecommendationDraftResponse draft = service.draft(plan.id(), 2, "owner");
 
@@ -174,7 +177,7 @@ class WorkloadRecommendationServiceTest {
         }
         String end = start.plusDays(days - 1).toString();
         return planRepository.save(new Plan(null, owner, goalName, days, 2, "수준", tasks,
-                "CONFIRMED", null, null, START, end, null, 0L));
+                "CONFIRMED", null, null, START, end, null, 0L, null));
     }
 
     // 확정 요청용 tasks({날짜:[{id,content,completed}]}) — days일 × perDay개, 2월 날짜(원본과 분리).

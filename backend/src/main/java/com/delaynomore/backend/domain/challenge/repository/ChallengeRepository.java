@@ -41,4 +41,17 @@ public interface ChallengeRepository {
     // 돌려준다. 실패는 BusinessException으로 던지며 그때 저장소는 변경되지 않는다:
     //   CHALLENGE_NOT_FOUND / CHALLENGE_ALREADY_JOINED / POINTS_INSUFFICIENT / CHALLENGE_FULL
     Challenge join(long challengeId, String owner, String joinedAt);
+
+    // === 자동 생성 (v0.23.0) ===
+    // 아래 둘은 계획 고정 트랜잭션 안에서 호출되므로 예외를 던지지 않는다 — 챌린지가 안 만들어지는
+    // 것은 계획 고정을 실패시킬 이유가 아니다. 중복은 전부 no-op으로 흡수한다.
+
+    // 조건 씨앗을 등록하고(같은 (조건, 소유자)는 멱등) 그 조건에 모인 서로 다른 소유자 수를 돌려준다.
+    // 한 사람이 비슷한 계획을 여러 개 고정해도 1로 세야 하므로 카운트의 단위는 계획이 아니라 소유자다.
+    int recordSeed(String conditionKey, String owner, String seededAt);
+
+    // 같은 조건의 "모집 중"(participant_count < capacity) 챌린지가 없을 때만 만든다. 이미 있으면
+    // 아무 일도 하지 않는다. 동시 고정 두 건이 각자 "없네" 하고 만드는 TOCTOU를 막는 것은 호출자의
+    // 사전 조회가 아니라 저장소의 원자 구간이다(JDBC = 부분 UNIQUE 인덱스, 인메모리 = 맵 원자 구간).
+    void createIfNoOpenCondition(Challenge challenge);
 }

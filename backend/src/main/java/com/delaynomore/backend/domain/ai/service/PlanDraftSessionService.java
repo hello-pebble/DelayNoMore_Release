@@ -73,16 +73,15 @@ public class PlanDraftSessionService {
         int duration = (Integer) session.slots.get(DURATION);
         int dailyHours = (Integer) session.slots.get(DAILY_HOURS);
         String currentLevel = (String) session.slots.get(CURRENT_LEVEL);
-        Object generated = aiService.createDraft(new AiDraftRequest(goalName, duration, dailyHours, currentLevel,
-                null, null, null));
-        if (!(generated instanceof Map<?, ?> generatedTasks)) {
-            throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
-        }
-        Map<String, Object> tasks = taskObjects(generatedTasks);
+        // 목적 카테고리는 이 초안 호출이 함께 판정한다(추가 LLM 호출 없음) — 모델이 빠뜨리면 null이고,
+        // 그때는 Plan.conditionKey()가 목표명 키워드 사전으로 폴백한다.
+        AiService.DraftResult generated = aiService.createDraft(new AiDraftRequest(goalName, duration,
+                dailyHours, currentLevel, null, null, null));
+        Map<String, Object> tasks = taskObjects(generated.plan());
         String endDate = KstDates.today().plusDays(duration - 1L).toString();
         PlanSaveRequest request = new PlanSaveRequest(goalName, duration, dailyHours, currentLevel, tasks,
                 "DRAFT", null, null, endDate, Instant.now().toString());
-        return planService.create(request, owner, sessionId);
+        return planService.create(request, owner, sessionId, generated.category());
     }
 
     private static Map<String, Object> taskObjects(Map<?, ?> generatedTasks) {

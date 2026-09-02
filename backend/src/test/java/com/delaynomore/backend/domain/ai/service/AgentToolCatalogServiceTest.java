@@ -52,7 +52,7 @@ class AgentToolCatalogServiceTest {
 
     private void givenStoredPlan(long id, PlanStatus status) {
         Plan plan = new Plan(id, OWNER, "정보처리기사 실기", 3, 2, "초급", Map.of(), status.name(),
-                null, null, "2026-07-27", "2026-07-29", "2026-07-27T00:00:00Z", 1L);
+                null, null, "2026-07-27", "2026-07-29", "2026-07-27T00:00:00Z", 1L, null);
         when(planService.getPlan(id, OWNER)).thenReturn(PlanResponse.from(plan));
     }
 

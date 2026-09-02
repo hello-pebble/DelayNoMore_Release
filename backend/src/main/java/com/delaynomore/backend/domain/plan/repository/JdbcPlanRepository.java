@@ -48,9 +48,11 @@ public class JdbcPlanRepository implements PlanRepository {
     public Plan save(Plan plan) {
         String sql = """
                 INSERT INTO plans (owner, goal_name, duration, daily_hours, current_level,
-                                   tasks, status, confirmed_at, completed_at, start_date, end_date, created_at, saved_at)
+                                   tasks, status, confirmed_at, completed_at, start_date, end_date, created_at, saved_at,
+                                   category, condition_key)
                 VALUES (:owner, :goalName, :duration, :dailyHours, :currentLevel,
-                        CAST(:tasks AS jsonb), :status, :confirmedAt, :completedAt, :startDate, :endDate, :createdAt, :savedAt)
+                        CAST(:tasks AS jsonb), :status, :confirmedAt, :completedAt, :startDate, :endDate, :createdAt, :savedAt,
+                        :category, :conditionKey)
                 RETURNING id
                 """;
         Long id = jdbc.queryForObject(sql, planParams(plan), Long.class);
@@ -92,7 +94,7 @@ public class JdbcPlanRepository implements PlanRepository {
                                  tasks = CAST(:tasks AS jsonb), status = :status, confirmed_at = :confirmedAt,
                                  completed_at = :completedAt,
                                  start_date = :startDate, end_date = :endDate, created_at = :createdAt,
-                                 saved_at = :savedAt
+                                 saved_at = :savedAt, category = :category, condition_key = :conditionKey
                 WHERE id = :id
                 """;
         jdbc.update(sql, planParams(plan));
@@ -114,7 +116,7 @@ public class JdbcPlanRepository implements PlanRepository {
                                  tasks = CAST(:tasks AS jsonb), status = :status, confirmed_at = :confirmedAt,
                                  completed_at = :completedAt,
                                  start_date = :startDate, end_date = :endDate, created_at = :createdAt,
-                                 saved_at = :savedAt
+                                 saved_at = :savedAt, category = :category, condition_key = :conditionKey
                 WHERE id = :id
                 """;
         jdbc.update(sql, planParams(next));
@@ -161,7 +163,11 @@ public class JdbcPlanRepository implements PlanRepository {
                 .addValue("startDate", plan.startDate())
                 .addValue("endDate", plan.endDate())
                 .addValue("createdAt", plan.createdAt())
-                .addValue("savedAt", plan.savedAt());
+                .addValue("savedAt", plan.savedAt())
+                .addValue("category", plan.category())
+                // 파생값 — 쓰기만 하고 읽지 않는다(mapPlan 참조). 나중에 붙을 집계
+                // (GROUP BY condition_key)를 위한 투영이고, 매 저장마다 다시 계산되므로 낡지 않는다.
+                .addValue("conditionKey", plan.conditionKey());
     }
 
     private Plan mapPlan(ResultSet rs, int rowNum) throws SQLException {
@@ -179,7 +185,9 @@ public class JdbcPlanRepository implements PlanRepository {
                 rs.getString("start_date"),
                 rs.getString("end_date"),
                 rs.getString("created_at"),
-                rs.getLong("saved_at"));
+                rs.getLong("saved_at"),
+                rs.getString("category"));
+        // condition_key는 읽지 않는다 — Plan.conditionKey()가 언제나 계산으로 답한다.
     }
 
     // tasks 직렬화 — null이면 SQL NULL(문자열 "null"이 아님)로 남긴다.

@@ -469,15 +469,18 @@
   # 기대: try 1~5 = 200, try 6 = 429 (본문 code = PLAN_DAILY_LIMIT_EXCEEDED)
   ```
 
-## F-30. Goal Challenge — 정원 한정 참가 (v0.21.0)
+## F-30. Goal Challenge — 정원 한정 참가 (v0.21.0, 개설 제거 v0.23.0)
 
 > 정원이 한정된 챌린지에 여러 사람이 **동시에** 참가를 요청해도 정확히 정원까지만 성공해야 하고,
 > 실패한 사람의 포인트는 차감되지 않아야 한다. 정원 판정은 서버의 조건부 UPDATE 한 문장이
 > 단독으로 한다(`docs/CONCURRENCY.md`). 초기 포인트는 게스트당 1000P.
+>
+> **선행**: v0.23.0부터 챌린지는 개설할 수 없다. 아래 항목을 확인하려면 **F-32를 먼저 수행해**
+> 자동 생성된 챌린지를 하나 만들어 두어야 한다(정원 5명·참가비 100P로 열린다).
 
 - [ ] 하단 탭바에 **챌린지** 탭(4번째)이 있고, 열면 우측 상단에 내 포인트(최초 1000P)가 보인다
-- [ ] "챌린지 개설" → 제목·기간·정원·참가비 입력 후 개설 → 목록에 카드가 뜨고 `0/정원`으로 표시된다
-- [ ] 개설자 본인의 카드에도 참가 버튼이 활성화되어 있고(개설 ≠ 참가), 참가하면 `1/정원` + 포인트가 참가비만큼 줄어든다
+- [ ] 화면 어디에도 **"챌린지 개설" 버튼·폼이 없다**(v0.23.0에서 제거)
+- [ ] 자동 생성된 카드가 `0/5`로 표시되고, 참가하면 `1/5` + 포인트가 참가비(100P)만큼 줄어든다
 - [ ] 참가한 카드의 버튼이 **"참가 중"**으로 바뀌고 비활성화된다. 새로고침해도 유지된다
 - [ ] 정원을 모두 채운 챌린지는 버튼이 **"모집 마감"**으로 비활성화된다
 - [ ] 다른 브라우저(다른 게스트 ID)에서도 **같은 챌린지가 보인다**(공개 모집 게시판 — 계획 보관함과 달리 소유자별로 격리되지 않는다)
@@ -529,6 +532,13 @@
 
 - [ ] `X-Guest-Id` 없이 `GET /api/v1/challenges` → 400 `GUEST_ID_REQUIRED`(목록은 공개지만 잔액·참가 여부가 게스트별이라 헤더는 필수)
 - [ ] 응답 헤더에 `Cache-Control: no-store`가 붙는다(`curl -sI` 또는 DevTools Network)
+- [ ] **개설 엔드포인트가 사라졌다** — 500이 아니라 405여야 한다(예전 프론트가 호출해도 서버 오류로 보이지 않도록):
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}
+" -X POST http://localhost/api/v1/challenges     -H "Content-Type: application/json" -H "X-Guest-Id: qa-challenge-host" -d '{}'
+  # 기대: 405
+  ```
 
 ## F-31. Google 로그인 + 게스트 흡수 + HTTPS (v0.22.0)
 
@@ -572,6 +582,139 @@
 
 - [ ] 로그인/로그아웃 응답 헤더에 `Cache-Control: no-store`가 붙는다(`/api/v1/auth/**` 전체)
 - [ ] (선택) DB에서 `auth_sessions.expires_at`을 과거로 UPDATE 후 앱 새로고침 → 첫 요청이 401 → 자동으로 게스트 화면 복귀 + 재로그인 가능
+
+## F-32. 챌린지 자동 생성 + 계획 목적 분류 (v0.23.0)
+
+> 챌린지는 사용자가 개설하지 않는다. **비슷한 조건(기간 버킷 + 목적 카테고리)의 계획을 고정한
+> 소유자가 3명** 모이면 서버가 계획 고정 시점에 자동으로 연다(정원 5명·참가비 100P·개설자 없음).
+> 같은 조건의 모집 중 챌린지는 하나뿐이고, 그것이 마감되면 다음 챌린지가 다시 열린다.
+> "몇 명이 모였는가"의 단위는 계획이 아니라 **소유자**다.
+>
+> 목적 카테고리는 **계획 초안을 만드는 LLM 호출이 함께 판정**해 계획에 저장된다(추가 호출 없음).
+> 모델이 목록 밖 라벨을 주거나 키 없이 뜬 서버에서는 목표명 키워드 사전으로 폴백한다.
+
+- [ ] 챌린지 탭에 열린 챌린지가 없으면 **"비슷한 목표·기간의 체크리스트가 모이면 챌린지가 자동으로 열려요"** 안내가 보인다
+- [ ] 서로 다른 게스트 3명이 같은 계열의 목표(예: "토익 900점" / "영어 회화 연습" / "오픽 준비")로
+      14일짜리 계획을 만들고 **고정**하면, 3번째 고정 직후 목록에 **"어학 14일 챌린지"**가 나타난다
+- [ ] 자동 생성된 카드는 `0/5`·`14일`·`참가비 100P`로 표시되고, 아무도 자동으로 참가돼 있지 않다
+      (계획을 고정한 것과 챌린지에 참가한 것은 별개)
+- [ ] 서버 확인(curl) — **3번째 고정에서 열린다**:
+
+  ```bash
+  # 게스트 3명이 각각 14일짜리 어학 계획을 만들고 고정한다.
+  for g in qa-gen-0001 qa-gen-0002 qa-gen-0003; do
+    PID=$(curl -s -X POST http://localhost/api/v1/plans       -H "Content-Type: application/json; charset=UTF-8" -H "X-Guest-Id: $g"       -d '{"goalName":"토익 900점","duration":14,"dailyHours":2,"currentLevel":"초급",
+           "tasks":{"2026-08-22":[{"id":"t1","content":"공부","completed":false}]},
+           "endDate":"2026-09-04"}' | sed -E 's/.*"id":([0-9]+).*//')
+    curl -s -o /dev/null -X POST http://localhost/api/v1/plans/$PID/confirm -H "X-Guest-Id: $g"
+    echo -n "$g 고정 후 챌린지 수: "
+    curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: qa-viewer-0001"       | grep -o '"id":' | wc -l
+  done
+  # 기대: 1명·2명까지는 0, 3명째에서 1 (tasks 날짜는 오늘 이후로 바꿔 실행할 것)
+  ```
+
+- [ ] **혼자서는 열리지 않는다** — 한 게스트가 비슷한 계획 3개를 만들어 모두 고정해도 챌린지가 생기지 않는다
+      (씨앗의 단위가 소유자라 `(조건, 소유자)` 복합 PK가 중복을 흡수한다)
+- [ ] **조건이 다르면 따로 센다** — "토익"(어학) · "매일 러닝"(운동) · "알고리즘 풀이"(코딩)를 각각 다른
+      게스트가 고정해도 어느 챌린지도 열리지 않는다
+- [ ] **중복 생성되지 않는다** — 3명이 모여 챌린지가 열린 뒤 4번째 게스트가 같은 조건으로 고정해도
+      챌린지 수는 그대로 1이다
+- [ ] **정원이 차면 다음이 열린다** — 위 챌린지에 5명이 참가해 `5/5`가 된 뒤 같은 조건으로 한 명이 더
+      고정하면 같은 제목의 챌린지가 **하나 더** 열린다(부분 UNIQUE 인덱스의 `WHERE participant_count < capacity`)
+- [ ] **분류되지 않는 목표는 챌린지를 만들지 않는다** — "그냥 뭔가 해보기" 같은 목표는 3명이 모여도
+      열리지 않는다(키워드 사전에 없는 목적 = 조건 성립 안 함)
+- [ ] 기간이 조금 달라도 같은 버킷이면 함께 센다 — 13일·14일짜리 어학 계획은 모두 `어학:14`로 묶인다
+- [ ] **계획을 만들면 목적이 함께 저장된다** — 대화로 계획을 하나 만든 뒤 서버에서 확인:
+
+  ```bash
+  sudo docker exec -i <pg> psql -U postgres     -c "SELECT goal_name, duration, category, condition_key FROM plans ORDER BY id DESC LIMIT 3;"
+  # 기대: category = 어학·자격증·운동·코딩·독서·글쓰기·악기·요리·재테크 중 하나(초안 LLM이 판정),
+  #       condition_key = "<카테고리>:<기간버킷>" (예: 어학:14).
+  #       목적이 뚜렷하지 않은 목표는 둘 다 비어 있는 것이 정상이다(챌린지를 만들지 않는다).
+  ```
+
+- [ ] **계획을 고쳐도 목적이 사라지지 않는다** — 위 계획을 대화로 수정한 뒤 같은 조회를 다시 하면
+      `category`가 그대로다(수정할 때마다 null이 되면 챌린지 조건도 함께 사라진다)
+- [ ] **기간이 버킷을 넘어가면 조건도 따라간다** — 미완료 이월을 반복해 기간이 14일을 넘기면
+      `condition_key`가 `…:30`으로 바뀐다(같은 계획이 다른 조건 그룹으로 옮겨간다)
+- [ ] **키 없이 뜬 서버**(`OPENROUTER_API_KEY` 미설정)에서는 대화로 계획을 만들 수 없지만, 기존
+      계획의 `condition_key`는 목표명 키워드 폴백으로 여전히 채워진다
+- [ ] (postgres 프로필) 마이그레이션이 적용됐다:
+
+  ```bash
+  sudo docker exec -i <pg> psql -U postgres -c "\d challenge_seeds" -c "\d plans"     -c "SELECT indexdef FROM pg_indexes WHERE indexname='uq_challenges_open_condition';"
+  # 기대: challenge_seeds 테이블 존재(PK: condition_key, owner),
+  #       plans에 category·condition_key 컬럼 존재(V7),
+  #       인덱스 정의에 WHERE (participant_count < capacity)가 포함
+  ```
+
+## F-33. LangChain4j 전송 계층 교체 (v0.24.0)
+
+> LLM 호출의 전송(요청 바디 조립·SSE 파싱·tool_calls 추출)을 수제 구현에서 LangChain4j로
+> 교체했다. **합격 기준은 "겉으로는 아무것도 달라지지 않는 것"** — 아래 항목은 전부 기존 기능이
+> 이전과 동일하게 동작하는지의 회귀 확인이다. 프롬프트·도구 권한·토큰 계측·SSE 이벤트 계약은
+> 기존 코드가 그대로 소유하므로 새 기능 항목은 없다.
+
+- [ ] **초안 생성(스트리밍)** — 슬롯필링 대화를 끝내면 하루 단위 계획이 이전처럼 실시간으로
+      한 날짜씩 흘러나온다(멈춤·한자 섞임·JSON 원문 노출 없음)
+- [ ] **자유 대화** — 고정 전 계획에서 수정 요청("3일차 줄여줘")이 산문 + 체크리스트 갱신으로
+      반영되고, 질문("왜 이렇게 짰어?")은 계획을 바꾸지 않는다
+- [ ] **에이전트 대화** — 추적 패널에 profile → step → tool_call → tool_result → 답변 순서가
+      이전과 동일하게 표시된다
+- [ ] **도구 권한 회귀** — DRAFT 계획에서 수정 요청 시 `update_plan_tasks`가 호출되고,
+      **고정(CONFIRMED)** 계획에서는 수정 도구가 도구 카탈로그·모델 노출 양쪽에서 빠져 있어
+      수정 요청이 거절 답변으로 돌아온다
+- [ ] **연결 LED** — `OPENROUTER_API_KEY` 미설정 서버에서 헤더 LED가 미연결로 표시되고
+      mock 폴백으로 동작한다
+- [ ] 서버 확인(curl) — health가 이전 형태 그대로다:
+
+  ```bash
+  curl -s http://localhost/api/v1/ai/health
+  # 기대: {"success":true,"data":{"connected":true,"reason":null,"toolCalling":true},...}
+  # (키 미설정이면 connected:false + reason에 사유)
+  ```
+
+- [ ] **토큰 사용량 로그** — 대화 한 번 후 서버 로그에 `ai.usage` 라인이 사이트 라벨과 함께
+      남는다(에이전트 요청은 `site=agent.turn` 여러 줄 + `site=agent.total` 합산 1줄):
+
+  ```bash
+  sudo docker logs delaynomore --since 5m | grep "ai.usage"
+  # 기대: site=chat.stream / draft.stream / agent.turn / agent.total 등 라벨별 prompt/completion 토큰 수
+  ```
+
+- [ ] **에이전트 SSE 원문 계약** — 이벤트 형식이 이전과 동일하다:
+
+  ```bash
+  curl -sN -X POST http://localhost/api/v1/ai/agent/chats/stream \
+    -H "Content-Type: application/json; charset=UTF-8" -H "X-Guest-Id: qa-lc4j-0001" \
+    -d '{"message":"오늘 뭐 하면 돼?","goalName":"토익 900점","tasks":{}}' | head -20
+  # 기대: data: {"type":"profile",...} → {"type":"step","n":1} → ... → {"type":"done"}
+  # (도구 미지원 모델이면 tool_call 없이 token → done)
+  ```
+
+## F-34. 에이전트 읽기 도구 2종 — 진행 스냅샷·변경 이력 (v0.24.0)
+
+> `get_progress`는 "지금 어디까지 왔어?"에 서버 계산 진행률(done/total·완료율·남은 일수)을,
+> `get_plan_history`는 "그동안 뭐가 바뀌었어?"에 감사 이력(최신 20건)을 근거로 쓰게 한다.
+> 둘 다 읽기 전용이라 모든 계획 상태에서 노출된다 — 권한 표(PlanStatus)는 바뀌지 않았다.
+
+- [ ] **진행 스냅샷** — 고정된 계획에서 "지금까지 전체적으로 어디까지 왔어?"라고 물으면 추적
+      패널에 `get_progress` 호출이 보이고, 답변의 완료 개수·남은 일수가 체크리스트 화면과 일치한다
+- [ ] **주간 요약과 변별** — "이번 주에 얼마나 했어?"는 여전히 `get_weekly_summary`를 고른다
+      (전체 조망 질문만 `get_progress`)
+- [ ] **변경 이력** — 이월·수정을 몇 번 한 계획에서 "그동안 뭐가 바뀌었는지 보여줘"라고 물으면
+      `get_plan_history` 호출이 보이고, 답변이 실제 이력(생성→고정→이월 순서)과 맞는다
+- [ ] **보관 전 초안** — 계획을 저장하기 전 대화에서 같은 질문을 하면 도구가 실패 사유를 돌려주고
+      모델이 "계획이 저장된 뒤 확인할 수 있다"는 취지로 답한다(오류 이벤트 아님)
+- [ ] 도구 카탈로그에 2종이 보인다:
+
+  ```bash
+  curl -s "http://localhost/api/v1/ai/agent/tools" -H "X-Guest-Id: qa-tools-0001"
+  # 기대: tools 배열에 get_progress·get_plan_history 포함(읽기라 mutating=false), 전체 8종
+  ```
+
+- [ ] (평가) `./gradlew evalAgent -Deval.only=read.progress,read.history` — 신설 2케이스가
+      통과하고, 전체 실행에서 기존 케이스 통과율이 떨어지지 않는다
 
 ## G. 화면 폭 (모바일 우선 · 1024px 이상 2분할)
 > 좁은 폭은 v0.18.0의 단일 패널 + 하단 탭바 그대로이고, **1024px 이상에서만** 왼쪽 대화 고정 +

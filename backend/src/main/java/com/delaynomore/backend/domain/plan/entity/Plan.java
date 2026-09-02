@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.plan.entity;
 
+import com.delaynomore.backend.domain.challenge.support.ChallengeCondition;
+
 import java.util.List;
 import java.util.Map;
 
@@ -19,12 +21,24 @@ public record Plan(
         String startDate,
         String endDate,
         String createdAt,          // 프론트가 만든 ISO 문자열 그대로
-        long savedAt               // 서버 저장/갱신 시각(epoch ms) — 목록 정렬 기준
+        long savedAt,              // 서버 저장/갱신 시각(epoch ms) — 목록 정렬 기준
+        String category            // 목적 분류 — 계획 초안을 만든 LLM 호출이 함께 판정한다(없으면 null)
 ) {
 
     public Plan withId(long newId) {
         return new Plan(newId, owner, goalName, duration, dailyHours, currentLevel, tasks,
-                status, confirmedAt, completedAt, startDate, endDate, createdAt, savedAt);
+                status, confirmedAt, completedAt, startDate, endDate, createdAt, savedAt, category);
+    }
+
+    // 챌린지 조건 키("어학:14") — (카테고리, 기간)의 순수 함수라 record 컴포넌트로 두지 않는다.
+    // 컬럼(plans.condition_key)에는 저장하지만 읽어 들이지는 않는다: 저장은 나중에 붙을 집계
+    // (GROUP BY condition_key)를 위한 투영일 뿐이고, 애플리케이션은 언제나 이 계산으로 진실을 갖는다.
+    // 그래서 기간이 바뀌어도(이월로 하루 연장) 동기화 코드 없이 다음 저장 때 저절로 맞는다.
+    //
+    // category가 없을 때만 목표명 키워드 사전으로 폴백한다 — 폴백 판단은 이 한 곳뿐이다.
+    public String conditionKey() {
+        String resolved = category != null ? category : ChallengeCondition.classify(goalName).orElse(null);
+        return ChallengeCondition.of(resolved, duration).map(ChallengeCondition::key).orElse(null);
     }
 
     // 저장된 status 문자열을 상태로 파싱 — 상태 판정은 전부 이 경유로(문자열 비교 금지).

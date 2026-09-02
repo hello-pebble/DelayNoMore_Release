@@ -1,0 +1,26 @@
+{
+  "name": "계획 목적 분류(초안 생성에 얹은 category)",
+  "description": "계획 초안을 만드는 LLM 호출이 목표명을 CATEGORIES 중 하나로 분류한다. 사전 키워드로는 못 잡던 목적(악기·요리·글쓰기·재테크)과, 어디에도 속하지 않아 '기타'로 떨어져야 하는 목표를 함께 잰다.",
+  "cases": [
+    { "id": "category.어학.toeic",      "goalName": "토익 900점 달성하기",        "expected": "어학" },
+    { "id": "category.어학.speaking",   "goalName": "매일 영어로 5분씩 말해보기",  "expected": "어학" },
+    { "id": "category.자격증.gisa",     "goalName": "정보처리기사 실기 합격",      "expected": "자격증" },
+    { "id": "category.자격증.driving",  "goalName": "운전면허 필기 준비",          "expected": "자격증" },
+    { "id": "category.운동.running",    "goalName": "5km 쉬지 않고 달리기",        "expected": "운동" },
+    { "id": "category.운동.homework",   "goalName": "집에서 맨몸 근력 기르기",     "expected": "운동" },
+    { "id": "category.코딩.algorithm",  "goalName": "코딩테스트 알고리즘 문제풀이", "expected": "코딩" },
+    { "id": "category.코딩.sideproj",   "goalName": "리액트로 개인 웹앱 만들기",   "expected": "코딩" },
+    { "id": "category.독서.classic",    "goalName": "고전 소설 완독하기",          "expected": "독서" },
+    { "id": "category.독서.habit",      "goalName": "자기 전 30분 책 읽는 습관",   "expected": "독서" },
+    { "id": "category.글쓰기.blog",     "goalName": "기술 블로그 글 연재하기",     "expected": "글쓰기" },
+    { "id": "category.글쓰기.diary",    "goalName": "매일 한 편씩 에세이 쓰기",    "expected": "글쓰기" },
+    { "id": "category.악기.guitar",     "goalName": "기타 코드 잡고 한 곡 치기",   "expected": "악기" },
+    { "id": "category.악기.piano",      "goalName": "피아노 초견 연습하기",        "expected": "악기" },
+    { "id": "category.요리.homemeal",   "goalName": "집밥 레시피 늘리기",          "expected": "요리" },
+    { "id": "category.요리.baking",     "goalName": "베이킹으로 빵 구워보기",      "expected": "요리" },
+    { "id": "category.재테크.budget",   "goalName": "가계부 쓰고 지출 줄이기",     "expected": "재테크" },
+    { "id": "category.재테크.invest",   "goalName": "주식 투자 기초 공부하기",     "expected": "재테크" },
+    { "id": "category.기타.cleaning",   "goalName": "집 안 물건 정리하고 비우기",  "expected": "기타" },
+    { "id": "category.기타.sleep",      "goalName": "일찍 자고 일찍 일어나기",     "expected": "기타" }
+  ]
+}

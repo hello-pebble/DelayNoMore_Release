@@ -29,6 +29,8 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
     private final ConcurrentHashMap<Long, Challenge> challenges = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Set<String>> participants = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Integer> wallets = new ConcurrentHashMap<>();
+    // 조건 키 → 그 조건의 계획을 고정한 소유자 집합. JDBC의 challenge_seeds 테이블에 대응한다.
+    private final ConcurrentHashMap<String, Set<String>> seeds = new ConcurrentHashMap<>();
     private final AtomicLong idSequence = new AtomicLong(0);
 
     @Override
@@ -91,5 +93,35 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
             throw new BusinessException(ErrorCode.CHALLENGE_NOT_FOUND);
         }
         return updated;
+    }
+
+    // 씨앗 등록 — Set은 중복을 흡수하므로 같은 소유자가 몇 번 고정하든 크기는 늘지 않는다.
+    // computeIfAbsent + 동시성 Set이라 등록과 계수 사이에 다른 등록이 끼어들어도 손실이 없다
+    // (그 사이 값이 늘면 더 큰 값을 볼 뿐, 작아지지는 않는다).
+    @Override
+    public int recordSeed(String conditionKey, String owner, String seededAt) {
+        Set<String> owners = seeds.computeIfAbsent(conditionKey, key -> ConcurrentHashMap.newKeySet());
+        owners.add(owner);
+        return owners.size();
+    }
+
+    // 조건별 생성 — seeds 맵의 키 단위 원자 구간을 자물쇠로 빌려 쓴다. 같은 조건에 대한 동시 생성이
+    // 이 구간에서 직렬화되므로 "없나 확인 → 만든다" 사이가 열리지 않는다(JDBC의 부분 UNIQUE
+    // 인덱스와 같은 계약). 다른 조건끼리는 키가 달라 서로 막지 않는다.
+    @Override
+    public void createIfNoOpenCondition(Challenge challenge) {
+        seeds.compute(challenge.conditionKey(), (key, owners) -> {
+            if (!hasOpenChallenge(key)) {
+                save(challenge);
+            }
+            return owners;
+        });
+    }
+
+    // ponytail: 전체 스캔. 조건 인덱스를 따로 두지 않는다 — 인메모리 저장소의 챌린지 수는 데모
+    // 규모(수십 건)이고, 이 경로는 계획 고정 시에만 탄다. 느려지면 conditionKey 인덱스를 추가한다.
+    private boolean hasOpenChallenge(String conditionKey) {
+        return challenges.values().stream()
+                .anyMatch(c -> conditionKey.equals(c.conditionKey()) && !c.full());
     }
 }

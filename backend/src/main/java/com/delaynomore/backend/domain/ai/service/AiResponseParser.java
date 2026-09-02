@@ -1,5 +1,6 @@
 package com.delaynomore.backend.domain.ai.service;
 
+import com.delaynomore.backend.domain.challenge.support.ChallengeCondition;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -14,6 +15,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -52,6 +54,20 @@ public class AiResponseParser {
             log.warn("Failed to parse draft plan JSON from AI response");
             throw new BusinessException(ErrorCode.AI_RESPONSE_INVALID);
         }
+    }
+
+    // 초안 응답에 함께 실린 목적 카테고리를 꺼낸다 — 계획 초안과 같은 호출에서 온다(추가 호출 없음).
+    // [왜 형제 키인가] 래퍼({"category":…, "plan":{…}})로 감싸면 unwrapPlanNode가 plan을 List로만
+    // 찾기 때문에 래퍼 전체가 정규화로 흘러가 AI_RESPONSE_INVALID가 된다. 날짜 키와 같은 층에 두면
+    // normalizeDraftPlan의 맵 분기가 값이 List가 아닌 항목을 이미 건너뛰므로(빈 할 일 → skip)
+    // 날짜 키 집합에도 allDates 판정에도 끼어들지 않는다 — 정규화 코드는 한 줄도 바뀌지 않았다.
+    // 목록 밖 라벨(환각·오탈자)과 "기타"는 여기서 걸러 empty가 된다(호출부는 키워드 폴백으로 간다).
+    public Optional<String> extractCategory(Object parsed) {
+        if (!(parsed instanceof Map<?, ?> map) || !(map.get("category") instanceof String raw)) {
+            return Optional.empty();
+        }
+        String category = raw.trim();
+        return ChallengeCondition.CATEGORIES.contains(category) ? Optional.of(category) : Optional.empty();
     }
 
     // 초안 계획의 날짜 키 보장 — parsePlan 결과를 {YYYY-MM-DD: [할 일 문자열]} 맵으로 강제한다.

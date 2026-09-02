@@ -43,6 +43,7 @@ public abstract class AbstractPostgresIntegrationTest {
     @BeforeEach
     void truncateAll() {
         jdbcTemplate.execute("TRUNCATE plans, reflections, audit_events, "
-                + "challenges, challenge_participants, point_wallets, users, auth_sessions RESTART IDENTITY CASCADE");
+                + "challenges, challenge_participants, challenge_seeds, point_wallets, "
+                + "users, auth_sessions RESTART IDENTITY CASCADE");
     }
 }

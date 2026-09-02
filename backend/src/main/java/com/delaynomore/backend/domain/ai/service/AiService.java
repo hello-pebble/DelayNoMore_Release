@@ -59,19 +59,27 @@ public class AiService {
                 : AiHealthResponse.down(check.failureReason());
     }
 
-    // 계획 초안 생성(비스트리밍) — 날짜맵({날짜: [할 일]}) 형태의 계획을 돌려준다.
+    /**
+     * 초안 생성 결과 — 계획과 목적 카테고리. 카테고리는 같은 호출에서 함께 오고(추가 LLM 호출 없음),
+     * 모델이 빠뜨렸거나 목록 밖 라벨을 주면 null이다(호출부는 키워드 폴백으로 간다).
+     */
+    public record DraftResult(Map<String, Object> plan, String category) {
+    }
+
+    // 계획 초안 생성(비스트리밍) — 날짜맵({날짜: [할 일]}) 형태의 계획과 목적 카테고리를 돌려준다.
     // 정규화(normalizeDraftPlan)로 응답의 날짜 키를 서버가 보장한다 — LLM이 계약을 어긴 출력
     // (배열·"Day N" 키)을 줘도 프롬프트의 targetDates와 같은 기준(KST 오늘부터)으로 날짜를 합성한다.
-    public Object createDraft(AiDraftRequest request) {
+    public DraftResult createDraft(AiDraftRequest request) {
         List<Map<String, Object>> messages = promptBuilder.draftMessages(request);
         String raw = openRouterClient.complete(AiCallSite.DRAFT, messages, NO_TOKEN_LIMIT);
-        Map<String, Object> plan = responseParser.normalizeDraftPlan(responseParser.parsePlan(raw), KstDates.today());
+        Object parsed = responseParser.parsePlan(raw);
+        Map<String, Object> plan = responseParser.normalizeDraftPlan(parsed, KstDates.today());
         // 추천 경로(tasksPerDay 지정)는 "날짜마다 정확히 N개"를 강제한다 — 어긋나면 잘라내거나
         // 재시도하지 않고 실패로 처리해(AI_RESPONSE_INVALID) 호출부가 서버 템플릿 생성으로 폴백하게 한다.
         if (request.tasksPerDay() != null) {
             assertExactCount(plan, request.duration(), request.tasksPerDay());
         }
-        return plan;
+        return new DraftResult(plan, responseParser.extractCategory(parsed).orElse(null));
     }
 
     // 초안이 정확히 duration개의 날짜를 갖고, 각 날짜가 정확히 tasksPerDay개의 할 일을 갖는지 검증한다.

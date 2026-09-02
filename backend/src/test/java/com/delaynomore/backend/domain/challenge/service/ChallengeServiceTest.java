@@ -1,8 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
-import com.delaynomore.backend.domain.challenge.dto.ChallengeCreateRequest;
-import com.delaynomore.backend.domain.challenge.dto.ChallengeResponse;
 import com.delaynomore.backend.domain.challenge.dto.JoinResponse;
+import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -13,7 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 // 단일 스레드 규칙 검증 — 정원·중복·잔액·존재의 각 실패가 올바른 ErrorCode로 나오는지.
-// 동시 요청에서의 보장은 ChallengeServiceConcurrencyTest / ChallengeJoinConcurrencyIT가 맡는다.
+// 동시 요청에서의 보장은 ChallengeServiceConcurrencyTest / ChallengeJoinConcurrencyIT가,
+// 챌린지가 어떻게 생기는지는 ChallengeAutoGenerationTest가 맡는다.
 class ChallengeServiceTest {
 
     private static final int INITIAL_BALANCE = 1000;
@@ -22,21 +22,10 @@ class ChallengeServiceTest {
     private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository);
 
+    // 개설 API가 없어졌으므로(v0.23.0) 픽스처는 저장소에 직접 넣는다.
     private long open(int capacity, int entryFee) {
-        return challengeService.create(new ChallengeCreateRequest("자격증 공부 14일", 14, capacity, entryFee), HOST).id();
-    }
-
-    @Test
-    void create_개설자는_참가자가_아니다() {
-        ChallengeResponse created = challengeService.create(
-                new ChallengeCreateRequest("  자격증 공부 14일  ", 14, 5, 100), HOST);
-
-        assertThat(created.title()).isEqualTo("자격증 공부 14일"); // 앞뒤 공백은 정리해 저장
-        assertThat(created.participantCount()).isZero();
-        assertThat(created.remainingSeats()).isEqualTo(5);
-        assertThat(created.full()).isFalse();
-        assertThat(created.mine()).isTrue();
-        assertThat(created.joined()).isFalse();
+        return challengeRepository.save(new Challenge(null, HOST, "자격증 공부 14일", 14, capacity,
+                entryFee, 0, java.time.Instant.now().toString(), null)).id();
     }
 
     @Test
@@ -111,7 +100,6 @@ class ChallengeServiceTest {
         var listed = challengeService.list("guest-other-01");
 
         assertThat(listed.challenges()).hasSize(1);
-        assertThat(listed.challenges().getFirst().mine()).isFalse();
         assertThat(listed.balance()).isEqualTo(INITIAL_BALANCE); // 최초 조회 시 지갑이 생긴다
     }
 }

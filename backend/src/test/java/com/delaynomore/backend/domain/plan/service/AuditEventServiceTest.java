@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
+import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.AuditEventResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
@@ -33,7 +35,8 @@ class AuditEventServiceTest {
     private final AuditEventRepository auditEventRepository = new InMemoryAuditEventRepository();
     private final AuditEventService auditEventService =
             new AuditEventService(auditEventRepository);
-    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService);
+    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
+                new ChallengeService(new InMemoryChallengeRepository()));
     private final ReflectionService reflectionService =
             new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
@@ -56,7 +59,7 @@ class AuditEventServiceTest {
             "2026-07-17", List.of(task("t-3", "듣기 연습", false)));
 
     private PlanResponse createBasePlan() {
-        return planService.create(request("토익 900", BASE_TASKS, null), OWNER, "session-a");
+        return planService.create(request("토익 900", BASE_TASKS, null), OWNER, "session-a", null);
     }
 
     private List<AuditEventResponse> events(long planId) {
@@ -176,7 +179,7 @@ class AuditEventServiceTest {
                 today, List.of(task("t-1", "단어 암기", false), task("t-2", "문법 정리", true)),
                 tomorrow, List.of(task("t-3", "듣기 연습", false)));
         PlanResponse saved = planService.create(
-                request("토익 900", base, null, 2, tomorrow), OWNER, "session-a");
+                request("토익 900", base, null, 2, tomorrow), OWNER, "session-a", null);
         planService.update(saved.id(), request("토익 900", base, "CONFIRMED", 2, tomorrow), OWNER, "session-a");
         Map<String, Object> toggled = Map.of(
                 today, List.of(task("t-1", "단어 암기", true), task("t-2", "문법 정리", true)),
@@ -319,7 +322,7 @@ class AuditEventServiceTest {
         String today = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
         Map<String, Object> tasks = Map.of(today, List.of(
                 task("t-1", "단어 암기", true), task("t-2", "문법 정리", false)));
-        PlanResponse saved = planService.create(request("토익 900", tasks, null), OWNER, null);
+        PlanResponse saved = planService.create(request("토익 900", tasks, null), OWNER, null, null);
 
         // when
         reflectionService.save(saved.id(), today, new ReflectionSaveRequest("HARD", "NOT_ENOUGH_TIME"), OWNER, "session-c");
@@ -350,7 +353,7 @@ class AuditEventServiceTest {
     @Test
     void record_세션ID_공백은null_초과분은절단() {
         // given
-        PlanResponse saved = planService.create(request("토익 900", BASE_TASKS, null), OWNER, "   ");
+        PlanResponse saved = planService.create(request("토익 900", BASE_TASKS, null), OWNER, "   ", null);
         planService.update(saved.id(), request("토익 950", BASE_TASKS, null), OWNER, "x".repeat(80));
 
         // then — 공백뿐인 헤더는 null(알 수 없음), 임의 장문 헤더는 64자로 절단해 저장
