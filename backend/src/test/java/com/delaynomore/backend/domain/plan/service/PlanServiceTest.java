@@ -41,7 +41,7 @@ class PlanServiceTest {
             new AuditEventService(new InMemoryAuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
             auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

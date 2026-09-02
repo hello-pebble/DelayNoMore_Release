@@ -248,3 +248,56 @@ LLM 호출이 목적을 함께 판정한다, `plans.category` → `Plan.conditio
 `GROUP BY`로 집계하면 "지금 어떤 조건에 몇 명이 모여 있나"가 나오고, 나온 키는
 `ChallengeCondition.parse`로 그대로 챌린지가 된다. 지금 트리거가 고정 시점인 이유는 단순하다 —
 조건이 채워지는 순간이 바로 그때이고, 즉시 반응이 주기적 반응보다 낫기 때문이다.
+
+
+## 8. 같은 문제의 세 번째 판본 — 정산은 최대 한 번 (v0.25.0)
+
+정산이 지키는 불변식은 하나다: **"챌린지 하나는 최대 한 번만 정산된다."** 정산은 지갑 잔액을
+늘리는 유일한 경로라, 이것이 깨지면 환불·배당이 겹쳐 포인트가 무에서 생긴다. 트리거가 "챌린지
+목록 조회"라는 점이 위험을 키운다 — 스케줄러가 없어 만기 챌린지는 누군가 목록을 여는 순간
+정산되는데, 목록은 여러 사용자가 동시에 연다.
+
+판정 주체는 정원(2절)·자동 생성(7절)과 같은 원칙으로 조건부 UPDATE 하나다:
+
+```sql
+UPDATE challenges SET settled_at = :now
+ WHERE id = :id AND settled_at IS NULL AND started_at IS [NOT] NULL
+```
+
+1행이 갱신된 호출만 "정산권"을 얻어 지급을 진행하고, 0행을 받은 호출은 no-op으로 물러난다
+(`ChallengeRepository.claimSettlement`). 동시 정산자는 행 락에 블로킹된 뒤 갱신된 행으로 WHERE를
+재평가하므로 둘 다 1행을 받는 인터리빙이 없다. "SELECT settled_at → 자바 if → 지급"이 실제로
+이중 지급되는 대조군은 `ChallengeSettlementConcurrencyIT`(naive)가 재현한다.
+
+`started_at IS [NOT] NULL`이 경로를 가른다. 완주 정산(NOT NULL)과 모집 미달 환불(NULL)은 서로
+다른 지급을 하는데, "읽을 땐 미달이었는데 그 사이 마지막 참가로 시작된" 챌린지를 환불로 마감하면
+시작된 판이 조용히 사라진다(TOCTOU의 세 번째 얼굴). 시작 기록 자체를 참가의 원자 구간에 넣어
+(자리 예약 UPDATE의 `CASE WHEN participant_count + 1 >= capacity THEN :now`) 이 조건과 같은 행
+락에서 직렬화했다.
+
+지급(`recordPayout`)은 claim과 같은 트랜잭션 안에서만 실행된다 — 도중에 실패하면 `settled_at`째
+롤백돼 부분 지급이 없다. 인메모리 구현은 롤백이 없으므로 claim 이후를 실패할 수 없는 연산(맵
+`compute`/`merge`)만으로 구성한다(5절의 "검사를 변경 앞에" 규칙의 정산판).
+
+0행 → 결과 표(2절 표의 확장):
+
+| 문장 | 0행의 의미 | 처리 |
+| :--- | :--- | :--- |
+| 자리 예약 UPDATE (`settled_at IS NULL` 추가) | 정원 참 또는 정산 마감 | 재조회로 사유 선택: `CHALLENGE_FULL` / `CHALLENGE_CLOSED` |
+| claim UPDATE (완주 경로) | 이미 정산됨 | no-op — 다른 조회가 이미 정산했다 |
+| claim UPDATE (환불 경로) | 이미 정산됨 또는 그 사이 시작됨 | no-op — 시작됐다면 완주 경로가 맡는다 |
+
+부분 UNIQUE 인덱스도 함께 움직였다. "같은 조건의 모집 중 챌린지는 최대 하나"(7절)의 "모집 중"
+정의에 정산이 끼어들었기 때문이다 — 미달인 채 환불 마감된 챌린지는 여전히
+`participant_count < capacity`라, 조건을 보강하지 않으면 인덱스에 남아 같은 조건의 다음 챌린지를
+영구히 막는다(V8):
+
+```sql
+CREATE UNIQUE INDEX uq_challenges_open_condition ON challenges (condition_key)
+    WHERE participant_count < capacity AND settled_at IS NULL;
+```
+
+**참가자의 연결 계획이 삭제되면 패배다.** 참가 시 기록한 `plan_id`(완주 판정 근거)는
+`ON DELETE SET NULL`이라, 계획을 지우면 완주 증명이 사라진다 — 정산은 이를 미완주로 판정한다.
+삭제를 막거나 경고하지 않는다: 참가비는 이미 낸 상태라 삭제할 유인이 없고, 판정 규칙이 단순한
+쪽이 검증하기 쉽다.

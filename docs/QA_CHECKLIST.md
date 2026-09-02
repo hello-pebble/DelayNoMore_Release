@@ -716,6 +716,48 @@
 - [ ] (평가) `./gradlew evalAgent -Deval.only=read.progress,read.history` — 신설 2케이스가
       통과하고, 전체 실행에서 기존 케이스 통과율이 떨어지지 않는다
 
+## F-35. 챌린지 정산 (v0.25.0)
+
+> 챌린지에 종료·보상이 생겼다. **정원이 차는 순간 시작**(started_at)되고, 기간이 끝나면
+> **연결 계획을 100% 완주한 참가자끼리 참가비 풀을 균등 분배**한다(완주자 0명이면 전원 환불,
+> 모집이 기간×2 넘게 미달이면 전원 환불 후 마감). 참가하려면 **같은 조건의 고정된 계획**이
+> 있어야 하고(서버가 자동 연결), 그 계획을 삭제하면 완주 증명이 사라져 미완주로 판정된다.
+> 정산 트리거는 스케줄러가 아니라 **챌린지 목록 조회**다(lazy). "챌린지는 최대 한 번 정산"의
+> 근거는 [CONCURRENCY.md 8절](CONCURRENCY.md).
+
+- [ ] **참가 자격** — 같은 조건의 고정 계획이 없는 게스트가 참가하면 "같은 조건의 고정된 계획이
+      있어야..." 안내가 뜨고 포인트·정원이 변하지 않는다
+- [ ] **상태 뱃지** — 모집 중 카드에 "모집중", 정원이 찬 카드에 "진행중"(+종료 예정일 `~YYYY-MM-DD`),
+      정산된 카드에 "종료"가 표시된다
+- [ ] **시작 전이** — 5번째 참가 직후 카드가 "모집중 → 진행중"으로 바뀌고 참가 버튼이 사라진다
+- [ ] **정산 결과 표시** — 종료된 챌린지 카드에 참가자 기준 "정산 완료 — +N P 지급" 또는
+      "미완주 (참가비는 완주자에게 배당)"이 표시되고, 헤더 잔액이 함께 갱신된다
+- [ ] 서버 확인(curl) — 참가 자격 거부:
+
+  ```bash
+  curl -s -X POST http://localhost/api/v1/challenges/1/join -H "X-Guest-Id: qa-noplan-0001"
+  # 기대: {"success":false,"error":{"code":"CHALLENGE_PLAN_REQUIRED",...}}
+  ```
+
+- [ ] 서버 확인(curl) — 목록 응답에 정산 필드가 실린다:
+
+  ```bash
+  curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: qa-viewer-0001"
+  # 기대: 각 챌린지에 status(RECRUITING|ACTIVE|CLOSED), endsAt(시작 전 null), myPayout(미참가 null)
+  ```
+
+- [ ] (postgres 프로필) V8 마이그레이션 적용:
+
+  ```bash
+  sudo docker exec -i <pg> psql -U postgres -c "\d challenges" -c "\d challenge_participants"     -c "SELECT indexdef FROM pg_indexes WHERE indexname='uq_challenges_open_condition';"
+  # 기대: challenges에 started_at·settled_at, challenge_participants에 plan_id·payout,
+  #       인덱스 WHERE절에 settled_at IS NULL 포함
+  ```
+
+- [ ] **완주 분배·환불·이중 정산 방지**는 화면으로 재현하기 어렵다(기간 경과 필요) — 단위·동시성
+      테스트가 게이트다: `./gradlew test --tests '*Challenge*'` 전부 통과, Docker 있는 환경이면
+      `ChallengeSettlementConcurrencyIT`(naive 대조군이 이중 지급을 실증, safe가 1회분 증명) 포함
+
 ## G. 화면 폭 (모바일 우선 · 1024px 이상 2분할)
 > 좁은 폭은 v0.18.0의 단일 패널 + 하단 탭바 그대로이고, **1024px 이상에서만** 왼쪽 대화 고정 +
 > 오른쪽 탭 전환의 2분할로 펼쳐진다(패널 집합·전환 수단은 그대로, CSS 미디어쿼리 한 블록).

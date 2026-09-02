@@ -34,7 +34,7 @@ class PlanServiceConcurrencyTest {
     private final PlanRepository planRepository = new InMemoryPlanRepository();
     private final PlanService planService = new PlanService(planRepository,
             new InMemoryReflectionRepository(), new AuditEventService(new InMemoryAuditEventRepository()),
-                new ChallengeService(new InMemoryChallengeRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

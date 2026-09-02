@@ -24,7 +24,7 @@ class PlanTaskCompletionServiceTest {
         PlanRepository repository = new InMemoryPlanRepository();
         AuditEventService auditEvents = new AuditEventService(new InMemoryAuditEventRepository());
         PlanService service = new PlanService(repository, new InMemoryReflectionRepository(), auditEvents,
-                new ChallengeService(new InMemoryChallengeRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
         // 날짜는 오늘(KST)로 동적 생성 — 하드코딩하면 그 날짜가 지나는 순간
         // PAST_TASK_LOCKED 가드(지난 날짜 토글 거부)에 걸려 테스트가 영구 실패한다.
         String today = KstDates.today().toString();

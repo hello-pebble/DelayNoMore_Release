@@ -15,8 +15,24 @@ const JOIN_ERROR_LABEL = {
   CHALLENGE_FULL: '모집이 마감되었어요. 다른 참가자가 마지막 자리를 가져갔습니다.',
   CHALLENGE_ALREADY_JOINED: '이미 참가한 챌린지예요.',
   POINTS_INSUFFICIENT: '포인트가 부족해 참가할 수 없어요.',
-  CHALLENGE_NOT_FOUND: '챌린지를 찾을 수 없어요. 이미 삭제되었을 수 있습니다.'
+  CHALLENGE_NOT_FOUND: '챌린지를 찾을 수 없어요. 이미 삭제되었을 수 있습니다.',
+  CHALLENGE_PLAN_REQUIRED: '같은 조건의 고정된 계획이 있어야 참가할 수 있어요. 계획을 먼저 고정해 주세요.',
+  CHALLENGE_CLOSED: '이미 종료된 챌린지예요.'
 };
+
+// 상태 뱃지 표기 — 판정(status)은 서버가 내려주고 여기는 라벨·색만 고른다.
+const STATUS_BADGE = {
+  RECRUITING: { label: '모집중', color: 'var(--primary)' },
+  ACTIVE: { label: '진행중', color: 'var(--success)' },
+  CLOSED: { label: '종료', color: 'var(--text-muted)' }
+};
+
+// 정산 결과 문구 — myPayout은 서버 정산의 결과값이다(null = 미정산).
+function payoutLabel(c) {
+  if (c.myPayout == null) return null;
+  if (c.myPayout > 0) return `정산 완료 — +${c.myPayout}P 지급`;
+  return '정산 완료 — 미완주 (참가비는 완주자에게 배당)';
+}
 
 export default function ChallengePanel() {
   const [balance, setBalance] = useState(null);
@@ -94,31 +110,58 @@ export default function ChallengePanel() {
             padding: '14px', background: 'var(--bg-card)', border: '1px solid var(--border)',
             borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '10px'
           }}>
-            <div style={{ fontSize: '15px', fontWeight: 600 }}>{c.title}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: 'var(--text-muted)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '15px', fontWeight: 600 }}>{c.title}</span>
+              {STATUS_BADGE[c.status] && (
+                <span style={{
+                  fontSize: '11px', fontWeight: 600, padding: '1px 8px', borderRadius: '999px',
+                  border: `1px solid ${STATUS_BADGE[c.status].color}`, color: STATUS_BADGE[c.status].color
+                }}>
+                  {STATUS_BADGE[c.status].label}
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '13px', color: 'var(--text-muted)', flexWrap: 'wrap' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                 <Users size={14} />
                 {c.participantCount}/{c.capacity}명
               </span>
               <span>{c.durationDays}일</span>
               <span>참가비 {c.entryFee}P</span>
+              {c.endsAt && c.status === 'ACTIVE' && (
+                <span>~{c.endsAt.slice(0, 10)}</span>
+              )}
             </div>
-            <button
-              type="button"
-              disabled={c.joined || c.full || joiningId === c.id}
-              onClick={() => handleJoin(c.id)}
-              style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                padding: '9px 0', borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: 600,
-                cursor: c.joined || c.full ? 'default' : 'pointer',
-                background: c.joined || c.full ? 'var(--bg-panel)' : 'var(--primary)',
-                color: c.joined || c.full ? 'var(--text-muted)' : '#fff'
-              }}
-            >
-              {joiningId === c.id
-                ? '참가 요청 중…'
-                : c.joined ? '참가 중' : c.full ? '모집 마감' : `참가하기 (남은 자리 ${c.remainingSeats})`}
-            </button>
+            {payoutLabel(c) && (
+              <div style={{ fontSize: '13px', color: c.myPayout > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                {payoutLabel(c)}
+              </div>
+            )}
+            {/* 모집 중일 때만 참가 버튼 — 진행중·종료 챌린지에는 할 수 있는 행동이 없다.
+                비활성화는 표시상 편의일 뿐, 판정은 언제나 서버가 한다(파일 상단 주석). */}
+            {c.status === 'RECRUITING' && (
+              <button
+                type="button"
+                disabled={c.joined || c.full || joiningId === c.id}
+                onClick={() => handleJoin(c.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                  padding: '9px 0', borderRadius: '8px', border: 'none', fontSize: '14px', fontWeight: 600,
+                  cursor: c.joined || c.full ? 'default' : 'pointer',
+                  background: c.joined || c.full ? 'var(--bg-panel)' : 'var(--primary)',
+                  color: c.joined || c.full ? 'var(--text-muted)' : '#fff'
+                }}
+              >
+                {joiningId === c.id
+                  ? '참가 요청 중…'
+                  : c.joined ? '참가 중' : c.full ? '모집 마감' : `참가하기 (남은 자리 ${c.remainingSeats})`}
+              </button>
+            )}
+            {c.status === 'ACTIVE' && c.joined && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                진행 중 — 기간이 끝나면 완주한 참가자끼리 참가비를 나눠 가져요.
+              </div>
+            )}
           </div>
         ))}
       </div>
