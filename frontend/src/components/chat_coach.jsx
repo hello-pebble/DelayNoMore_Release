@@ -23,7 +23,7 @@ import {
   fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
-  updateTaskCompletion, fetchTodayDashboard
+  updateTaskCompletion, fetchTodayDashboard, fetchAgentTools
 } from '../db_service';
 import { getSessionId } from '../session_id';
 import { getGuestId } from '../guest_id';
@@ -69,11 +69,26 @@ const AGENT_TOOL_LABELS = {
   get_weekly_summary: '주간 완료율 조회',
   get_reflection_history: '회고 기록 조회',
   get_workload_recommendation: '다음 분량 추천 조회',
+  get_progress: '전체 진행 조회',
+  get_plan_history: '변경 이력 조회',
   update_plan_tasks: '계획 수정',
   carry_over_tasks: '미완료 이월'
 };
 
 const agentToolLabel = (name) => AGENT_TOOL_LABELS[name] || name;
+
+// 에이전트 도구 이름 → 추천 질문 칩 문구. 어떤 칩을 보여줄지는 여기가 아니라 도구 카탈로그
+// API(fetchAgentTools)가 정한다 — 서버가 그 상태에서 실제로 노출한 도구만 칩이 되므로,
+// 권한 표(PlanStatus)를 프론트에 재선언하지 않는다. 여기는 문구 사전일 뿐이고, 사전에 없는
+// 도구는 칩을 만들지 않는다(질문으로 표현할 수 없는 도구까지 억지로 칩을 만들지 않는다).
+const AGENT_TOOL_QUESTIONS = {
+  get_today_tasks: '오늘 뭐부터 할까?',
+  get_progress: '지금 어디까지 왔어?',
+  get_weekly_summary: '이번 주 어땠어?',
+  get_plan_history: '그동안 뭐가 바뀌었어?',
+  get_reflection_history: '내 회고에서 보이는 패턴은?',
+  get_workload_recommendation: '다음 계획 분량 추천해줘'
+};
 
 /**
  * 에이전트 실행 추적 패널 — "누가, 무엇을 근거로 답했는가"를 보여준다.
@@ -488,6 +503,9 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
   // (COMPLETED/CANCELLED)되면 완료 체크까지 모든 변경이 막힌다(서버 전면 잠금과 동일 기준).
   const draftSessionIdRef = useRef(null); // 계획 작성 질문 순서와 입력 해석은 서버 세션이 소유한다.
+  // 잠긴 계획에서 보여줄 추천 질문 칩의 근거 — 서버 도구 카탈로그(그 상태에서 모델에게 실제로
+  // 노출되는 도구 목록). 조회 실패는 빈 배열 = 칩 없음(기능 저하일 뿐 고장이 아니다).
+  const [agentToolChips, setAgentToolChips] = useState([]);
   const activeStatus = planStatusOf(draftChecklist);
   const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
   const isTerminal = !!draftChecklist && isTerminalStatus(activeStatus);
@@ -499,6 +517,30 @@ export default function ChatCoach({ agentEnabled = false }) {
     : activeStatus === 'CONFIRMED' ? `${slots.goalName ? `${slots.goalName} ` : ''}전문 에이전트와 대화`
     : isTerminal ? '회고 도우미와 대화'
     : 'AI 코치와 대화';
+
+  // 잠긴 계획으로 전환될 때 도구 카탈로그를 읽어 추천 질문 칩을 만든다. 어떤 칩이 뜰지는
+  // 서버가 노출한 도구가 정하므로(권한 표 재선언 없음), 상태가 바뀌면 칩도 자동으로 따라온다.
+  // mutating 도구는 제외 — 탭 한 번으로 계획이 바뀌는 버튼을 만들지 않는다(질문만 칩이 된다).
+  useEffect(() => {
+    if (!agentEnabled || !isLocked || activePlanId == null) {
+      setAgentToolChips([]);
+      return;
+    }
+    let cancelled = false;
+    fetchAgentTools(activePlanId)
+      .then((catalog) => {
+        if (cancelled) return;
+        const questions = (catalog?.tools || [])
+          .filter((tool) => !tool.mutating)
+          .map((tool) => AGENT_TOOL_QUESTIONS[tool.name])
+          .filter(Boolean);
+        setAgentToolChips(questions);
+      })
+      .catch(() => {
+        if (!cancelled) setAgentToolChips([]);
+      });
+    return () => { cancelled = true; };
+  }, [agentEnabled, isLocked, activePlanId, activeStatus]);
 
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
@@ -651,10 +693,12 @@ export default function ChatCoach({ agentEnabled = false }) {
           ? `${restoredStatus === 'COMPLETED' ? '완료' : '중단'}된 "${goalName}" 계획을 불러왔습니다. 종결된 계획은 더 이상 수정하거나 완료 체크할 수 없어요 — 기록 확인과 질문만 가능합니다.`
           : kind === 'restored'
           ? (locked
-            ? `고정된 "${goalName}" 계획을 서버 보관함에서 불러왔습니다. 고정된 계획은 대화로 수정할 수 없어요 — 체크리스트 탭에서 완료 체크를 이어가세요.`
+            // 문구를 에이전트 가용 여부로 가르지 않는다 — 복원은 마운트 직후라 헬스체크 응답 전이고,
+            // 그 시점의 agentEnabled는 대체로 false다(레이스). 양쪽 모드에서 모두 참인 문구를 쓴다.
+            ? `고정된 "${goalName}" 계획을 불러왔습니다. 지금은 실행 모드예요 — 완료 체크는 체크리스트 탭에서 이어가고, 진행 상황이나 궁금한 점은 여기서 물어보세요.`
             : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 체크리스트 탭을 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
           : (locked
-            ? `보관함의 "${goalName}"을 불러왔습니다. 이 계획은 고정되어 대화로 수정할 수 없어요 — 완료 체크만 가능합니다.`
+            ? `보관함의 "${goalName}"을 불러왔습니다. 고정된 계획이라 내용은 그대로 두고 실행에 집중해요 — 완료 체크는 체크리스트 탭에서, 질문은 여기서 하세요.`
             : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
       }
     ]);
@@ -1277,7 +1321,9 @@ export default function ChatCoach({ agentEnabled = false }) {
       {
         id: generateUniqueId('bot'),
         sender: 'bot',
-        text: '🔒 계획을 고정했습니다! 이제 대화로는 수정할 수 없어요 — 체크리스트 탭을 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
+        text: agentEnabled
+          ? '🔒 계획을 고정했습니다! 이제 실행 모드예요 — 체크리스트 탭을 하나씩 완료해 나가고, 진행 상황·미룬 일 이월·궁금한 점은 여기서 물어보세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요.'
+          : '🔒 계획을 고정했습니다! 이제 대화로는 수정할 수 없어요 — 체크리스트 탭을 하나씩 완료해 나가세요. 매일 "오늘 마무리"에서 회고를 저장하면 그날이 마무리되고, 마지막 날에는 회고 저장과 함께 전체 계획을 완료할 수 있어요(보관된 계획 행의 ✓ 버튼으로도 가능).'
       }
     ]);
   };
@@ -1685,25 +1731,37 @@ export default function ChatCoach({ agentEnabled = false }) {
         <div ref={chatEndRef} />
       </div>
 
-      {/* 계획 상태 안내 칩 — 대화창은 "왜 대화 수정이 안 되는지"만 알려준다. 상태 전이 버튼
-          (저장·중단·다시 만들기)은 체크리스트 패널의 계획 동작 바로, 전체 계획 완료는 회고 저장
-          연동(maybeOfferPlanCompletion)·보관함 행 ✓ 버튼으로 이동했다. DRAFT는 표시할 것이 없다. */}
+      {/* 계획 상태 안내 + 추천 질문 칩 — 잠긴 계획에서 "안 되는 것"을 반복하는 대신 "물어볼 수
+          있는 것"을 보여준다. 질문 칩은 서버 도구 카탈로그에서 파생되므로(위 effect) 상태별 권한
+          표를 프론트에 재선언하지 않는다. 상태 전이 버튼(저장·중단·다시 만들기)은 체크리스트
+          패널의 계획 동작 바에 있다. DRAFT는 표시할 것이 없다. */}
       {isLocked && (
         <div style={{ padding: '0 12px 10px', display: 'flex', gap: '6px', flexWrap: 'wrap', flexShrink: 0 }}>
           {activeStatus === 'CONFIRMED' && (
             <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
               <Lock size={12} />
               {agentEnabled
-                ? '고정된 계획 — 전문 에이전트가 실행을 함께합니다 · 대화 수정 불가'
+                ? '실행 모드 — 진행 질문·이월은 대화로, 완료 체크는 체크리스트 탭에서'
                 : '고정된 계획 — 대화 수정 불가'}
             </span>
           )}
           {isTerminal && (
             <span style={{ ...quickReplyButtonStyle, cursor: 'default', color: 'var(--text-muted)' }}>
               {activeStatus === 'COMPLETED' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-              {activeStatus === 'COMPLETED' ? '완료된 계획' : '중단된 계획'} — 수정 불가
+              {activeStatus === 'COMPLETED' ? '완료된 계획 — 기록을 함께 돌아봐요' : '중단된 계획 — 기록을 함께 돌아봐요'}
             </span>
           )}
+          {agentToolChips.map((question) => (
+            <button
+              key={question}
+              type="button"
+              onClick={() => sendQuickReply(question)}
+              disabled={isTyping}
+              style={quickReplyButtonStyle}
+            >
+              {question}
+            </button>
+          ))}
         </div>
       )}
 
@@ -1723,6 +1781,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           placeholder={
+            isLocked && agentEnabled ? "전문 에이전트에게 물어보세요 (예: 오늘 뭐부터 할까?)" :
             isLocked ? "질문을 입력해 주세요... (계획은 고정되어 수정 불가)" :
             draftChecklist ? "수정 요청이나 질문을 입력해 주세요..." :
             "대답을 입력해 주세요..."
