@@ -35,8 +35,10 @@
 
 세부 변화 두 가지: `stream-usage` 스위치는 예전엔 요청의 `stream_options` 필드 자체를 뺐지만
 그 필드는 이제 LangChain4j가 관리하므로 **계측(로그 기록) 차단** 스위치로 남는다. usage의
-`cost` 필드는 LangChain4j가 내려주지 않지만 기존에도 usage accounting을 켜지 않아 항상 null이었다
-(실질 변화 없음). 전송 계약 테스트는 RestClient 전용 MockRestServiceServer 대신 **JDK 내장
+`cost` 필드는 LangChain4j `TokenUsage`가 노출하지 않아 **비용($) 계측이 사라진다** — 평가
+리포트의 비용 열이 실제로 비었다(실측: [QA_RESULT_v0.24.0.md](docs/QA_RESULT_v0.24.0.md) 4절).
+토큰 수는 그대로 남으므로 단가 환산은 가능하고, 정확한 값이 다시 필요하면 그때 복원을 판단한다.
+전송 계약 테스트는 RestClient 전용 MockRestServiceServer 대신 **JDK 내장
 HttpServer 가짜 업스트림**으로 재작성해, reasoning off가 실제 요청 바디에 실리는지·도구 스펙
 변환·tool_call id 합성·스트리밍 델타 릴레이를 실제 HTTP로 검증한다.
 
