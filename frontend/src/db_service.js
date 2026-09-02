@@ -183,6 +183,10 @@ export const fetchTodayDashboard = () => requestJson('/dashboard/today', null, '
 //              participantCount, remainingSeats, full, joined, createdAt }] }
 // joinChallenge 실패는 err.code로 분기한다 — CHALLENGE_FULL(409, 마지막 자리를 남이 가져감) /
 // CHALLENGE_ALREADY_JOINED(409) / POINTS_INSUFFICIENT(400) / CHALLENGE_NOT_FOUND(404).
+// 참가자 현황(리더보드) — 완료율 내림차순, 익명(배열 순서 = 순위, me 플래그로 내 줄 표시).
+// 응답: [{ratePercent, done, total, me, payout}] — payout은 정산 후에만 값이 있다.
+export const fetchChallengeParticipants = (id) => requestJson(`/challenges/${id}/participants`, null, 'GET');
+
 export const fetchChallenges = () => requestJson('/challenges', null, 'GET');
 export const joinChallenge = (id) => requestJson(`/challenges/${id}/join`, null);
 

@@ -754,6 +754,15 @@
   #       인덱스 WHERE절에 settled_at IS NULL 포함
   ```
 
+- [ ] **참가자 현황(리더보드)** — 참가자가 있는 카드의 "참가자 현황"을 펼치면 완료율 내림차순
+      순위·진행 바가 보이고, 내 줄만 강조(+"나")된다. 닉네임·게스트 ID 등 **식별자는 어디에도
+      노출되지 않는다**(익명 — 게스트 ID는 데이터를 여는 키라 남에게 보이면 안 된다):
+
+  ```bash
+  curl -s http://localhost/api/v1/challenges/1/participants -H "X-Guest-Id: qa-viewer-0001"
+  # 기대: [{"ratePercent":..,"done":..,"total":..,"me":false,"payout":null}, ...] — owner 필드 없음
+  ```
+
 - [ ] **완주 분배·환불·이중 정산 방지**는 화면으로 재현하기 어렵다(기간 경과 필요) — 단위·동시성
       테스트가 게이트다: `./gradlew test --tests '*Challenge*'` 전부 통과, Docker 있는 환경이면
       `ChallengeSettlementConcurrencyIT`(naive 대조군이 이중 지급을 실증, safe가 1회분 증명) 포함

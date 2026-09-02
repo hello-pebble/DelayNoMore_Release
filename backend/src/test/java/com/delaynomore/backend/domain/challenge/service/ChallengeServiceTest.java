@@ -293,6 +293,45 @@ class ChallengeServiceTest {
         assertThat(challengeRepository.balanceOf("guest-b-0001")).isEqualTo(INITIAL_BALANCE);
     }
 
+    // === 참가자 현황(리더보드) ===
+
+    @Test
+    void 참가자현황_완료율_내림차순으로_정렬되고_내_줄에만_me가_선다() {
+        long id = open(5, 100);
+        joinAs("guest-high", id, true);   // 2/2 = 100%
+        joinAs("guest-low", id, false);   // 1/2 = 50%
+
+        var board = challengeService.participants(id, "guest-low");
+
+        assertThat(board).hasSize(2);
+        assertThat(board.get(0).ratePercent()).isEqualTo(100);
+        assertThat(board.get(0).me()).isFalse();
+        assertThat(board.get(1).ratePercent()).isEqualTo(50);
+        assertThat(board.get(1).me()).isTrue();
+        // 미정산이라 payout은 전부 null이다.
+        assertThat(board).allSatisfy(p -> assertThat(p.payout()).isNull());
+    }
+
+    @Test
+    void 참가자현황_연결계획을_삭제한_참가자는_0퍼센트로_선다() {
+        long id = open(5, 100);
+        joinAs("guest-a-0001", id, true);
+        planRepository.deleteById(participantOf(id, "guest-a-0001").planId(), plan -> { });
+
+        var board = challengeService.participants(id, "guest-a-0001");
+
+        assertThat(board.get(0).ratePercent()).isZero();
+        assertThat(board.get(0).total()).isZero();
+    }
+
+    @Test
+    void 참가자현황_없는_챌린지면_404() {
+        assertThatThrownBy(() -> challengeService.participants(99999L, "guest-a-0001"))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.CHALLENGE_NOT_FOUND);
+    }
+
     @Test
     void 정산_기간이_남은_진행중_챌린지는_건드리지_않는다() {
         long id = open(2, 100); // durationDays=14 — endsAt이 미래

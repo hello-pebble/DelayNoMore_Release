@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge.controller;
 
 import com.delaynomore.backend.domain.challenge.dto.ChallengeListResponse;
+import com.delaynomore.backend.domain.challenge.dto.ChallengeParticipantResponse;
 import com.delaynomore.backend.domain.challenge.dto.JoinResponse;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.global.auth.Owner;
@@ -15,6 +16,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * Goal Challenge API — 정원이 한정된 목표 챌린지의 조회·참가.
@@ -49,6 +52,15 @@ public class ChallengeController {
             @Owner String owner) {
         challengeService.settleDue();
         return ApiResponse.ok(challengeService.list(owner));
+    }
+
+    // 참가자 현황(리더보드) — 완료율 내림차순, 익명(순위 + me 플래그만). 카드를 펼칠 때만
+    // 호출되므로 목록 응답에 싣지 않는다(챌린지×참가자만큼 계획 조회가 목록마다 도는 것을 방지).
+    @Operation(summary = "챌린지 참가자 현황 — 완료율 순위(익명)")
+    @GetMapping("/{id}/participants")
+    public ApiResponse<List<ChallengeParticipantResponse>> participants(
+            @PathVariable long id, @Owner String owner) {
+        return ApiResponse.ok(challengeService.participants(id, owner));
     }
 
     // 동시 참가 요청에서 정원을 초과시키지 않는 것이 이 엔드포인트의 전부다.

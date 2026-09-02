@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
 import com.delaynomore.backend.domain.challenge.dto.ChallengeListResponse;
+import com.delaynomore.backend.domain.challenge.dto.ChallengeParticipantResponse;
 import com.delaynomore.backend.domain.challenge.dto.ChallengeResponse;
 import com.delaynomore.backend.domain.challenge.dto.JoinResponse;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -157,6 +159,30 @@ public class ChallengeService {
         }
         challengeRepository.findParticipants(challenge.id())
                 .forEach(p -> challengeRepository.recordPayout(challenge.id(), p.owner(), challenge.entryFee()));
+    }
+
+    /**
+     * 참가자 현황(리더보드) — 완료율 내림차순, 배열 순서가 곧 순위다. 완료율의 계산 소유권은
+     * 서버(Plan.countAllTasks)이고, 소급 조작은 PAST_TASK_LOCKED가 막고 있어 순위 근거로 쓸 만하다.
+     * 연결 계획이 삭제된 참가자는 완주 증명이 없으므로 0%로 선다(정산의 패배 판정과 같은 규칙).
+     * 익명 응답인 이유는 DTO 주석 참고 — viewer는 me 플래그를 채우는 데만 쓴다.
+     */
+    public List<ChallengeParticipantResponse> participants(long challengeId, String viewer) {
+        challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.CHALLENGE_NOT_FOUND));
+        return challengeRepository.findParticipants(challengeId).stream()
+                .map(p -> {
+                    Plan.TaskCounts counts = p.planId() == null ? new Plan.TaskCounts(0, 0)
+                            : planRepository.findById(p.planId())
+                                    .map(Plan::countAllTasks)
+                                    .orElse(new Plan.TaskCounts(0, 0));
+                    int rate = counts.total() == 0 ? 0
+                            : Math.round(counts.completed() * 100f / counts.total());
+                    return new ChallengeParticipantResponse(
+                            rate, counts.completed(), counts.total(), p.owner().equals(viewer), p.payout());
+                })
+                .sorted(Comparator.comparingInt(ChallengeParticipantResponse::ratePercent).reversed())
+                .toList();
     }
 
     // 계획이 고정될 때마다 호출된다 — 비슷한 조건의 계획이 SEED_THRESHOLD명분 모이면 챌린지를 연다.

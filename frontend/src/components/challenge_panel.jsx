@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Users, Coins } from 'lucide-react';
-import { fetchChallenges, joinChallenge } from '../db_service';
+import { Users, Coins, ChevronDown, ChevronUp } from 'lucide-react';
+import { fetchChallenges, joinChallenge, fetchChallengeParticipants } from '../db_service';
 
 // Goal Challenge 패널 — 정원이 한정된 목표 챌린지의 목록·참가(v0.21.0).
 // 개설 폼은 없다(v0.23.0): 챌린지는 사용자가 만드는 것이 아니라, 비슷한 조건(기간 + 목적)의
@@ -40,6 +40,24 @@ export default function ChallengePanel() {
   const [loading, setLoading] = useState(true);
   const [joiningId, setJoiningId] = useState(null);
   const [notice, setNotice] = useState('');
+  // 참가자 현황(리더보드) — 챌린지 id → 응답 배열. 펼칠 때만 조회하고(목록 응답을 무겁게 하지
+  // 않기 위해 별도 엔드포인트), 접었다 펴면 다시 읽는다(완료율은 계속 변하는 값이라 캐시 무가치).
+  const [boardId, setBoardId] = useState(null);
+  const [board, setBoard] = useState([]);
+
+  const toggleBoard = async (id) => {
+    if (boardId === id) {
+      setBoardId(null);
+      return;
+    }
+    try {
+      const rows = await fetchChallengeParticipants(id);
+      setBoard(rows);
+      setBoardId(id);
+    } catch (err) {
+      setNotice(err.message);
+    }
+  };
 
   const reload = useCallback(async () => {
     try {
@@ -160,6 +178,41 @@ export default function ChallengePanel() {
             {c.status === 'ACTIVE' && c.joined && (
               <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                 진행 중 — 기간이 끝나면 완주한 참가자끼리 참가비를 나눠 가져요.
+              </div>
+            )}
+            {/* 참가자 현황(리더보드) — 서버가 완료율 내림차순으로 내려준 순서가 곧 순위다.
+                익명 응답이라 이름 없이 순위·완료율·"나" 표시만 그린다. */}
+            {c.participantCount > 0 && (
+              <button
+                type="button"
+                onClick={() => toggleBoard(c.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '4px', alignSelf: 'flex-start',
+                  background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                  fontSize: '12px', color: 'var(--text-muted)'
+                }}
+              >
+                참가자 현황
+                {boardId === c.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
+            )}
+            {boardId === c.id && (
+              <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
+                {board.map((p, i) => (
+                  <div key={i} style={{
+                    display: 'flex', alignItems: 'center', gap: '8px',
+                    color: p.me ? 'var(--text-main)' : 'var(--text-muted)',
+                    fontWeight: p.me ? 600 : 400
+                  }}>
+                    <span style={{ width: '30px' }}>{i + 1}위</span>
+                    <span style={{ flex: 1, height: '6px', background: 'var(--bg-panel)', borderRadius: '999px', overflow: 'hidden' }}>
+                      <span style={{ display: 'block', height: '100%', width: `${p.ratePercent}%`, background: p.me ? 'var(--primary)' : 'var(--text-muted)', opacity: p.me ? 1 : 0.4 }} />
+                    </span>
+                    <span>{p.ratePercent}% ({p.done}/{p.total})</span>
+                    {p.me && <span style={{ color: 'var(--primary)' }}>나</span>}
+                    {p.payout != null && <span>{p.payout > 0 ? `+${p.payout}P` : '미완주'}</span>}
+                  </div>
+                ))}
               </div>
             )}
           </div>
