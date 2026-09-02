@@ -6,48 +6,55 @@ import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonSchemaElement;
+import dev.langchain4j.model.chat.request.json.JsonStringSchema;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * OpenRouter HTTP 게이트웨이. HTTP 호출·SSE 델타 추출까지만 담당하고,
- * 프롬프트 조립과 응답 해석(정제·파싱)은 Service 쪽(AiPromptBuilder/AiResponseParser)에 맡긴다.
+ * OpenRouter 게이트웨이. HTTP 전송(요청 바디 조립·SSE 파싱·tool_calls 추출)은 LangChain4j에
+ * 맡기고, 이 클래스는 <b>이 서비스 고유의 계약</b>만 담당한다: 호출부가 쓰는 메시지·도구 형식
+ * (OpenAI 호환 Map — 프롬프트 조립부와 도구 카탈로그 API가 그대로 쓴다)을 LangChain4j 타입으로
+ * 변환하고, 호출 라벨({@link AiCallSite})별 토큰 사용량을 계측한다. 프롬프트 조립과 응답
+ * 해석(정제·파싱)은 여전히 Service 쪽(AiPromptBuilder/AiResponseParser)의 몫이다.
  *
- * <p>토큰 사용량 계측도 여기서 한다 — 모든 업스트림 호출이 이 클래스를 지나므로, 호출부가
- * 각자 세는 것보다 여기서 한 번 세는 편이 빠뜨릴 여지가 없다. 그래서 모든 호출 메서드가
- * {@link AiCallSite}를 첫 인자로 받는다(어느 경로가 얼마나 쓰는지 구분하려면 호출부만 아는
- * 정보라 라벨을 넘겨받아야 한다).
+ * <p>토큰 사용량 계측이 여기 집중되는 이유는 전과 같다 — 모든 업스트림 호출이 이 클래스를
+ * 지나므로, 호출부가 각자 세는 것보다 여기서 한 번 세는 편이 빠뜨릴 여지가 없다.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class OpenRouterClient {
 
+    private final ChatModel chatModel;
+    private final StreamingChatModel streamingChatModel;
     private final RestClient openRouterRestClient;
     private final OpenRouterProperties properties;
-    private final JsonMapper jsonMapper;
     private final AiUsageLogger usageLogger;
-
-    private static final String COMPLETIONS_PATH = "/chat/completions";
-    private static final String KEY_CHECK_PATH = "/auth/key";
-    private static final String SSE_DATA_PREFIX = "data:";
-    private static final String SSE_DONE = "[DONE]";
 
     // 스트리밍 델타 소비자 — SSE 전송(IOException)을 그대로 던질 수 있게 별도 함수형 인터페이스로 둔다.
     @FunctionalInterface
@@ -79,9 +86,10 @@ public class OpenRouterClient {
         }
     }
 
+    // 키 점검은 LLM 호출이 아니라 LangChain4j 밖이다 — 기존 RestClient로 그대로 확인한다.
     public KeyCheck checkKey() {
         try {
-            openRouterRestClient.get().uri(KEY_CHECK_PATH).retrieve().toBodilessEntity();
+            openRouterRestClient.get().uri("/auth/key").retrieve().toBodilessEntity();
             return new KeyCheck(true, null);
         } catch (RestClientResponseException e) {
             return new KeyCheck(false, "인증 오류 (" + e.getStatusCode().value() + ")");
@@ -100,27 +108,18 @@ public class OpenRouterClient {
      * 도구 목록을 함께 보내는 비스트리밍 호출(에이전트 루프용). tools가 null·빈 목록이면 기존
      * complete()와 완전히 같은 요청이 나간다 — 기존 경로의 동작을 바꾸지 않기 위해서다.
      *
-     * 스트리밍이 아닌 이유: 도구 호출 인자는 델타로 쪼개져 오고 인덱스별로 이어 붙여야 완성되는데,
-     * 어차피 인자가 다 모이기 전에는 도구를 실행할 수 없다. 루프의 중간 턴은 비스트리밍으로 받고,
-     * 사용자가 기다리는 동안의 체감은 도구 호출 진행 상황을 SSE로 흘려보내 채운다.
+     * 스트리밍이 아닌 이유: 도구 호출 인자는 다 모이기 전에는 실행할 수 없다. 루프의 중간 턴은
+     * 비스트리밍으로 받고, 사용자가 기다리는 동안의 체감은 도구 호출 진행 상황을 SSE로 채운다.
      */
     public Completion completeWithTools(AiCallSite site, List<Map<String, Object>> messages, int maxTokens,
                                         List<Map<String, Object>> tools) {
         try {
-            String responseBody = openRouterRestClient.post()
-                    .uri(COMPLETIONS_PATH)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(buildBody(messages, maxTokens, false, tools))
-                    .retrieve()
-                    .body(String.class);
-            if (responseBody == null) {
-                throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
-            }
-            JsonNode root = jsonMapper.readTree(responseBody);
-            JsonNode message = root.path("choices").path(0).path("message");
-            TokenUsage usage = TokenUsage.from(root.path("usage"));
+            ChatResponse response = chatModel.chat(buildRequest(messages, maxTokens, tools));
+            TokenUsage usage = toDomainUsage(response.metadata().tokenUsage());
             usageLogger.record(site, usage);
-            return new Completion(message.path("content").asString(""), extractToolCalls(message), usage);
+            AiMessage message = response.aiMessage();
+            String content = message.text() == null ? "" : message.text();
+            return new Completion(content, extractToolCalls(message), usage);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -129,122 +128,196 @@ public class OpenRouterClient {
         }
     }
 
-    // message.tool_calls[] → ToolCall 목록. 필드가 없거나 형식이 어긋나면 빈 목록으로 본다
-    // (도구 미지원 모델이 이 필드를 아예 안 내려주므로, 없음을 정상 경로로 다뤄야 폴백이 작동한다).
-    private static List<ToolCall> extractToolCalls(JsonNode message) {
-        JsonNode calls = message.path("tool_calls");
-        if (!calls.isArray() || calls.isEmpty()) {
-            return List.of();
+    /**
+     * 스트리밍 호출 — content 델타만 onDelta로 넘긴다. LangChain4j 콜백은 별도 스레드에서 오지만
+     * 호출부는 블로킹 servlet SSE 릴레이라 완료까지 기다리는 동기 브리지를 둔다.
+     *
+     * <p>사용량은 스트림이 끝나야 알 수 있으므로 완료 후 기록한다. 중간에 끊기면(업스트림 오류,
+     * 프론트 연결 종료) 그 요청의 사용량은 기록하지 않는다 — 추정치를 지어내기보다 비워 두는
+     * 쪽을 택한 기존 정책 그대로다.
+     */
+    public void streamCompletion(AiCallSite site, List<Map<String, Object>> messages, int maxTokens,
+                                 DeltaConsumer onDelta) {
+        CountDownLatch done = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        AtomicReference<TokenUsage> usage = new AtomicReference<>(TokenUsage.EMPTY);
+
+        streamingChatModel.chat(buildRequest(messages, maxTokens, null), new StreamingChatResponseHandler() {
+            @Override
+            public void onPartialResponse(String delta) {
+                if (failure.get() != null || delta == null || delta.isEmpty()) {
+                    return; // 이미 실패했으면(프론트 연결 종료 등) 남은 델타는 버린다
+                }
+                try {
+                    onDelta.accept(delta);
+                } catch (Exception e) {
+                    failure.compareAndSet(null, e);
+                }
+            }
+
+            @Override
+            public void onCompleteResponse(ChatResponse response) {
+                usage.set(toDomainUsage(response.metadata().tokenUsage()));
+                done.countDown();
+            }
+
+            @Override
+            public void onError(Throwable error) {
+                failure.compareAndSet(null, error);
+                done.countDown();
+            }
+        });
+
+        try {
+            done.await();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
         }
-        List<ToolCall> result = new ArrayList<>();
-        for (JsonNode call : calls) {
-            JsonNode function = call.path("function");
-            String name = function.path("name").asString("");
-            if (name.isBlank()) {
-                continue;
+
+        Throwable error = failure.get();
+        if (error != null) {
+            if (error instanceof IOException io) {
+                throw new UncheckedIOException(io); // 프론트 연결 종료 — 호출부의 실패 경로가 처리한다
             }
-            // id가 없는 모델도 있다 — tool 응답 메시지를 짝지으려면 반드시 있어야 하므로 합성한다.
-            String id = call.path("id").asString("");
-            if (id.isBlank()) {
-                id = "call_" + result.size();
+            log.error("Error streaming from OpenRouter", error);
+            throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
+        }
+        // 스위치를 끄면 계측만 생략한다. 예전에는 요청의 stream_options 자체를 뺐지만, 그 필드는
+        // 이제 LangChain4j가 관리한다 — 탈출구의 목적(이상 동작 시 로그 오염 방지)은 유지된다.
+        if (properties.isStreamUsageEnabled()) {
+            usageLogger.record(site, usage.get());
+        }
+    }
+
+    // ── OpenAI 호환 Map ↔ LangChain4j 타입 변환 ─────────────────────────────────────────
+
+    private ChatRequest buildRequest(List<Map<String, Object>> messages, int maxTokens,
+                                     List<Map<String, Object>> tools) {
+        ChatRequest.Builder builder = ChatRequest.builder().messages(toChatMessages(messages));
+        if (maxTokens > 0) {
+            builder.maxOutputTokens(maxTokens);
+        }
+        if (tools != null && !tools.isEmpty()) {
+            // tool_choice는 기본(auto)에 맡긴다 — 노출 자체를 계획 상태로 제한하고 있으므로
+            // 여기서 더 조일 필요가 없다.
+            builder.toolSpecifications(toSpecifications(tools));
+        }
+        return builder.build();
+    }
+
+    /**
+     * 호출부의 OpenAI 호환 메시지(Map)를 LangChain4j 메시지로 옮긴다. 호출부(프롬프트 조립부·
+     * 에이전트 루프)의 형식을 바꾸지 않기 위한 변환이다 — 대화 이력을 되돌려 넣는 assistant
+     * tool_calls 턴과 tool 결과 턴까지 네 가지 role을 전부 다룬다.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<ChatMessage> toChatMessages(List<Map<String, Object>> messages) {
+        List<ChatMessage> result = new ArrayList<>();
+        for (Map<String, Object> message : messages) {
+            String role = String.valueOf(message.get("role"));
+            String content = message.get("content") == null ? "" : String.valueOf(message.get("content"));
+            switch (role) {
+                case "system" -> result.add(SystemMessage.from(content));
+                case "user" -> result.add(UserMessage.from(content));
+                case "assistant" -> {
+                    List<Map<String, Object>> calls = (List<Map<String, Object>>) message.get("tool_calls");
+                    if (calls == null || calls.isEmpty()) {
+                        result.add(AiMessage.from(content));
+                    } else {
+                        result.add(AiMessage.builder()
+                                .text(content)
+                                .toolExecutionRequests(calls.stream().map(call -> {
+                                    Map<String, Object> function = (Map<String, Object>) call.get("function");
+                                    return ToolExecutionRequest.builder()
+                                            .id(String.valueOf(call.get("id")))
+                                            .name(String.valueOf(function.get("name")))
+                                            .arguments(String.valueOf(function.get("arguments")))
+                                            .build();
+                                }).toList())
+                                .build());
+                    }
+                }
+                case "tool" -> result.add(ToolExecutionResultMessage.from(
+                        String.valueOf(message.get("tool_call_id")), null, content));
+                default -> result.add(UserMessage.from(content));
             }
-            result.add(new ToolCall(id, name, function.path("arguments").asString("{}")));
         }
         return result;
     }
 
-    // 스트리밍 호출 — 업스트림 SSE를 라인 단위로 읽어 content 델타만 onDelta로 넘긴다.
-    // 사용량은 스트림 맨 끝의 usage 청크에서만 오므로(stream_options.include_usage), 릴레이가
-    // 끝난 뒤에 기록한다. 중간에 예외로 끊기면 그 요청의 사용량은 알 수 없다 — 업스트림이 아직
-    // 안 보냈기 때문이라, 추정치를 지어내기보다 기록을 남기지 않는 쪽을 택했다.
-    public void streamCompletion(AiCallSite site, List<Map<String, Object>> messages, int maxTokens,
-                                 DeltaConsumer onDelta) {
-        openRouterRestClient.post()
-                .uri(COMPLETIONS_PATH)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.TEXT_EVENT_STREAM)
-                .body(buildBody(messages, maxTokens, true, null))
-                .exchange((request, response) -> {
-                    if (!response.getStatusCode().is2xxSuccessful()) {
-                        throw new BusinessException(ErrorCode.AI_UPSTREAM_ERROR);
-                    }
-                    usageLogger.record(site, relayDeltas(response, onDelta));
-                    return null;
-                });
-    }
-
-    // 델타를 흘려보내면서 usage 청크를 골라 담는다. usage 청크는 choices가 빈 배열이라
-    // extractDelta가 자연스럽게 빈 문자열을 돌려주고, 프론트로는 아무것도 새지 않는다.
-    private TokenUsage relayDeltas(ClientHttpResponse response, DeltaConsumer onDelta) throws IOException {
-        TokenUsage usage = TokenUsage.EMPTY;
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(response.getBody(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isEmpty() || line.startsWith(":")) continue; // 빈 줄/주석(: OPENROUTER PROCESSING)
-                if (!line.startsWith(SSE_DATA_PREFIX)) continue;
-                String payload = line.substring(SSE_DATA_PREFIX.length()).trim();
-                if (SSE_DONE.equals(payload)) break;
-                TokenUsage chunkUsage = extractUsage(payload);
-                if (!chunkUsage.isEmpty()) {
-                    usage = chunkUsage; // 누적이 아니라 교체 — 업스트림이 내려주는 값이 이미 누계다
-                }
-                String delta = extractDelta(payload);
-                if (delta != null && !delta.isEmpty()) {
-                    onDelta.accept(delta);
-                }
+    // 모델의 도구 호출 요청 → ToolCall 목록. 이름 없는 호출은 버린다(실행할 수 없다).
+    // id가 없는 모델도 있다 — tool 응답 메시지를 짝지으려면 반드시 있어야 하므로 합성한다.
+    private static List<ToolCall> extractToolCalls(AiMessage message) {
+        if (!message.hasToolExecutionRequests()) {
+            return List.of();
+        }
+        List<ToolCall> result = new ArrayList<>();
+        for (ToolExecutionRequest request : message.toolExecutionRequests()) {
+            String name = request.name();
+            if (name == null || name.isBlank()) {
+                continue;
             }
+            String id = request.id();
+            if (id == null || id.isBlank()) {
+                id = "call_" + result.size();
+            }
+            String arguments = request.arguments();
+            result.add(new ToolCall(id, name, (arguments == null || arguments.isBlank()) ? "{}" : arguments));
         }
-        return usage;
+        return result;
     }
 
-    private String extractDelta(String payload) {
-        try {
-            JsonNode node = jsonMapper.readTree(payload);
-            return node.path("choices").path(0).path("delta").path("content").asString("");
-        } catch (Exception e) {
-            return null; // keep-alive/부분 라인 등은 무시
+    // 도구 카탈로그의 OpenAI function 스펙(Map — AgentToolRegistry.specsFor가 만들고 카탈로그
+    // API도 같은 것을 내린다)을 LangChain4j 스펙으로 옮긴다. 권한 필터링은 레지스트리가 이미
+    // 끝냈다 — 여기서는 형식만 바꾼다.
+    @SuppressWarnings("unchecked")
+    private static List<ToolSpecification> toSpecifications(List<Map<String, Object>> tools) {
+        List<ToolSpecification> result = new ArrayList<>();
+        for (Map<String, Object> tool : tools) {
+            Map<String, Object> function = (Map<String, Object>) tool.get("function");
+            result.add(ToolSpecification.builder()
+                    .name(String.valueOf(function.get("name")))
+                    .description(String.valueOf(function.get("description")))
+                    .parameters(toObjectSchema((Map<String, Object>) function.get("parameters")))
+                    .build());
         }
+        return result;
     }
 
-    // 스트림 청크에서 usage를 읽는다. 대부분의 청크에는 없으므로 없음이 정상 경로다.
-    private TokenUsage extractUsage(String payload) {
-        try {
-            return TokenUsage.from(jsonMapper.readTree(payload).path("usage"));
-        } catch (Exception e) {
+    @SuppressWarnings("unchecked")
+    private static JsonObjectSchema toObjectSchema(Map<String, Object> schema) {
+        JsonObjectSchema.Builder builder = JsonObjectSchema.builder();
+        if (schema.get("description") instanceof String description) {
+            builder.description(description);
+        }
+        Map<String, Object> properties = (Map<String, Object>) schema.getOrDefault("properties", Map.of());
+        properties.forEach((name, sub) -> builder.addProperty(name, toElement((Map<String, Object>) sub)));
+        if (schema.get("required") instanceof List<?> required && !required.isEmpty()) {
+            builder.required((List<String>) required);
+        }
+        return builder.build();
+    }
+
+    // ponytail: 현재 도구 스키마는 string·object뿐 — 다른 타입(integer·array·enum 등)을 쓰기
+    // 시작하면 case를 추가한다.
+    private static JsonSchemaElement toElement(Map<String, Object> schema) {
+        String description = schema.get("description") instanceof String d ? d : null;
+        return switch (String.valueOf(schema.getOrDefault("type", "string"))) {
+            case "object" -> toObjectSchema(schema);
+            default -> JsonStringSchema.builder().description(description).build();
+        };
+    }
+
+    // LangChain4j 사용량 → 도메인 값 객체. cost는 OpenRouter 확장 필드라 LangChain4j가 내려주지
+    // 않는다 — 기존에도 usage accounting을 켜지 않아 항상 null이었으므로 실질 변화는 없다.
+    private static TokenUsage toDomainUsage(dev.langchain4j.model.output.TokenUsage usage) {
+        if (usage == null) {
             return TokenUsage.EMPTY;
         }
-    }
-
-    // 공통 요청 바디 조립. maxTokens<=0 이면 상한 없음, stream이면 SSE 스트리밍을 켠다.
-    // tools가 비어 있지 않으면 function calling을 켠다 — 기존 두 경로(초안·자유 대화)는 null을
-    // 넘겨 요청 형태가 예전과 한 글자도 달라지지 않는다.
-    private Map<String, Object> buildBody(List<Map<String, Object>> messages, int maxTokens, boolean stream,
-                                          List<Map<String, Object>> tools) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", properties.model());
-        body.put("messages", messages);
-        // 추론(thinking) 계열 모델의 사고를 끈다 — 이 용도엔 불필요하고, 켜두면 응답이 수십 초 걸리고
-        // 사고 텍스트가 섞여 파싱을 방해한다. 지원하지 않는 모델은 이 값을 무시한다.
-        body.put("reasoning", Map.of("enabled", false));
-        if (maxTokens > 0) {
-            body.put("max_tokens", maxTokens);
-        }
-        if (stream) {
-            body.put("stream", true);
-            // 스트리밍은 마지막에 usage 청크를 따로 요청해야 사용량을 알 수 있다(비스트리밍은 응답
-            // 본문에 항상 들어 있다). OpenAI 호환 필드지만 업스트림 모델에 따라 무시될 수 있어,
-            // 이상 동작 시 코드 배포 없이 끌 수 있게 스위치를 뒀다 — tool-calling과 같은 방식.
-            if (properties.isStreamUsageEnabled()) {
-                body.put("stream_options", Map.of("include_usage", true));
-            }
-        }
-        if (tools != null && !tools.isEmpty()) {
-            body.put("tools", tools);
-            // auto — 도구를 쓸지 말지는 모델이 정한다. 단순 인사에도 도구를 부르게 강제하면
-            // 왕복만 늘어난다. 노출 자체를 상태로 제한하고 있으므로 여기서 더 조일 필요가 없다.
-            body.put("tool_choice", "auto");
-        }
-        return body;
+        int prompt = usage.inputTokenCount() == null ? 0 : usage.inputTokenCount();
+        int completion = usage.outputTokenCount() == null ? 0 : usage.outputTokenCount();
+        int total = usage.totalTokenCount() == null ? prompt + completion : usage.totalTokenCount();
+        return new TokenUsage(prompt, completion, total, null);
     }
 }

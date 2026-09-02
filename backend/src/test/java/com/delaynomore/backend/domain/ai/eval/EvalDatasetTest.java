@@ -3,6 +3,8 @@ package com.delaynomore.backend.domain.ai.eval;
 import com.delaynomore.backend.domain.ai.agent.AgentTool;
 import com.delaynomore.backend.domain.ai.agent.AgentToolRegistry;
 import com.delaynomore.backend.domain.ai.agent.tools.CarryOverTool;
+import com.delaynomore.backend.domain.ai.agent.tools.GetPlanHistoryTool;
+import com.delaynomore.backend.domain.ai.agent.tools.GetProgressTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetReflectionHistoryTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetTodayTasksTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetWeeklySummaryTool;
@@ -31,11 +33,7 @@ class EvalDatasetTest {
 
     private static Set<String> realToolNames() {
         // 레지스트리를 실제로 조립해 이름을 얻는다 — 목록을 여기 다시 적으면 그 목록이 또 썩는다.
-        AgentToolRegistry registry = new AgentToolRegistry(List.of(
-                new GetTodayTasksTool(mock()), new GetWeeklySummaryTool(mock()),
-                new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
-                new UpdatePlanTasksTool(), new CarryOverTool(mock())));
-        return Set.copyOf(registry.toolsFor(PlanStatus.DRAFT).stream().map(AgentTool::name).toList());
+        return Set.copyOf(registry().toolsFor(PlanStatus.DRAFT).stream().map(AgentTool::name).toList());
     }
 
     private final EvalDataset dataset = EvalDataset.loadDefault();
@@ -176,6 +174,7 @@ class EvalDatasetTest {
         return new AgentToolRegistry(List.of(
                 new GetTodayTasksTool(mock()), new GetWeeklySummaryTool(mock()),
                 new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
+                new GetProgressTool(mock()), new GetPlanHistoryTool(mock()),
                 new UpdatePlanTasksTool(), new CarryOverTool(mock())));
     }
 

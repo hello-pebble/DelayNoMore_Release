@@ -648,6 +648,74 @@
   #       인덱스 정의에 WHERE (participant_count < capacity)가 포함
   ```
 
+## F-33. LangChain4j 전송 계층 교체 (v0.24.0)
+
+> LLM 호출의 전송(요청 바디 조립·SSE 파싱·tool_calls 추출)을 수제 구현에서 LangChain4j로
+> 교체했다. **합격 기준은 "겉으로는 아무것도 달라지지 않는 것"** — 아래 항목은 전부 기존 기능이
+> 이전과 동일하게 동작하는지의 회귀 확인이다. 프롬프트·도구 권한·토큰 계측·SSE 이벤트 계약은
+> 기존 코드가 그대로 소유하므로 새 기능 항목은 없다.
+
+- [ ] **초안 생성(스트리밍)** — 슬롯필링 대화를 끝내면 하루 단위 계획이 이전처럼 실시간으로
+      한 날짜씩 흘러나온다(멈춤·한자 섞임·JSON 원문 노출 없음)
+- [ ] **자유 대화** — 고정 전 계획에서 수정 요청("3일차 줄여줘")이 산문 + 체크리스트 갱신으로
+      반영되고, 질문("왜 이렇게 짰어?")은 계획을 바꾸지 않는다
+- [ ] **에이전트 대화** — 추적 패널에 profile → step → tool_call → tool_result → 답변 순서가
+      이전과 동일하게 표시된다
+- [ ] **도구 권한 회귀** — DRAFT 계획에서 수정 요청 시 `update_plan_tasks`가 호출되고,
+      **고정(CONFIRMED)** 계획에서는 수정 도구가 도구 카탈로그·모델 노출 양쪽에서 빠져 있어
+      수정 요청이 거절 답변으로 돌아온다
+- [ ] **연결 LED** — `OPENROUTER_API_KEY` 미설정 서버에서 헤더 LED가 미연결로 표시되고
+      mock 폴백으로 동작한다
+- [ ] 서버 확인(curl) — health가 이전 형태 그대로다:
+
+  ```bash
+  curl -s http://localhost/api/v1/ai/health
+  # 기대: {"success":true,"data":{"connected":true,"reason":null,"toolCalling":true},...}
+  # (키 미설정이면 connected:false + reason에 사유)
+  ```
+
+- [ ] **토큰 사용량 로그** — 대화 한 번 후 서버 로그에 `ai.usage` 라인이 사이트 라벨과 함께
+      남는다(에이전트 요청은 `site=agent.turn` 여러 줄 + `site=agent.total` 합산 1줄):
+
+  ```bash
+  sudo docker logs delaynomore --since 5m | grep "ai.usage"
+  # 기대: site=chat.stream / draft.stream / agent.turn / agent.total 등 라벨별 prompt/completion 토큰 수
+  ```
+
+- [ ] **에이전트 SSE 원문 계약** — 이벤트 형식이 이전과 동일하다:
+
+  ```bash
+  curl -sN -X POST http://localhost/api/v1/ai/agent/chats/stream \
+    -H "Content-Type: application/json; charset=UTF-8" -H "X-Guest-Id: qa-lc4j-0001" \
+    -d '{"message":"오늘 뭐 하면 돼?","goalName":"토익 900점","tasks":{}}' | head -20
+  # 기대: data: {"type":"profile",...} → {"type":"step","n":1} → ... → {"type":"done"}
+  # (도구 미지원 모델이면 tool_call 없이 token → done)
+  ```
+
+## F-34. 에이전트 읽기 도구 2종 — 진행 스냅샷·변경 이력 (v0.24.0)
+
+> `get_progress`는 "지금 어디까지 왔어?"에 서버 계산 진행률(done/total·완료율·남은 일수)을,
+> `get_plan_history`는 "그동안 뭐가 바뀌었어?"에 감사 이력(최신 20건)을 근거로 쓰게 한다.
+> 둘 다 읽기 전용이라 모든 계획 상태에서 노출된다 — 권한 표(PlanStatus)는 바뀌지 않았다.
+
+- [ ] **진행 스냅샷** — 고정된 계획에서 "지금까지 전체적으로 어디까지 왔어?"라고 물으면 추적
+      패널에 `get_progress` 호출이 보이고, 답변의 완료 개수·남은 일수가 체크리스트 화면과 일치한다
+- [ ] **주간 요약과 변별** — "이번 주에 얼마나 했어?"는 여전히 `get_weekly_summary`를 고른다
+      (전체 조망 질문만 `get_progress`)
+- [ ] **변경 이력** — 이월·수정을 몇 번 한 계획에서 "그동안 뭐가 바뀌었는지 보여줘"라고 물으면
+      `get_plan_history` 호출이 보이고, 답변이 실제 이력(생성→고정→이월 순서)과 맞는다
+- [ ] **보관 전 초안** — 계획을 저장하기 전 대화에서 같은 질문을 하면 도구가 실패 사유를 돌려주고
+      모델이 "계획이 저장된 뒤 확인할 수 있다"는 취지로 답한다(오류 이벤트 아님)
+- [ ] 도구 카탈로그에 2종이 보인다:
+
+  ```bash
+  curl -s "http://localhost/api/v1/ai/agent/tools" -H "X-Guest-Id: qa-tools-0001"
+  # 기대: tools 배열에 get_progress·get_plan_history 포함(읽기라 mutating=false), 전체 8종
+  ```
+
+- [ ] (평가) `./gradlew evalAgent -Deval.only=read.progress,read.history` — 신설 2케이스가
+      통과하고, 전체 실행에서 기존 케이스 통과율이 떨어지지 않는다
+
 ## G. 화면 폭 (모바일 우선 · 1024px 이상 2분할)
 > 좁은 폭은 v0.18.0의 단일 패널 + 하단 탭바 그대로이고, **1024px 이상에서만** 왼쪽 대화 고정 +
 > 오른쪽 탭 전환의 2분할로 펼쳐진다(패널 집합·전환 수단은 그대로, CSS 미디어쿼리 한 블록).

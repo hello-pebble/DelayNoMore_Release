@@ -14,6 +14,40 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.24.0]
+
+**LLM 전송 계층을 수제 구현에서 LangChain4j로 교체했다 — 겉으로는 아무것도 달라지지 않는 것이
+이번 릴리스의 합격 기준이다.** 지금까지 `OpenRouterClient`는 RestClient로 OpenAI 호환 API를 직접
+호출하며 요청 바디 손조립, SSE 라인 파싱(`data:` 접두사·`[DONE]`·usage 청크), `tool_calls` JSON
+추출을 전부 자체 구현했다. 이제 그 프로토콜 구현은 `langchain4j-open-ai`(1.17.2)의 저수준
+`ChatModel`/`StreamingChatModel`이 담당하고, 해당 파싱 코드는 삭제됐다. `reasoning:{enabled:false}`
+같은 OpenRouter 특수 파라미터는 `customParameters`로 계속 실린다(신규 `LangChainConfig`).
+
+**채택한 것은 전송뿐이고, 고수준 기능(AiServices·`@Tool`·ChatMemory·구조화 출력)은 의도적으로
+쓰지 않는다.** 이 프로젝트의 불변 계약과 정면으로 충돌하기 때문이다 — `@Tool` 어노테이션 스캔은
+"도구 권한의 소스오브트루스는 PlanStatus 능력 플래그 하나"라는 규칙을 위반하고, AiServices의
+자동 툴 루프는 4턴 상한·턴당 3콜·SSE 이벤트 8종·강제 마무리 호출이라는 커스텀 루프와, ChatMemory는
+프론트가 히스토리를 소유하는 stateless 설계와 맞지 않는다. 그래서 `AgentRunner`의 루프,
+`AgentToolRegistry`의 상태별 필터링, `AiPromptBuilder`의 프롬프트 문구(평가 하네스 동결 대상),
+`AiResponseParser`의 방어 파싱(CJK 필터·`===PLAN===`·NDJSON), `AiCallSite`별 토큰 계측은 전부
+기존 코드가 그대로 소유한다. 변환(OpenAI 호환 Map ↔ LangChain4j 타입)은 `OpenRouterClient` 내부에
+가둬 호출부·프론트는 한 줄도 바뀌지 않았다.
+
+세부 변화 두 가지: `stream-usage` 스위치는 예전엔 요청의 `stream_options` 필드 자체를 뺐지만
+그 필드는 이제 LangChain4j가 관리하므로 **계측(로그 기록) 차단** 스위치로 남는다. usage의
+`cost` 필드는 LangChain4j가 내려주지 않지만 기존에도 usage accounting을 켜지 않아 항상 null이었다
+(실질 변화 없음). 전송 계약 테스트는 RestClient 전용 MockRestServiceServer 대신 **JDK 내장
+HttpServer 가짜 업스트림**으로 재작성해, reasoning off가 실제 요청 바디에 실리는지·도구 스펙
+변환·tool_call id 합성·스트리밍 델타 릴레이를 실제 HTTP로 검증한다.
+
+**읽기 도구 2종 추가 — `get_progress`(전체 진행 스냅샷)와 `get_plan_history`(계획 변경 이력).**
+"지금 어디까지 왔어?"는 이제 서버 계산 진행률(done/total·남은 일수)을, "그동안 뭐가 바뀌었어?"는
+감사 이력(v0.7.0 Audit, 최신 20건)을 인용해 답한다 — 모델이 세거나 기억을 지어내던 두 질문이
+서버 사실 조회로 바뀐다. 둘 다 기존 서비스(`PlanService.getPlan`·`AuditEventService.getEvents`)에
+위임만 하는 읽기 도구라 `isAvailableFor` 재정의가 없다(모든 상태에서 노출 — 권한 표 불변).
+도구 목록이 프롬프트에 실리므로 평가 데이터셋에 선택 케이스 2건(`read.progress`·`read.history`)을
+추가했다 — 특히 `read.progress`는 기존 `get_weekly_summary`와의 변별이 관건인 축이다.
+
 ## [0.23.0]
 
 **챌린지가 "누가 먼저 방을 파는가"에서 "누가 이미 같은 길을 걷고 있는가"로 바뀌었다.**
