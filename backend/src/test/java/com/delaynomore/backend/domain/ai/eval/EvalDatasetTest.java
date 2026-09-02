@@ -3,6 +3,7 @@ package com.delaynomore.backend.domain.ai.eval;
 import com.delaynomore.backend.domain.ai.agent.AgentTool;
 import com.delaynomore.backend.domain.ai.agent.AgentToolRegistry;
 import com.delaynomore.backend.domain.ai.agent.tools.CarryOverTool;
+import com.delaynomore.backend.domain.ai.agent.tools.GetChallengeStatusTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetPlanHistoryTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetProgressTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetReflectionHistoryTool;
@@ -175,6 +176,7 @@ class EvalDatasetTest {
                 new GetTodayTasksTool(mock()), new GetWeeklySummaryTool(mock()),
                 new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
                 new GetProgressTool(mock()), new GetPlanHistoryTool(mock()),
+                new GetChallengeStatusTool(mock()),
                 new UpdatePlanTasksTool(), new CarryOverTool(mock())));
     }
 

@@ -763,6 +763,10 @@
   # 기대: [{"ratePercent":..,"done":..,"total":..,"me":false,"payout":null}, ...] — owner 필드 없음
   ```
 
+- [ ] **에이전트 챌린지 현황 도구** — 고정 계획 채팅에서 "내 챌린지 몇 등이야?"(추천 칩에도 있음)를
+      물으면 추적 패널에 `get_challenge_status`(챌린지 현황 조회) 호출이 보이고, 답변의 순위·완주율이
+      챌린지 탭의 참가자 현황과 일치한다. 참가한 챌린지가 없으면 "참가 중인 챌린지가 없다"는 취지로
+      답한다(오류 아님)
 - [ ] **완주 분배·환불·이중 정산 방지**는 화면으로 재현하기 어렵다(기간 경과 필요) — 단위·동시성
       테스트가 게이트다: `./gradlew test --tests '*Challenge*'` 전부 통과, Docker 있는 환경이면
       `ChallengeSettlementConcurrencyIT`(naive 대조군이 이중 지급을 실증, safe가 1회분 증명) 포함
