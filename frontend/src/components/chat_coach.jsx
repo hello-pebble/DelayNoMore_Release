@@ -19,25 +19,24 @@ import {
   INITIAL_SLOTS
 } from '../ai_engine';
 import {
-  createPlan, updatePlan, fetchPlans, fetchPlan, deletePlan, carryOverPlan, putReflection,
+  fetchPlan, deletePlan, carryOverPlan, putReflection,
   fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
   updateTaskCompletion, fetchTodayDashboard, fetchAgentTools
 } from '../db_service';
-import { getSessionId } from '../session_id';
-import { getGuestId } from '../guest_id';
 import { todayStr } from '../date_utils';
+import AgentTrace from './agent_trace';
+import {
+  writeLastViewedPlanId, clearLastViewedPlanId,
+  toPlanPayload, fromPlanResponse, getPlanProgress, countTodayIncomplete,
+  planStatusOf, isEditableStatus, isTerminalStatus, isPastLockedDate,
+  reflectionLabel, auditSessionBadge, formatSavedAt, formatWeekRange, formatEventTime,
+  DEFAULT_PLAN_STATUS_LABELS, DEFAULT_AUDIT_EVENT_LABELS, agentToolLabel, AGENT_TOOL_QUESTIONS
+} from '../plan_view';
+import { usePlanSync } from '../use_plan_sync';
 
-// "마지막으로 보던 계획"의 서버 ID 포인터 — 계획 데이터가 아니라 새로고침 복원 UX용 표식만
-// localStorage에 남긴다(계획 자체는 서버 보관함에 있고 게스트 ID별로 격리된다). 소유자(게스트 ID)
-// 별로 키를 분리해, 로그인 전환(guestId→memberId) 시에도 다른 소유자의 포인터가 새지 않게 한다.
-const lastViewedPlanKey = () => `delaynomore:lastViewedPlanId:${getGuestId()}`;
-// 소유자 스코프 이전(v0.11.0)의 전역 포인터 — 다른 소유자의 계획 id일 수 있어 1회 정리만 한다.
-const LEGACY_LAST_VIEWED_PLAN_KEY = 'delaynomore:lastViewedPlanId';
 
-// 서버 자동 동기화 디바운스 — 완료 토글 연타나 스트리밍 수정이 요청 폭주로 이어지지 않게 한다.
-const SYNC_DEBOUNCE_MILLIS = 600;
 
 // 슬롯필링 질문에 제공하는 빠른 선택지. 자유 입력도 계속 가능하다.
 // 라벨 텍스트를 그대로 전송한다(기간/시간은 파서가 숫자만 추출).
@@ -61,283 +60,11 @@ const DEFAULT_REASON_OPTIONS = [
   { code: 'HARDER_THAN_EXPECTED', label: '생각보다 어려웠어요' }
 ];
 
-// 에이전트 도구 이름 → 화면 라벨. 서버가 내려주는 이름은 모델용 영문 snake_case라 그대로
-// 노출하면 읽기 어렵다. 모르는 이름(서버에 도구가 추가됐는데 프론트가 아직 모르는 경우)은
-// 이름 그대로 보여준다 — 추적 패널이 빈칸이 되는 것보다 낫다.
-const AGENT_TOOL_LABELS = {
-  get_today_tasks: '오늘 할 일 조회',
-  get_weekly_summary: '주간 완료율 조회',
-  get_reflection_history: '회고 기록 조회',
-  get_workload_recommendation: '다음 분량 추천 조회',
-  get_progress: '전체 진행 조회',
-  get_plan_history: '변경 이력 조회',
-  get_challenge_status: '챌린지 현황 조회',
-  update_plan_tasks: '계획 수정',
-  carry_over_tasks: '미완료 이월'
-};
 
-const agentToolLabel = (name) => AGENT_TOOL_LABELS[name] || name;
+// 비활성 시 쓰는 고정 빈 배열 — 렌더마다 새 배열을 만들지 않는다.
+const NO_TOOLS = [];
 
-// 에이전트 도구 이름 → 추천 질문 칩 문구. 어떤 칩을 보여줄지는 여기가 아니라 도구 카탈로그
-// API(fetchAgentTools)가 정한다 — 서버가 그 상태에서 실제로 노출한 도구만 칩이 되므로,
-// 권한 표(PlanStatus)를 프론트에 재선언하지 않는다. 여기는 문구 사전일 뿐이고, 사전에 없는
-// 도구는 칩을 만들지 않는다(질문으로 표현할 수 없는 도구까지 억지로 칩을 만들지 않는다).
-const AGENT_TOOL_QUESTIONS = {
-  get_today_tasks: '오늘 뭐부터 할까?',
-  get_progress: '지금 어디까지 왔어?',
-  get_weekly_summary: '이번 주 어땠어?',
-  get_plan_history: '그동안 뭐가 바뀌었어?',
-  get_reflection_history: '내 회고에서 보이는 패턴은?',
-  get_workload_recommendation: '다음 계획 분량 추천해줘',
-  get_challenge_status: '내 챌린지 몇 등이야?'
-};
 
-/**
- * 에이전트 실행 추적 패널 — "누가, 무엇을 근거로 답했는가"를 보여준다.
- * 기본은 접힌 한 줄 요약이고, 펼치면 도구별 인자와 서버가 돌려준 결과 요약을 볼 수 있다.
- * 실행 중(running)에는 결과가 아직 없으므로 상태 점만 다르게 찍는다.
- *
- * profile(v0.17.0)은 서버가 profile 이벤트로 내려준 값 — 이번 실행이 실제로 쓴 페르소나의
- * 증빙이라, 헤더의 로컬 추측 라벨과 어긋나면 이쪽이 맞다.
- */
-function AgentTrace({ steps, profile, expanded, onToggle }) {
-  if (!steps || steps.length === 0) return null;
-
-  const running = steps.some((s) => s.status === 'running');
-  const failed = steps.filter((s) => s.status === 'error').length;
-  const toolSummary = running
-    ? `도구 실행 중… (${steps.length})`
-    : `도구 ${steps.length}개 실행${failed > 0 ? ` · ${failed}개 거부됨` : ''}`;
-  const summary = profile?.label ? `${profile.label} · ${toolSummary}` : toolSummary;
-
-  return (
-    <div style={{
-      marginBottom: '6px',
-      border: '1px solid var(--border)',
-      borderRadius: '10px',
-      background: 'var(--bg-card)',
-      fontSize: '12px',
-      overflow: 'hidden'
-    }}>
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        style={{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          padding: '6px 10px',
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--text-muted)',
-          cursor: 'pointer',
-          textAlign: 'left'
-        }}
-      >
-        <Wrench size={13} />
-        <span style={{ flex: 1 }}>{summary}</span>
-        {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-      </button>
-
-      {expanded && (
-        <div style={{ padding: '0 10px 8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {steps.map((step, index) => (
-            <div key={step.id || index} style={{ borderTop: '1px solid var(--border)', paddingTop: '6px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, color: 'var(--text-main)' }}>
-                <span aria-hidden="true">
-                  {step.status === 'running' ? '⏳' : step.status === 'ok' ? '✅' : '⛔'}
-                </span>
-                {agentToolLabel(step.name)}
-                <code style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: '11px' }}>{step.name}</code>
-              </div>
-              {step.args && Object.keys(step.args).length > 0 && (
-                <pre style={traceCodeStyle}>인자 {JSON.stringify(step.args)}</pre>
-              )}
-              {step.summary && <pre style={traceCodeStyle}>{step.summary}</pre>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const traceCodeStyle = {
-  margin: '4px 0 0',
-  padding: '5px 7px',
-  background: 'var(--bubble-bot)',
-  borderRadius: '6px',
-  fontSize: '11px',
-  lineHeight: '1.45',
-  color: 'var(--text-muted)',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-all'
-};
-
-// 저장된 회고의 enum 코드 → 화면 라벨. 알 수 없는 코드는 그대로 노출(화면이 죽지 않게).
-function reflectionLabel(options, code) {
-  return options.find((o) => o.code === code)?.label || code;
-}
-
-// 포인터 read/write — 프라이빗 모드 등 localStorage가 막힌 환경에서도 앱이 죽지 않게 try/catch.
-function readLastViewedPlanId() {
-  try {
-    // 레거시 전역 포인터는 소유자 스코프가 없던 시절 값이라(타인 계획 id일 수 있음) 한 번 정리한다.
-    localStorage.removeItem(LEGACY_LAST_VIEWED_PLAN_KEY);
-    return localStorage.getItem(lastViewedPlanKey());
-  } catch {
-    return null;
-  }
-}
-
-function writeLastViewedPlanId(id) {
-  try {
-    localStorage.setItem(lastViewedPlanKey(), String(id));
-  } catch {
-    // 무시 — 포인터가 없으면 새로고침 복원만 안 될 뿐이다.
-  }
-}
-
-function clearLastViewedPlanId() {
-  try {
-    localStorage.removeItem(lastViewedPlanKey());
-  } catch {
-    // 무시
-  }
-}
-
-// 현재 화면 상태 → 서버 보관 요청 본문. slots는 draftChecklist의 4개 필드와 완전 중복이라
-// 별도로 보내지 않는다(복원 시 응답에서 재구성).
-// startDate/duration은 서버가 tasks 날짜 키로 산출하므로 여기서 보내도 무시된다. endDate는
-// 서버가 검증만 한다(형식·범위). 그래도 세 필드를 계속 보내는 이유는 배포 스큐 안전성이다 —
-// 신클라이언트가 구서버(pass-through)로 요청해도 동작이 깨지지 않게. 응답에는 서버 산출값이
-// 담겨 fromPlanResponse가 그대로 채택한다.
-function toPlanPayload(draftChecklist) {
-  const {
-    goalName, duration, dailyHours, currentLevel, tasks,
-    status, confirmedAt, startDate, endDate, createdAt
-  } = draftChecklist;
-  return { goalName, duration, dailyHours, currentLevel, tasks, status, confirmedAt, startDate, endDate, createdAt };
-}
-
-// 서버 보관함 응답 → 화면 상태(slots + draftChecklist). 클라이언트 id는 서버 발급 숫자와
-// 구분되게 chk-srv- 프리픽스를 붙인다(고정 상태 status/confirmedAt도 그대로 복원).
-// startDate/endDate/duration은 서버 산출·검증값을 그대로 채택한다(규칙 소유권은 서버).
-function fromPlanResponse(plan) {
-  const draftChecklist = {
-    id: `chk-srv-${plan.id}`,
-    goalName: plan.goalName,
-    duration: plan.duration,
-    dailyHours: plan.dailyHours,
-    currentLevel: plan.currentLevel,
-    tasks: plan.tasks || {},
-    status: plan.status || 'DRAFT',
-    confirmedAt: plan.confirmedAt || undefined,
-    startDate: plan.startDate,
-    endDate: plan.endDate,
-    createdAt: plan.createdAt
-  };
-  const slots = {
-    goalName: plan.goalName,
-    duration: plan.duration,
-    dailyHours: plan.dailyHours,
-    currentLevel: plan.currentLevel
-  };
-  return { slots, draftChecklist };
-}
-
-// 완료 진행률(완료/전체 개수) — 라이브 draft 전용 UX 계산. 서버 스냅샷의 진행률은 서버가
-// 계산한 progress 필드가 소스이고, 이 함수는 600ms 디바운스 동기화 전의 라이브 상태
-// (draftChecklist)를 즉시 반영하기 위해서만 남아 있다. 방어적 계산(비정상 tasks 무시)은 유지.
-function getPlanProgress(tasks) {
-  const all = Object.values(tasks || {}).flatMap((list) => (Array.isArray(list) ? list : []));
-  return { done: all.filter((t) => t.completed).length, total: all.length };
-}
-
-// 보관함 목록 행의 저장 시각 표기(M/D 저장). 비정상 값이면 빈 문자열.
-function formatSavedAt(ts) {
-  const d = new Date(ts);
-  return Number.isFinite(d.getTime()) ? `${d.getMonth() + 1}/${d.getDate()} 저장` : '';
-}
-
-// 주간 요약 행의 날짜 범위 — 서버가 준 YYYY-MM-DD(startDate/endDate)를 M.D~M.D로 압축 표기한다.
-// 하루짜리 주(startDate==endDate)면 한쪽만 보여 준다. 비ISO는 방어적으로 원문 그대로.
-function formatWeekRange(startDate, endDate) {
-  const short = (iso) => {
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-    return m ? `${Number(m[2])}.${Number(m[3])}` : iso;
-  };
-  return startDate === endDate ? short(startDate) : `${short(startDate)}~${short(endDate)}`;
-}
-
-// 오늘의 미완료 개수 — 이월 확인창(UX)용 로컬 카운트. 이월 연산 자체는 서버 도메인 액션
-// (POST /plans/{id}/carry-over)이 수행하므로, 프론트는 "옮길 게 있는가"만 미리 세어
-// 불필요한 요청과 빈 확인창을 막는다.
-function countTodayIncomplete(tasks, date) {
-  const dayTasks = tasks?.[date];
-  if (!Array.isArray(dayTasks)) return 0;
-  return dayTasks.filter((t) => !t.completed).length;
-}
-
-// === 계획 상태(PlanStatus) 헬퍼 — 상태 집합·전이 규칙의 소스오브트루스는 서버 PlanStatus
-// enum(선언적 전이표)이다. 프론트는 전이를 판정하지 않고(전이는 confirm/complete/cancel API가
-// 수행·거부한다) 버튼 노출·잠금 표시용 분류만 한다.
-const planStatusOf = (source) => source?.status || 'DRAFT';
-// 구조 변경(대화 수정·이월·기간 연장) 허용 여부 — 서버 allowsStructuralEdit와 같은 기준(DRAFT만).
-const isEditableStatus = (status) => status === 'DRAFT';
-// 종결 상태 — 완료 토글을 포함한 모든 변경 PUT을 서버가 거부하므로 프론트도 입력을 막는다.
-const isTerminalStatus = (status) => status === 'COMPLETED' || status === 'CANCELLED';
-// 지난 날짜 잠금 — 고정(CONFIRMED) 계획의 완료 체크는 오늘·미래만(서버 PAST_TASK_LOCKED와 같은
-// 기준). 이월이 "오늘 → 내일"뿐이라 미루지 않은 지난 항목은 놓친 것으로 확정된다(체크·해제 불가).
-// 날짜 키는 YYYY-MM-DD라 문자열 비교로 충분하다. DRAFT는 자유 수정 단계라 제외.
-const isPastLockedDate = (status, date) => status === 'CONFIRMED' && date < todayStr();
-// 상태 코드 → 화면 라벨 폴백 사본 — 소스오브트루스는 GET /meta/plan-statuses(서버 enum 라벨).
-const DEFAULT_PLAN_STATUS_LABELS = {
-  DRAFT: '초안',
-  CONFIRMED: '고정',
-  COMPLETED: '완료',
-  CANCELLED: '중단'
-};
-
-// 변경 이력 이벤트 타입 → 화면 라벨. 알 수 없는 타입은 코드 그대로 노출(회고 라벨과 같은 방어).
-// 소스오브트루스는 서버 enum(메타 API로 수신)이고, 이 상수는 백엔드 미가용 시 폴백 사본이다.
-const DEFAULT_AUDIT_EVENT_LABELS = {
-  PLAN_CREATED: '계획 생성',
-  PLAN_UPDATED: '계획 수정',
-  PLAN_CONFIRMED: '계획 고정',
-  PLAN_COMPLETED: '계획 완료',
-  PLAN_CANCELLED: '계획 중단',
-  TASK_COMPLETED: '할 일 완료',
-  TASK_REOPENED: '완료 해제',
-  REFLECTION_SAVED: '회고 저장',
-  PLAN_DELETED: '계획 삭제',
-  WORKLOAD_RECOMMENDATION_VIEWED: '다음 분량 추천 조회',
-  WORKLOAD_RECOMMENDATION_ACCEPTED: '추천 분량 채택',
-  WORKLOAD_RECOMMENDATION_OVERRIDDEN: '추천 분량 변경',
-  PLAN_CREATED_FROM_RECOMMENDATION: '추천 기반 계획 생성'
-};
-
-// 이력 행의 세션 배지 — 내 세션 ID와 비교해 "다른 세션에서 발생한 변경인가?"에 답한다.
-// sessionId가 없으면(구형 클라이언트·curl) "알 수 없음".
-function auditSessionBadge(sessionId) {
-  if (!sessionId) return '알 수 없음';
-  return sessionId === getSessionId() ? '이 브라우저' : '다른 세션';
-}
-
-// 이력 행의 발생 시각 — 가까운 과거는 상대 표기, 오래되면 절대 표기(M/D HH:mm).
-function formatEventTime(iso) {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return '';
-  const diffMs = Date.now() - d.getTime();
-  if (diffMs < 60 * 1000) return '방금 전';
-  if (diffMs < 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 1000))}분 전`;
-  if (diffMs < 24 * 60 * 60 * 1000) return `${Math.floor(diffMs / (60 * 60 * 1000))}시간 전`;
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${d.getMonth() + 1}/${d.getDate()} ${hh}:${mm}`;
-}
 
 // 마운트 시 최초 상태 — 항상 슬롯필링 첫 질문으로 시작한다. 계획은 서버 보관함에 있으므로
 // "마지막으로 보던 계획" 복원은 마운트 후 목록 fetch가 끝난 시점에 비동기로 수행된다.
@@ -440,8 +167,6 @@ export default function ChatCoach({ agentEnabled = false }) {
 
   // 서버 보관함 상태 — 계획은 서버 인메모리(휘발성)에 보관되고 게스트 ID별로 격리된다.
   const [activePlanId, setActivePlanId] = useState(null); // 현재 화면 계획의 서버 ID (null = 미보관)
-  const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
-  const [plansStatus, setPlansStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
   const [showPlanList, setShowPlanList] = useState(false);
   // 변경 이력 뷰 — 한 번에 한 계획만 펼친다. null | { planId, status: 'loading'|'ready'|'error', events }
   const [auditView, setAuditView] = useState(null);
@@ -491,15 +216,6 @@ export default function ChatCoach({ agentEnabled = false }) {
   const thinkingTimerRef = useRef(null);
   const statusTimerRef = useRef(null);
   const hasInteractedRef = useRef(false); // 비동기 자동 복원이 사용자의 새 입력을 덮어쓰지 않게
-  const syncTimerRef = useRef(null); // 서버 자동 동기화 디바운스 타이머
-  const dirtyRef = useRef(null); // 아직 서버에 반영 안 된 최신 변경 { id, payload }
-  const lastSyncedRef = useRef(null); // 서버에 있는 것으로 아는 payload의 JSON — 불필요한 재전송(no-op PUT) 억제
-  const archivePendingRef = useRef(false); // 초안이 아직 보관되지 못해(서버 미가용) 재시도가 필요한 상태
-  const aliveRef = useRef(true); // 언마운트 후 서버 쓰기·상태 갱신 차단 — 긴 비동기 흐름(스트리밍·재시도)이
-                                 // 뒤늦게 데이터를 생성/부활시키지 않게. (향후 로그인 시 소유자 전환 대비:
-                                 // 지금은 게스트 ID가 안정이라 요청 도중 소유자가 바뀌지 않지만, memberId
-                                 // 전환을 도입하면 이 가드가 전환 경계도 지킨다. AbortController를 db_service에
-                                 // 스레딩하는 방식은 이 코드베이스엔 과하다고 판단해 두지 않는다.)
 
   // 계획 상태 — "고정" 버튼을 누르면 CONFIRMED가 되어 대화 수정이 막히고(강제성 부여:
   // 확정한 계획은 실행만, 재협상 없음. 완료 체크는 계속 가능), 완료/중단 전이로 종결
@@ -508,7 +224,7 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 잠긴 계획의 서버 도구 카탈로그(그 상태에서 모델에게 실제로 노출되는 도구 목록) — 추천 질문
   // 칩과 "할 수 있는 일" 패널이 같은 조회를 공유한다. 조회 실패는 빈 배열 = 둘 다 안 보임
   // (기능 저하일 뿐 고장이 아니다).
-  const [agentCatalog, setAgentCatalog] = useState([]);
+  const [fetchedTools, setFetchedTools] = useState([]);
   const [showToolCatalog, setShowToolCatalog] = useState(false);
   const activeStatus = planStatusOf(draftChecklist);
   const isLocked = !!draftChecklist && !isEditableStatus(activeStatus);
@@ -524,21 +240,22 @@ export default function ChatCoach({ agentEnabled = false }) {
 
   // 잠긴 계획으로 전환될 때 도구 카탈로그를 읽는다. 어떤 칩·어떤 목록이 뜰지는 서버가 노출한
   // 도구가 정하므로(권한 표 재선언 없음), 상태가 바뀌면 화면도 자동으로 따라온다.
+  // 조건이 아닐 때의 "빈 카탈로그"는 상태가 아니라 파생값이다 — effect에서 비우면 연쇄 렌더가 된다.
+  const catalogActive = agentEnabled && isLocked && activePlanId != null;
+  const agentCatalog = catalogActive ? fetchedTools : NO_TOOLS;
+
   useEffect(() => {
-    if (!agentEnabled || !isLocked || activePlanId == null) {
-      setAgentCatalog([]);
-      return;
-    }
+    if (!catalogActive) return undefined;
     let cancelled = false;
     fetchAgentTools(activePlanId)
       .then((catalog) => {
-        if (!cancelled) setAgentCatalog(catalog?.tools || []);
+        if (!cancelled) setFetchedTools(catalog?.tools || []);
       })
       .catch(() => {
-        if (!cancelled) setAgentCatalog([]);
+        if (!cancelled) setFetchedTools([]);
       });
     return () => { cancelled = true; };
-  }, [agentEnabled, isLocked, activePlanId, activeStatus]);
+  }, [catalogActive, activePlanId, activeStatus]);
 
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
@@ -549,119 +266,15 @@ export default function ChatCoach({ agentEnabled = false }) {
     scrollToBottom();
   }, [messages, isTyping, isThinking]);
 
-  // 언마운트 cleanup — 타이머 해제 + alive 플래그 내림. 남은 동기화 타이머가 발사되면 뒤늦은
-  // PUT이 나가고, 스트리밍/재시도 흐름이 완료 후 데이터를 생성·부활시킬 수 있어 이를 함께 막는다
-  // (언마운트 시에만 실행되므로, dep 변경에 대기 중 변경이 유실된다는 아래 자동 동기화 effect의
-  // 우려와 충돌하지 않는다).
-  useEffect(() => {
-    // 마운트 시 플래그 복구 — ref는 컴포넌트 인스턴스에 남으므로, StrictMode(개발 모드)의
-    // 마운트→cleanup→재마운트 사이클 뒤에도 false로 남아 모든 상태 갱신·서버 쓰기가
-    // 영구히 막힌다(계획 생성이 화면에 반영되지 않음). cleanup에서 내린 것은 여기서 되올린다.
-    aliveRef.current = true;
-    return () => {
-      aliveRef.current = false;
-      if (thinkingTimerRef.current) clearInterval(thinkingTimerRef.current);
-      if (statusTimerRef.current) clearInterval(statusTimerRef.current);
-      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    };
+  // 언마운트 cleanup — "생각 중" 타이머 해제(서버 동기화 쪽 정리는 usePlanSync가 한다).
+  useEffect(() => () => {
+    if (thinkingTimerRef.current) clearInterval(thinkingTimerRef.current);
+    if (statusTimerRef.current) clearInterval(statusTimerRef.current);
   }, []);
 
-  // 보관함 목록 갱신 — 실패해도 앱은 계속 동작한다(목록만 error 표시, 생성/대화는 mock 폴백).
-  const refreshPlans = async () => {
-    setPlansStatus('loading');
-    try {
-      setSavedPlans(await fetchPlans());
-      setPlansStatus('ready');
-    } catch {
-      setPlansStatus('error');
-    }
-  };
 
-  // 대기 중인 자동 동기화(디바운스 타이머·미반영 변경·재보관 대기)를 모두 취소한다.
-  // 활성 계획을 삭제할 때 호출해, 방금 지운 계획이 뒤늦은 PUT의 404→재생성으로 되살아나지 않게 한다.
-  const cancelPendingSync = () => {
-    if (syncTimerRef.current) {
-      clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = null;
-    }
-    dirtyRef.current = null;
-    archivePendingRef.current = false;
-  };
 
-  // 서버 도메인 액션 응답(PlanResponse)을 화면 상태에 반영한다 — 전이(confirm/complete/cancel)와
-  // 이월(carry-over), 지난 날짜 잠금 되돌리기(syncActivePlan)가 공유한다. setState 전에 "이미
-  // 동기화됨"(lastSyncedRef)으로 기록해, 낡은 디바운스 PUT이 서버 결과를 되돌리는 경합을
-  // 차단한다(restorePlan의 "방금 서버에서 읽은 상태" 처리와 같은 패턴). 활성 계획이 아니면
-  // 목록 스냅샷만 갱신한다.
-  const applyServerPlan = (plan) => {
-    setTodayDashboard(null);
-    if (plan.id === activePlanId) {
-      const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
-      lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));
-      dirtyRef.current = null;
-      setDraftChecklist(nextDraft);
-      // 요약 헤더·AI 슬롯의 "기간 N일"이 어긋나지 않게 함께 갱신(채팅 기간 수정과 동일 처리).
-      setSlots(nextSlots);
-    }
-    // 목록 스냅샷에도 반영 — 응답 plan은 목록 항목(PlanResponse)과 같은 구조다.
-    setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
-  };
 
-  // 대기 중인 변경을 즉시 서버에 반영한다(디바운스를 기다리지 않고). 계획 전환·리셋 직전에
-  // 호출해, 아직 PUT되지 않은 완료 토글/수정이 유실되지 않게 한다.
-  // recreateIfMissing=false: 떠나는 계획이 이미 삭제됐어도 새로 만들지 않는다(orphan 방지).
-  const syncActivePlan = async ({ recreateIfMissing }) => {
-    if (syncTimerRef.current) {
-      clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = null;
-    }
-    const pending = dirtyRef.current;
-    if (!pending) return;
-    dirtyRef.current = null;
-    try {
-      await updatePlan(pending.id, pending.payload);
-      lastSyncedRef.current = JSON.stringify(pending.payload);
-    } catch (err) {
-      if (err.code === 'PLAN_LOCKED') {
-        // 서버 가드 거부 — 다른 세션에서 먼저 고정(CONFIRMED)한 계획에 구조 변경 PUT이 겹친
-        // 경우다. 재시도해도 계속 409이므로 대기 변경을 버린다(서버가 진실 원천 — 계획을
-        // 다시 불러오면 고정 상태로 재동기화된다).
-        console.warn('고정된 계획이라 서버가 수정 반영을 거부했습니다 — 대기 중 변경을 폐기합니다.');
-        return;
-      }
-      if (err.code === 'PAST_TASK_LOCKED') {
-        // 지난 날짜 토글 소급 거부 — 체크박스 disabled를 뚫고 온 경우(자정 경계에 열려 있던
-        // 화면 등). 재시도해도 계속 409이므로 대기 변경을 버리고, 서버 상태로 화면을 되돌려
-        // 낙관 반영된 체크가 남지 않게 한다.
-        window.alert('지난 날짜의 완료 체크는 변경할 수 없어요. 화면을 서버 상태로 되돌립니다.');
-        try {
-          const fresh = await fetchPlan(pending.id);
-          if (aliveRef.current) applyServerPlan(fresh);
-        } catch {
-          /* 되돌리기 실패 — 다음 조회 때 재동기화된다 */
-        }
-        return;
-      }
-      if (err.code !== 'PLAN_NOT_FOUND') {
-        console.warn('계획 동기화 실패 — 다음 변경 때 다시 시도합니다:', err);
-        dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도
-        return;
-      }
-      if (!recreateIfMissing || !aliveRef.current) return;
-      // 백그라운드 동기화 중 대상이 사라짐(내가 다른 탭에서 삭제·서버 재시작) — 작업을 잃지 않게
-      // 새로 보관하되, 언마운트 후라면 만들지 않는다(떠난 화면이 데이터를 되살리지 않게).
-      try {
-        const saved = await createPlan(pending.payload);
-        if (!aliveRef.current) return;
-        lastSyncedRef.current = JSON.stringify(pending.payload);
-        setActivePlanId(saved.id);
-        writeLastViewedPlanId(saved.id);
-      } catch {
-        setActivePlanId(null);
-        clearLastViewedPlanId();
-      }
-    }
-  };
 
   // 보관함의 계획을 화면 상태로 복원한다 — 새로고침 복원(restored)과 목록 전환(switched) 공용.
   // messages를 안내 말풍선 하나로 교체하는 이유: 이전 계획에 대한 대화 이력이 LLM history
@@ -673,9 +286,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     const locked = !isEditableStatus(restoredStatus);
     const terminal = isTerminalStatus(restoredStatus);
     // 방금 서버에서 읽은 상태이므로 "이미 동기화됨"으로 기록 — 복원 직후 no-op PUT을 막는다.
-    lastSyncedRef.current = JSON.stringify(toPlanPayload(restoredDraft));
-    dirtyRef.current = null;
-    archivePendingRef.current = false;
+    markSynced(restoredDraft);
     setSlots(restoredSlots);
     setDraftChecklist(restoredDraft);
     setCurrentSlot(null);
@@ -702,32 +313,18 @@ export default function ChatCoach({ agentEnabled = false }) {
     ]);
   };
 
-  // 마운트 시 1회 — 보관함 목록을 불러오고, "마지막으로 보던 계획" 포인터가 유효하면 복원한다.
-  // 서버가 죽어 있어도 새 계획 생성·대화는 mock 폴백으로 계속 가능해야 하므로 실패는 삼킨다.
-  // StrictMode 이중 실행에도 멱등(같은 목록/같은 복원)이고, cancelled 플래그로 늦은 응답을 무시한다.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const plans = await fetchPlans();
-        if (cancelled) return;
-        setSavedPlans(plans);
-        setPlansStatus('ready');
-        const lastId = readLastViewedPlanId();
-        const found = lastId != null && plans.find((p) => String(p.id) === lastId);
-        if (found && !hasInteractedRef.current) {
-          restorePlan(found, 'restored');
-        } else if (lastId != null && !found) {
-          clearLastViewedPlanId(); // 다른 방문자가 지웠거나 서버가 재시작된 경우
-        }
-      } catch {
-        if (!cancelled) setPlansStatus('error');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+
+  // 서버 동기화(보관함 목록·자동 저장·최초 보관)는 usePlanSync가 소유한다.
+  const {
+    savedPlans, setSavedPlans, plansStatus, refreshPlans, aliveRef,
+    applyServerPlan, syncActivePlan, cancelPendingSync, archiveNewPlan, markSynced
+  } = usePlanSync({
+    draftChecklist, activePlanId,
+    setSlots, setDraftChecklist, setActivePlanId, setTodayDashboard,
+    notify: (text) => setMessages((prev) => [...prev, { id: generateUniqueId('bot'), sender: 'bot', text }]),
+    // 사용자가 이미 대화를 시작했으면 뒤늦은 자동 복원이 입력을 덮어쓰지 않게 건너뛴다.
+    onRestore: (plan) => { if (!hasInteractedRef.current) restorePlan(plan, 'restored'); }
+  });
 
   // 마운트 시 1회 — 메타(회고 선택지·이력 라벨)를 서버에서 받아 폴백 사본을 교체한다.
   // 성공한 응답만 반영하고 실패는 조용히 폴백 유지(allSettled — 한쪽 실패가 다른 쪽을 막지 않게).
@@ -760,96 +357,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     };
   }, []);
 
-  // 초안이 완성되면(또는 서버 미가용으로 실패했던 보관을 재시도할 때) 서버 보관함에 등록한다.
-  // 성공하면 활성 계획이 되고, 서버가 죽어 있으면 재시도 대기 상태로, 한도 초과면 안내만 한다.
-  const archiveNewPlan = async (checklist) => {
-    if (!aliveRef.current) return; // 언마운트 후엔 서버에 새 계획을 만들지 않는다(재시도 경로 포함)
-    const payload = toPlanPayload(checklist);
-    try {
-      const saved = await createPlan(payload);
-      if (!aliveRef.current) return; // 응답이 늦게 와도 떠난 화면의 상태를 갱신하지 않는다
-      archivePendingRef.current = false;
-      lastSyncedRef.current = JSON.stringify(payload); // 방금 보관 → no-op PUT 억제
-      setActivePlanId(saved.id);
-      writeLastViewedPlanId(saved.id);
-      refreshPlans();
-    } catch (err) {
-      if (!aliveRef.current) return;
-      if (err.code === 'PLAN_LIMIT_EXCEEDED') {
-        archivePendingRef.current = false; // 내 보관함 한도 초과는 재시도해도 소용없으니 포기하고 안내만
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: generateUniqueId('bot'),
-            sender: 'bot',
-            text: '⚠️ 내 보관함이 가득 차서(최대 10개) 이 계획은 저장되지 않았어요. 체크리스트 탭의 "보관된 계획" 목록에서 오래된 계획을 삭제하면 다음 계획부터 다시 보관됩니다.'
-          }
-        ]);
-      } else if (err.code === 'PLAN_DAILY_LIMIT_EXCEEDED') {
-        archivePendingRef.current = false; // 하루 생성 한도 — 오늘은 재시도해도 소용없으니 포기하고 안내만
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: generateUniqueId('bot'),
-            sender: 'bot',
-            text: '⚠️ 오늘 만들 수 있는 계획(5개)을 모두 사용해서 이 계획은 저장되지 않았어요. 내일 다시 만들어 주세요.'
-          }
-        ]);
-      } else if (err.code === 'PLAN_STORE_FULL') {
-        archivePendingRef.current = false; // 서버 전역 상한 — 잠시 후 재시도 안내
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: generateUniqueId('bot'),
-            sender: 'bot',
-            text: '⚠️ 데모 서버 저장 공간이 가득 차서 이 계획은 보관되지 않았어요. 잠시 후 다시 시도해 주세요.'
-          }
-        ]);
-      } else {
-        // 서버 미가용 등 일시 오류 — 재시도 대기로 표시해, 서버 복구 후 다음 변경 때 다시 보관한다.
-        archivePendingRef.current = true;
-        console.warn('계획 보관 실패(서버 미가용?) — 다음 변경 때 재시도합니다:', err);
-      }
-    }
-  };
 
-  // 자동 동기화 — 계획 변경(대화 수정·완료 토글·고정)을 600ms 디바운스로 서버에 반영한다.
-  // 다른 브라우저에서 목록을 열면 진행률·고정 상태가 갱신되어 보인다(원격 시연 핵심).
-  // 이미 서버에 있는 내용과 같으면(복원/보관 직후) 아무것도 보내지 않는다(no-op PUT 억제).
-  // cleanup에서 타이머를 지우지 않는 이유: dep 변경(전환 등)에 취소되면 대기 중 변경이 유실되기
-  // 때문. 전환/리셋은 syncActivePlan으로 먼저 flush하고, 삭제는 cancelPendingSync로 취소한다.
-  useEffect(() => {
-    if (!draftChecklist) return;
-    const payloadStr = JSON.stringify(toPlanPayload(draftChecklist));
-    if (payloadStr === lastSyncedRef.current) {
-      // 현재 상태가 서버와 동일(복원/보관 직후, 또는 토글을 되돌림) — 대기 중이던 이전 변경도
-      // 무의미하니 함께 취소한다(낡은 상태가 뒤늦게 PUT되는 것을 막는다).
-      if (syncTimerRef.current) {
-        clearTimeout(syncTimerRef.current);
-        syncTimerRef.current = null;
-      }
-      dirtyRef.current = null;
-      return;
-    }
-
-    if (activePlanId != null) {
-      dirtyRef.current = { id: activePlanId, payload: JSON.parse(payloadStr) };
-      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-      syncTimerRef.current = setTimeout(() => {
-        syncTimerRef.current = null;
-        syncActivePlan({ recreateIfMissing: true });
-      }, SYNC_DEBOUNCE_MILLIS);
-    } else if (archivePendingRef.current) {
-      // 미보관 초안(이전 보관 실패) — 변경이 생기면 서버가 살아났는지 다시 시도한다.
-      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-      const snapshot = draftChecklist;
-      syncTimerRef.current = setTimeout(() => {
-        syncTimerRef.current = null;
-        archiveNewPlan(snapshot);
-      }, SYNC_DEBOUNCE_MILLIS);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftChecklist, activePlanId]);
 
   const startThinking = () => {
     setIsThinking(true);
@@ -930,7 +438,7 @@ export default function ChatCoach({ agentEnabled = false }) {
           setCurrentSlot(null);
           setActivePlanId(result.plan.id);
           writeLastViewedPlanId(result.plan.id);
-          lastSyncedRef.current = JSON.stringify(toPlanPayload(savedDraft));
+          markSynced(savedDraft);
           refreshPlans();
         }
         return;
@@ -2102,7 +1610,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [activePlanId]);
+  }, [activePlanId, aliveRef]);
 
   // === 오늘 할 일 패널 (하단 탭: 오늘) ===
   // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와

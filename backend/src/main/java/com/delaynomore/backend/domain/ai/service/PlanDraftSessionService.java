@@ -11,6 +11,7 @@ import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -21,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 계획 작성 대화의 질문 순서, 입력 해석, 초안 생성 및 최초 저장을 서버에서 처리한다.
- * 세션은 브라우저 식별자별 임시 상태이므로 서버 재시작 후에는 새로 시작한다. 확정된 계획은 PlanService가 저장한다.
+ * 세션은 브라우저 식별자별 임시 상태이므로 서버 재시작 후에는 새로 시작하고, 생성 후 2시간이 지나면 청소된다. 확정된 계획은 PlanService가 저장한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,7 +37,15 @@ public class PlanDraftSessionService {
     private final AiService aiService;
     private final PlanService planService;
 
+    /** 초안 세션 보관 기한 — 지나면 다음 create() 때 청소된다(대화가 끊긴 세션이 메모리에 쌓이지 않게). */
+    private static final Duration SESSION_TTL = Duration.ofHours(2);
+
     public PlanDraftSessionResponse create(String owner) {
+        // ponytail: 새 세션을 만들 때만 훑는다(전용 스케줄러 없음). 세션 수가 커지거나 만료 시각의
+        // 정확도가 필요해지면 스케줄러 또는 TTL 있는 저장소(Redis)로 옮긴다.
+        Instant deadline = Instant.now().minus(SESSION_TTL);
+        sessions.values().removeIf(s -> s.createdAt.isBefore(deadline));
+
         DraftSession session = new DraftSession(owner);
         sessions.put(session.id, session);
         return session.response(question(GOAL_NAME));
@@ -153,6 +162,7 @@ public class PlanDraftSessionService {
     private static final class DraftSession {
         private final String id = UUID.randomUUID().toString();
         private final String owner;
+        private final Instant createdAt = Instant.now();
         private final Map<String, Object> slots = new LinkedHashMap<>();
         private PlanResponse plan;
 

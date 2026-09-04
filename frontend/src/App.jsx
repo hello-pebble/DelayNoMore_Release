@@ -22,7 +22,13 @@ export default function App() {
 
   // localStorage 저장 실패(프라이빗 모드 등) 감지 — 게스트 ID가 이 탭 메모리에만 있어,
   // 새로고침·탭 종료 시 보관함 접근을 잃는다. 사용자에게 미리 안내한다.
-  const [storageEphemeral, setStorageEphemeral] = useState(false);
+  // 새로고침 복원(이미 닉네임이 있는 경우)도 여기서 함께 확인한다 — 최초 렌더 전에 값이
+  // 정해지므로 effect로 뒤늦게 덮어쓸 필요가 없다.
+  const [storageEphemeral, setStorageEphemeral] = useState(() => {
+    if (!getNickname()) return false;
+    getGuestId(); // 첫 API 호출 전에 게스트 ID를 확정(생성)해 둔다
+    return !isGuestIdPersisted();
+  });
 
   // 모바일 폭에서는 헤더에 긴 문구를 둘 자리가 없다. 데모 안내와 AI 상태 문구는 헤더 아래
   // 한 줄 배너로 접어 두고, 상태 LED를 누르면 펼친다(정보는 그대로 두고 자리만 옮긴 것).
@@ -112,14 +118,6 @@ export default function App() {
       active = false;
     };
   }, []);
-
-  // 이미 닉네임이 있어 게이트를 건너뛴 경우(새로고침 복원)에도 저장 영속성을 확인한다.
-  useEffect(() => {
-    if (nickname) {
-      getGuestId();
-      setStorageEphemeral(!isGuestIdPersisted());
-    }
-  }, [nickname]);
 
   const ledColor =
     apiStatus === 'connected' ? 'var(--success)' :

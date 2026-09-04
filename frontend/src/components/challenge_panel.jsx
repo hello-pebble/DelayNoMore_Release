@@ -59,17 +59,19 @@ export default function ChallengePanel() {
     }
   };
 
-  const reload = useCallback(async () => {
-    try {
-      const data = await fetchChallenges();
+  // 상태 갱신은 응답이 온 뒤(then/catch)에만 일어난다 — effect 본문에서 동기적으로 setState하지
+  // 않으므로 연쇄 렌더가 생기지 않는다.
+  const reload = useCallback(() => fetchChallenges()
+    .then((data) => {
       setBalance(data.balance);
       setChallenges(data.challenges);
-    } catch (err) {
+    })
+    .catch((err) => {
       setNotice(err.message);
-    } finally {
+    })
+    .finally(() => {
       setLoading(false);
-    }
-  }, []);
+    }), []);
 
   useEffect(() => {
     reload();
