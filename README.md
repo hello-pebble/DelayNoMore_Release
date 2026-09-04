@@ -72,4 +72,5 @@ docker build -t delaynomore . && docker run -p 8080:8080 -e OPENROUTER_API_KEY=<
 | [발전 과정](docs/EVOLUTION.md) | v0.1.0부터의 버전별 다이어그램·의도 · 토큰 절감 증빙 · 버전 관리 정책 |
 | [로드맵](docs/ROADMAP.md) | 다음 단계 6가지와 최종 목표(전문 에이전트 인계) |
 | [실행·배포](docs/DEPLOY.md) | 로컬 실행 · 단일 컨테이너 배포 · 환경변수 |
+| [운영 가이드](docs/OPERATIONS.md) | 배포 이후의 운영 — 감시·백업·비용 가드레일 · 장애 복구 런북 · 운영 루틴 |
 | [CHANGELOG](CHANGELOG.md) | 버전별 상세 변경 이력 |
