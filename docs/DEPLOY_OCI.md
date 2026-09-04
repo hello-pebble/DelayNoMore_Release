@@ -102,6 +102,7 @@ curl -s https://<도메인>/api/v1/ai/health
 - **업데이트 배포(pull 방식)**: `main`에 변경이 머지되면 GitHub Actions가 새 이미지를 올린다. VM에서는 `./deploy/oci-pull.sh` 만 다시 실행하면 최신 이미지를 받아 컨테이너를 교체한다(빌드 없음). 키는 `~/.delaynomore.env`에서 자동 로드된다.
 - **로그**: `sudo docker logs -f delaynomore`
 - **재부팅 후 자동 기동**: `--restart unless-stopped`로 이미 처리됨.
+- **일일 DB 백업**(영속 모드): `./deploy/setup-backup-cron.sh` 1회 실행으로 cron 등록(멱등). 자세한 운영 방법은 [OPERATIONS.md](OPERATIONS.md) 2-2장.
 - **메모리**(선택): 6GB면 여유롭지만, 더 작은 shape면 `-e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75` 추가.
 
 ## (대안) OCI Container Instances
