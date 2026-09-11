@@ -7,6 +7,8 @@ import com.delaynomore.backend.domain.ai.usage.AiCallSite;
 import com.delaynomore.backend.domain.plan.dto.TodayDashboardResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.TodayDashboardService;
+import com.delaynomore.backend.domain.slack.repository.SlackRepository;
+import com.delaynomore.backend.domain.slack.repository.SlackRepository.SlackLink;
 import com.delaynomore.backend.domain.slack.service.SlackMessageComposer.NumberedTask;
 import com.delaynomore.backend.domain.slack.support.SlackIntentPrompt;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
@@ -53,10 +55,12 @@ public class SlackCommandService {
     private final TodayDashboardService todayDashboardService;
     private final SlackMessageComposer composer;
     private final PlanService planService;
+    private final SlackRepository slackRepository;
     private final JsonMapper jsonMapper;
 
     /** 메시지 한 건을 처리하고 사용자에게 보낼 답장을 돌려준다(항상 non-null). */
-    public String handle(String owner, String rawText) {
+    public String handle(SlackLink link, String rawText) {
+        String owner = link.owner();
         String text = stripMentions(rawText);
         if (text.isBlank()) {
             return FALLBACK_REPLY;
@@ -68,7 +72,8 @@ public class SlackCommandService {
         Completion completion;
         try {
             completion = openRouterClient.completeWithTools(AiCallSite.SLACK_INTENT,
-                    SlackIntentPrompt.messages(tasks, text), MAX_TOKENS, SlackIntentPrompt.tools());
+                    SlackIntentPrompt.messages(tasks, link.activeStartMin(), link.activeEndMin(), text),
+                    MAX_TOKENS, SlackIntentPrompt.tools());
         } catch (BusinessException e) {
             return AI_ERROR_REPLY; // AI_UPSTREAM_ERROR — 슬랙에는 오류 코드 대신 사람 말로
         }
@@ -78,6 +83,7 @@ public class SlackCommandService {
             JsonNode args = parseArgs(call.argumentsJson());
             return switch (call.name()) {
                 case "complete_task" -> completeTask(owner, tasks, args);
+                case "set_active_hours" -> setActiveHours(link, args);
                 case "no_action" -> replyOf(args);
                 default -> FALLBACK_REPLY;
             };
@@ -117,6 +123,46 @@ public class SlackCommandService {
                     : "✅ '" + task.content() + "' 완료 처리했어요. " + progress;
         }
         return "↩️ '" + task.content() + "' 완료 체크를 해제했어요. 오늘 진행: " + after.done() + "/" + after.total();
+    }
+
+    /**
+     * 활동시간 변경(v0.28.0) — 언급된 쪽만 바꾸고 나머지는 유지한다. 검증(형식·start&lt;end)은
+     * 여기서 하고, 저장은 저장소가 한다. 다음 발송·회고부터 새 시각이 적용된다.
+     */
+    private String setActiveHours(SlackLink link, JsonNode args) {
+        Integer start = parseHhmm(args.path("start").asString(""));
+        Integer end = parseHhmm(args.path("end").asString(""));
+        if (start == null && end == null) {
+            return "바꿀 시각을 \"09:00\"처럼 알려주세요 — 예: \"활동시간 9시부터 21시까지로 바꿔줘\"";
+        }
+        int newStart = start != null ? start : link.activeStartMin();
+        int newEnd = end != null ? end : link.activeEndMin();
+        if (newStart >= newEnd) {
+            return "시작 시각(" + formatMin(newStart) + ")이 종료 시각(" + formatMin(newEnd)
+                    + ")보다 빨라야 해요. 다시 알려주시겠어요?";
+        }
+        if (!slackRepository.updateActiveHours(link.owner(), newStart, newEnd)) {
+            return "연결 정보를 찾지 못했어요. 마이페이지에서 연결 상태를 확인해주세요.";
+        }
+        return "⏰ 활동시간을 " + formatMin(newStart) + " ~ " + formatMin(newEnd) + "로 바꿨어요. "
+                + "내일부터 " + formatMin(newStart) +"에 체크리스트, " + formatMin(newEnd) + "에 회고 질문을 보내드릴게요.";
+    }
+
+    /** "HH:mm" → 분. 형식이 아니면 null(빈 문자열 포함). */
+    static Integer parseHhmm(String value) {
+        if (value == null) {
+            return null;
+        }
+        String v = value.trim();
+        if (!v.matches("([01]?\\d|2[0-3]):[0-5]\\d")) {
+            return null;
+        }
+        String[] parts = v.split(":");
+        return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
+    }
+
+    static String formatMin(int minutesOfDay) {
+        return "%02d:%02d".formatted(minutesOfDay / 60, minutesOfDay % 60);
     }
 
     private String replyOf(JsonNode args) {

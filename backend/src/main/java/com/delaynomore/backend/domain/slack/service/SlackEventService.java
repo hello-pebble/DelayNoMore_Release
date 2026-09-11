@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.slack.service;
 
 import com.delaynomore.backend.domain.slack.client.SlackApiClient;
 import com.delaynomore.backend.domain.slack.repository.SlackRepository.SlackLink;
+import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ public class SlackEventService {
 
     private final SlackLinkService linkService;
     private final SlackCommandService commandService;
+    private final SlackReflectionFlowService reflectionFlow;
     private final SlackApiClient apiClient;
 
     public void handle(JsonNode payload) {
@@ -57,10 +59,16 @@ public class SlackEventService {
         if (isDm && tryLinkByCode(teamId, slackUserId, channel, text)) {
             return;
         }
-        // ② 연결된 사용자 → 자연어 명령. ③ 미연결 → 안내.
+        // ② 연결된 사용자 → 진행 중 회고 문답이 있으면 그 답변으로(v0.28.0), 아니면 자연어 명령.
+        //    ③ 미연결 → 안내.
         Optional<SlackLink> link = linkService.findBySlackUser(teamId, slackUserId);
         if (link.isPresent()) {
-            apiClient.postMessage(channel, commandService.handle(link.get().owner(), text));
+            String owner = link.get().owner();
+            java.time.LocalDate today = KstDates.today();
+            String reply = reflectionFlow.hasAwaitingSession(owner, today)
+                    ? reflectionFlow.handleAnswer(owner, today, SlackCommandService.stripMentions(text))
+                    : commandService.handle(link.get(), text);
+            apiClient.postMessage(channel, reply);
         } else {
             apiClient.postMessage(channel, "아직 연결된 계정이 없어요. 웹 마이페이지에서 [슬랙 연결 코드]를 발급받아 "
                     + "이 채팅에 붙여넣어 주세요. (코드는 발급 후 " + SlackLinkService.CODE_TTL_MINUTES + "분간 유효)");

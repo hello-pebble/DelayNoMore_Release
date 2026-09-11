@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -27,6 +28,7 @@ class SlackDispatchServiceTest {
 
     private InMemorySlackRepository repository;
     private TodayDashboardService dashboardService;
+    private SlackReflectionFlowService reflectionFlow;
     private SlackApiClient apiClient;
     private SlackDispatchService service;
 
@@ -34,9 +36,11 @@ class SlackDispatchServiceTest {
     void setUp() {
         repository = new InMemorySlackRepository();
         dashboardService = mock(TodayDashboardService.class);
+        reflectionFlow = mock(SlackReflectionFlowService.class);
+        when(reflectionFlow.startFlow(anyString(), any())).thenReturn(java.util.Optional.empty());
         apiClient = mock(SlackApiClient.class);
         service = new SlackDispatchService(ENABLED, repository, dashboardService,
-                new SlackMessageComposer(), apiClient);
+                new SlackMessageComposer(), reflectionFlow, apiClient);
     }
 
     @Test
@@ -98,11 +102,39 @@ class SlackDispatchServiceTest {
         repository.upsertLink(alwaysActiveLink("user-1"));
         SlackDispatchService off = new SlackDispatchService(
                 new SlackProperties(null, "test-secret", false), repository, dashboardService,
-                new SlackMessageComposer(), apiClient);
+                new SlackMessageComposer(), reflectionFlow, apiClient);
 
         off.dispatch();
 
         verify(apiClient, never()).postMessage(anyString(), anyString());
+    }
+
+    @Test
+    void 활동_종료가_지나면_회고_프롬프트를_하루_한_번만_보낸다() {
+        repository.upsertLink(new SlackLink("user-1", "T1", "U1", "D1", 0, 0)); // end=0 → 항상 종료 이후
+        when(dashboardService.get("user-1")).thenReturn(dashboardWithOneTask());
+        when(apiClient.postMessage(anyString(), anyString())).thenReturn(true);
+        when(reflectionFlow.startFlow(anyString(), any()))
+                .thenReturn(java.util.Optional.of("🌙 회고 질문"));
+
+        service.dispatch();
+        service.dispatch();
+
+        // 체크리스트 1회 + 회고 프롬프트 1회 — kind가 달라 클레임이 따로 잡히고 각각 멱등이다.
+        verify(apiClient, times(2)).postMessage(anyString(), anyString());
+        verify(reflectionFlow, times(1)).startFlow(anyString(), any());
+    }
+
+    @Test
+    void 회고할_계획이_없으면_프롬프트를_보내지_않고_클레임만_닫는다() {
+        repository.upsertLink(new SlackLink("user-1", "T1", "U1", "D1", 1440, 0)); // 체크리스트 미발송·회고만
+        when(reflectionFlow.startFlow(anyString(), any())).thenReturn(java.util.Optional.empty());
+
+        service.dispatch();
+        service.dispatch();
+
+        verify(apiClient, never()).postMessage(anyString(), anyString());
+        verify(reflectionFlow, times(1)).startFlow(anyString(), any()); // 두 번째 턴은 클레임에 막힘
     }
 
     private static SlackLink alwaysActiveLink(String owner) {

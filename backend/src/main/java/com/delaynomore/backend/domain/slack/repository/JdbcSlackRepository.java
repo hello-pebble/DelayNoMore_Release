@@ -144,6 +144,72 @@ public class JdbcSlackRepository implements SlackRepository {
     }
 
     @Override
+    public boolean updateActiveHours(String owner, int activeStartMin, int activeEndMin) {
+        return jdbc.update("""
+                UPDATE slack_links SET active_start_min = :start, active_end_min = :end, updated_at = now()
+                 WHERE owner = :owner
+                """, new MapSqlParameterSource()
+                .addValue("owner", owner).addValue("start", activeStartMin).addValue("end", activeEndMin)) == 1;
+    }
+
+    private static final RowMapper<ReflectionSession> SESSION_MAPPER = (rs, rowNum) -> new ReflectionSession(
+            rs.getString("owner"), rs.getDate("session_date").toLocalDate(), rs.getLong("plan_id"),
+            rs.getString("state"), rs.getString("difficulty"));
+
+    @Override
+    public void createReflectionSession(String owner, LocalDate date, long planId, String state) {
+        jdbc.update("""
+                INSERT INTO slack_reflection_sessions (owner, session_date, plan_id, state)
+                VALUES (:owner, :date, :planId, :state)
+                ON CONFLICT (owner, session_date, plan_id) DO NOTHING
+                """, sessionParams(owner, date, planId).addValue("state", state));
+    }
+
+    @Override
+    public Optional<ReflectionSession> findAwaitingReflectionSession(String owner, LocalDate date) {
+        return jdbc.query("""
+                        SELECT * FROM slack_reflection_sessions
+                         WHERE owner = :owner AND session_date = :date AND state LIKE 'AWAITING%'
+                         ORDER BY plan_id LIMIT 1
+                        """, sessionParams(owner, date, 0L), SESSION_MAPPER)
+                .stream().findFirst();
+    }
+
+    @Override
+    public Optional<ReflectionSession> findPendingReflectionSession(String owner, LocalDate date) {
+        return jdbc.query("""
+                        SELECT * FROM slack_reflection_sessions
+                         WHERE owner = :owner AND session_date = :date AND state = 'PENDING'
+                         ORDER BY plan_id LIMIT 1
+                        """, sessionParams(owner, date, 0L), SESSION_MAPPER)
+                .stream().findFirst();
+    }
+
+    @Override
+    public void updateReflectionSession(String owner, LocalDate date, long planId, String state, String difficulty) {
+        jdbc.update("""
+                UPDATE slack_reflection_sessions
+                   SET state = :state, difficulty = COALESCE(:difficulty, difficulty), updated_at = now()
+                 WHERE owner = :owner AND session_date = :date AND plan_id = :planId
+                """, sessionParams(owner, date, planId)
+                .addValue("state", state).addValue("difficulty", difficulty));
+    }
+
+    @Override
+    public void closeReflectionSessions(String owner, LocalDate date, String state) {
+        jdbc.update("""
+                UPDATE slack_reflection_sessions SET state = :state, updated_at = now()
+                 WHERE owner = :owner AND session_date = :date
+                   AND (state LIKE 'AWAITING%' OR state = 'PENDING')
+                """, sessionParams(owner, date, 0L).addValue("state", state));
+    }
+
+    private static MapSqlParameterSource sessionParams(String owner, LocalDate date, long planId) {
+        return new MapSqlParameterSource()
+                .addValue("owner", owner).addValue("date", date).addValue("planId", planId);
+    }
+
+    @Override
     public boolean claimEvent(String eventId) {
         return jdbc.update("""
                 INSERT INTO slack_event_dedup (event_id) VALUES (:eventId)

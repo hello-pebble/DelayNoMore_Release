@@ -69,25 +69,31 @@ class SlackIntentEvalTest {
             new NumberedTask(4, 2L, "t4", "영어 회화", "영단어 30개 암기", false));
 
     record IntentCase(String id, String message, String expectedTool,
-                      Integer expectedNumber, String expectedCompleted) {
+                      Integer expectedNumber, String expectedCompleted,
+                      String expectedStart, String expectedEnd) {
     }
 
     record IntentDataset(String name, String description, List<IntentCase> cases) {
     }
 
     record IntentRun(IntentCase testCase, String actualTool, Integer actualNumber,
-                     String actualCompleted, String error) {
+                     String actualCompleted, String actualStart, String actualEnd, String error) {
 
         boolean correct() {
             if (error != null || !testCase.expectedTool().equals(actualTool)) {
                 return false;
             }
-            if (!"complete_task".equals(testCase.expectedTool())) {
-                return true;
+            if ("complete_task".equals(testCase.expectedTool())) {
+                return Objects.equals(testCase.expectedNumber(), actualNumber)
+                        && (testCase.expectedCompleted() == null
+                        || testCase.expectedCompleted().equals(actualCompleted));
             }
-            return Objects.equals(testCase.expectedNumber(), actualNumber)
-                    && (testCase.expectedCompleted() == null
-                    || testCase.expectedCompleted().equals(actualCompleted));
+            if ("set_active_hours".equals(testCase.expectedTool())) {
+                // 기대값이 명시된 쪽만 대조 — 한쪽만 바꾸는 케이스는 다른 쪽 인자를 강제하지 않는다.
+                return (testCase.expectedStart() == null || testCase.expectedStart().equals(actualStart))
+                        && (testCase.expectedEnd() == null || testCase.expectedEnd().equals(actualEnd));
+            }
+            return true;
         }
 
         /** no_action 기대 케이스에서 변이 도구가 나온 경우 — 오탐 완료 체크(별도 판정 축). */
@@ -143,15 +149,19 @@ class SlackIntentEvalTest {
                 .isGreaterThanOrEqualTo(MIN_ACCURACY_PERCENT);
     }
 
+    /** 프로덕션 기본 활동시간과 같은 픽스처(09:00~21:00) — 프롬프트의 [현재 활동시간] 문맥. */
+    private static final int FIXTURE_START_MIN = 540;
+    private static final int FIXTURE_END_MIN = 1260;
+
     private IntentRun runOnce(IntentCase testCase) {
         try {
             Completion completion = openRouterClient.completeWithTools(AiCallSite.SLACK_INTENT,
-                    SlackIntentPrompt.messages(FIXTURE_TASKS, testCase.message()), MAX_TOKENS,
-                    SlackIntentPrompt.tools());
+                    SlackIntentPrompt.messages(FIXTURE_TASKS, FIXTURE_START_MIN, FIXTURE_END_MIN,
+                            testCase.message()), MAX_TOKENS, SlackIntentPrompt.tools());
             if (!completion.hasToolCalls()) {
                 // 도구 없이 산문만 — 프로덕션에서는 그대로 답장이 되지만(변이 없음) 평가에서는
                 // "도구를 하나 호출하라"는 규칙 위반이므로 no_action으로도 인정하지 않는다.
-                return new IntentRun(testCase, "(none)", null, null, null);
+                return new IntentRun(testCase, "(none)", null, null, null, null, null);
             }
             ToolCall call = completion.toolCalls().getFirst();
             JsonNode args = jsonMapper.readTree(call.argumentsJson() == null || call.argumentsJson().isBlank()
@@ -163,11 +173,18 @@ class SlackIntentEvalTest {
                 // 번호 없는 complete_task는 correct()에서 오답 처리된다
             }
             String completed = args.path("completed").asString("true").trim();
-            return new IntentRun(testCase, call.name(), number, completed.isEmpty() ? "true" : completed, null);
+            String start = blankToNull(args.path("start").asString(""));
+            String end = blankToNull(args.path("end").asString(""));
+            return new IntentRun(testCase, call.name(), number,
+                    completed.isEmpty() ? "true" : completed, start, end, null);
         } catch (Exception e) {
-            return new IntentRun(testCase, null, null, null,
+            return new IntentRun(testCase, null, null, null, null, null,
                     e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 
     private static IntentDataset loadDataset() throws Exception {
@@ -212,10 +229,14 @@ class SlackIntentEvalTest {
         for (IntentRun run : runs) {
             String expected = run.testCase().expectedTool()
                     + (run.testCase().expectedNumber() != null ? " #" + run.testCase().expectedNumber() : "")
-                    + (run.testCase().expectedCompleted() != null ? " completed=" + run.testCase().expectedCompleted() : "");
+                    + (run.testCase().expectedCompleted() != null ? " completed=" + run.testCase().expectedCompleted() : "")
+                    + (run.testCase().expectedStart() != null ? " start=" + run.testCase().expectedStart() : "")
+                    + (run.testCase().expectedEnd() != null ? " end=" + run.testCase().expectedEnd() : "");
             String actual = run.error() != null ? "오류: " + run.error()
                     : (run.correct() ? "정답 " : "오답 ") + run.actualTool()
-                    + (run.actualNumber() != null ? " #" + run.actualNumber() : "");
+                    + (run.actualNumber() != null ? " #" + run.actualNumber() : "")
+                    + (run.actualStart() != null ? " start=" + run.actualStart() : "")
+                    + (run.actualEnd() != null ? " end=" + run.actualEnd() : "");
             out.append("| `").append(run.testCase().id()).append("` | ")
                     .append(run.testCase().message()).append(" | ")
                     .append(expected).append(" | ").append(actual).append(" |\n");

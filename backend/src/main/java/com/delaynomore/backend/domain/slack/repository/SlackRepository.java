@@ -62,6 +62,33 @@ public interface SlackRepository {
     /** 전송 확인 기록 — 이후 재클레임 대상에서 빠진다. */
     void markSent(String owner, LocalDate date, String kind);
 
+    // --- 활동시간 ---
+
+    /** 활동시간(분 단위) 갱신. false = 연결 없음. */
+    boolean updateActiveHours(String owner, int activeStartMin, int activeEndMin);
+
+    // --- 회고 문답 세션(v0.28.0) ---
+
+    /** 회고 문답 진행 상태 한 건. state는 PENDING/AWAITING_DIFFICULTY/AWAITING_REASON/DONE/EXPIRED. */
+    record ReflectionSession(String owner, LocalDate sessionDate, long planId,
+                             String state, String difficulty) {
+    }
+
+    /** 세션 생성 — 이미 있으면 무시(재발송·중복 시작에 멱등). */
+    void createReflectionSession(String owner, LocalDate date, long planId, String state);
+
+    /** 답변을 기다리는 세션(AWAITING_*) 하나 — plan_id 오름차순의 첫 행(순차 진행 규칙). */
+    Optional<ReflectionSession> findAwaitingReflectionSession(String owner, LocalDate date);
+
+    /** 다음 PENDING 세션(plan_id 오름차순 첫 행). */
+    Optional<ReflectionSession> findPendingReflectionSession(String owner, LocalDate date);
+
+    /** 상태·난이도 갱신(난이도는 null이면 유지). */
+    void updateReflectionSession(String owner, LocalDate date, long planId, String state, String difficulty);
+
+    /** 해당 날짜의 미종결(AWAITING_*·PENDING) 세션 전부를 주어진 상태로 닫는다(자정 경과 등). */
+    void closeReflectionSessions(String owner, LocalDate date, String state);
+
     // --- 이벤트 중복 제거 ---
 
     /** event_id 클레임. false = 이미 받은 이벤트(Slack 재전송) — 처리하지 않는다. */
