@@ -1,6 +1,6 @@
 # 기능 점검 체크리스트 (QA)
 
-- **대상 버전**: `v0.28.0`
+- **대상 버전**: `v0.29.0`
 - **범위**: 대화형 투두리스트 생성 데모 — 모바일 전용 UI(하단 탭바: 대화/오늘 할 일/체크리스트), 슬롯필링, 계획 생성/수정, mock 폴백, 여러 계획 보관(브라우저별 보관함), 오늘 할 일(오늘 보기), 오늘 마무리(일일 회고)·지난 회고 목록, 미완료 항목 내일로 이동, 계획 변경 이력(Audit), 서버 규칙 강제(고정 가드·형식 검증·날짜 산출/검증·채팅 patch 병합), 서버 계산 진행률·이월 도메인 액션·회고/이력 선택지 메타 API. **v0.9.2**: 자유 대화 patch 병합 서버 이관. **v0.9.3**: 이관 backlog 정리(문서 전용, 신규 QA 항목 없음). **v0.10.0**: 주간 완료율 요약(주 단위 완료율 API + 요약 카드). **v0.11.0**: 브라우저 단위 개인화(게스트 ID `X-Guest-Id` 헤더 격리, 닉네임은 표시용 라벨, 소유자당 10 + 전역 200 한도, 응답 no-store). **v0.12.0**: DB 영속화(`postgres` 프로필은 PostgreSQL(Supabase)에 영속되어 서버 재시작에도 데이터 유지, 기본 프로필은 기존처럼 휘발성 — 두 경우 모두 데이터 접근 키는 여전히 브라우저 게스트 ID라 이를 잃으면 닉네임만으로 재연결 불가). **v0.13.0**: 다음 계획 분량 추천(서버가 수행 기록 계산 + 규칙 분량 결정, AI는 이유·내용만, 승인 전 미저장 — F-22). **v0.13.1**: 추천 통계를 같은 목표의 최근 계획 최대 3건으로 합산(스키마 변경 없음 — F-22). **v0.14.x**: 계획 상태 수명주기(명시적 전이 명령·종결 전면 잠금 — F-23)·이월의 실행 단계화·지난 날짜 완료 체크 잠금(`PAST_TASK_LOCKED`). **v0.15.x**: AI 코치의 에이전트화(도구 호출 — F-25)·토큰 사용량 로그. **v0.16.x**: 도구 선택 평가 하네스(자동, CI). **v0.17.0**: 상태별 에이전트 프로필(F-26, `/agent/tools` 응답이 `{profile, tools}`로 변경). **v0.18.0**: 모바일 전용 화면(F-27 — 가로 3칸 폐지, 하단 탭바 전환, 넓은 화면도 폰 폭 컬럼. 프론트 전용 변경이라 API 영향 없음)
 - **사용법**: 배포 URL(`http://<PUBLIC_IP>` 또는 배포 주소)에 접속해 아래 항목을 순서대로 확인.
 - **버전 갱신 시**: 새 버전에서 바뀐 항목을 추가하고 "대상 버전"을 올린다.
@@ -919,6 +919,66 @@
   ```bash
   OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.only=slack
   # 합격: 의도 정확률 ≥80% + 오탐 변이 0건 → backend/build/eval/slack-intent.md 기록
+  ```
+
+---
+
+## F-39. 전문 에이전트 도메인 지식 연결 (v0.29.0)
+
+> 계획에 참고 자료를 붙여넣으면 서버가 청크로 나눠 보관하고, **고정한 뒤의 전문 에이전트**가
+> `search_domain_knowledge`로 그 자료에서 근거를 찾아 출처와 함께 답한다. 도구 노출은
+> `PlanStatus.allowsDomainResearch()`(초안 제외)가 결정하고, 자료 추가·삭제는 종결 전까지다.
+> 사전 조건: (postgres 프로필) V11 마이그레이션 적용. LLM 답변 확인은 `OPENROUTER_API_KEY` 필요.
+
+- [ ] **자료 추가** — 체크리스트 탭 "참고 자료" 블록을 펼쳐 제목·내용을 넣고 [자료 추가] →
+      목록에 "N자 · 검색 조각 M개"로 나타난다
+- [ ] **자료 삭제** — [삭제] 후 목록에서 사라지고, 새로고침해도 그대로다
+- [ ] **초안에는 검색 도구가 없다 / 고정하면 열린다** (키 없이 확인 가능):
+
+  ```bash
+  # 초안 상태 — search_domain_knowledge 없음
+  curl -s "http://localhost:8080/api/v1/ai/agent/tools?planId=<ID>" -H "X-Guest-Id: <GUEST>" \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin)["data"]; print(d["profile"]["name"], [t["name"] for t in d["tools"]])'
+  # 기대: CHECKLIST_COACH … search_domain_knowledge 미포함
+  curl -s -X POST http://localhost:8080/api/v1/plans/<ID>/confirm -H "X-Guest-Id: <GUEST>" -o /dev/null
+  # 고정 후 다시 조회 → 기대: DOMAIN_EXPERT … search_domain_knowledge 포함, update_plan_tasks 제외
+  ```
+
+- [ ] **근거 인용** — 고정 후 대화에서 "내가 올린 자료에서 ○○ 찾아줘"라고 물으면 실행 추적
+      패널에 **올린 자료 검색**이 뜨고, 답변이 자료 제목을 인용한다
+- [ ] **자료가 없을 때** — 자료를 모두 지운 뒤 같은 질문 → 도구가 "자료 없음"을 돌려주고
+      에이전트가 일반 지식으로 답한다(오류 메시지가 아니라 정상 답변)
+- [ ] **계획 숫자는 계획 도구가 답한다** — "이번 주 완료율 알려줘"에 자료 검색이 아니라
+      주간 요약 도구가 호출된다
+- [ ] 서버 확인(curl) — 상한·잠금·격리:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-knowledge-0001
+  # 20,001자 → 400 KNOWLEDGE_DOC_TOO_LARGE / 11번째 문서 → 400 KNOWLEDGE_LIMIT_EXCEEDED
+  curl -s -X POST $API/plans/<ID>/knowledge -H "X-Guest-Id: $G" -H 'Content-Type: application/json' \
+    -d '{"title":"초과","content":"내용"}'
+  # 다른 게스트로 조회 → 404 PLAN_NOT_FOUND (자료의 존재 자체를 숨긴다)
+  curl -s $API/plans/<ID>/knowledge -H "X-Guest-Id: qa-other-0002"
+  # 중단·완료된 계획에 추가 → 409 PLAN_LOCKED (목록 조회·검색은 계속 가능)
+  ```
+
+- [ ] **계획 삭제 캐스케이드** — 계획을 지우면 그 계획의 자료도 함께 사라진다
+      (`GET /plans/<ID>/knowledge` → 404 PLAN_NOT_FOUND)
+- [ ] (postgres 프로필) V11 적용 확인:
+
+  ```bash
+  # Supabase SQL Editor: \d plan_knowledge_docs / \d plan_knowledge_chunks
+  # 기대: docs(plan_id FK ON DELETE CASCADE), chunks(doc_id FK CASCADE, PK(doc_id,seq))
+  ```
+
+- [ ] **제한사항 확인(문서화된 동작)** — 자료에 한자가 섞여 있으면 답변 인용에서 한자가
+      빠진다(도구 결과에 걸린 기존 `stripCjk` 필터 — v0.29.0은 수용, [AGENT.md](AGENT.md) 참고)
+- [ ] **평가 기준선(릴리스 게이트)** — 배포 키로 실측해 기록한다:
+
+  ```bash
+  OPENROUTER_API_KEY=... ./gradlew evalAgent -Deval.only=knowledge,notool
+  # 합격: permissionBreached 0건(초안 차단·자료 인젝션 축) — 통과율은 리포트로 기준선 기록
+  # 리포트: backend/build/eval/report.md
   ```
 
 ---

@@ -23,7 +23,8 @@ import {
   fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
-  updateTaskCompletion, fetchTodayDashboard, fetchAgentTools
+  updateTaskCompletion, fetchTodayDashboard, fetchAgentTools,
+  fetchKnowledgeDocs, createKnowledgeDoc, deleteKnowledgeDoc
 } from '../db_service';
 import { todayStr } from '../date_utils';
 import AgentTrace from './agent_trace';
@@ -256,6 +257,59 @@ export default function ChatCoach({ agentEnabled = false }) {
       });
     return () => { cancelled = true; };
   }, [catalogActive, activePlanId, activeStatus]);
+
+  // 참고 자료(v0.29.0) — 계획이 바뀌면 목록을 다시 읽는다. 보관 전 초안(activePlanId=null)에는
+  // 붙일 자료가 없으므로 블록 자체를 그리지 않는다. 추가·삭제 가능 여부(종결 잠금)는 서버가
+  // 최종 판정하고(409), 화면은 같은 규칙을 미리 반영해 입력창을 숨긴다.
+  const [knowledgeDocs, setKnowledgeDocs] = useState([]);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [knowledgeTitle, setKnowledgeTitle] = useState('');
+  const [knowledgeContent, setKnowledgeContent] = useState('');
+  const [knowledgeBusy, setKnowledgeBusy] = useState(false);
+  const [knowledgeError, setKnowledgeError] = useState(null);
+
+  useEffect(() => {
+    if (activePlanId == null) return undefined;
+    let cancelled = false;
+    fetchKnowledgeDocs(activePlanId)
+      .then((docs) => {
+        if (!cancelled) setKnowledgeDocs(docs || []);
+      })
+      .catch(() => {
+        if (!cancelled) setKnowledgeDocs([]);
+      });
+    return () => { cancelled = true; };
+  }, [activePlanId]);
+
+  const handleAddKnowledge = async () => {
+    if (activePlanId == null || !knowledgeTitle.trim() || !knowledgeContent.trim()) return;
+    setKnowledgeBusy(true);
+    setKnowledgeError(null);
+    try {
+      const doc = await createKnowledgeDoc(activePlanId, knowledgeTitle.trim(), knowledgeContent.trim());
+      setKnowledgeDocs((prev) => [doc, ...prev]); // 서버 목록과 같은 최신순
+      setKnowledgeTitle('');
+      setKnowledgeContent('');
+    } catch (err) {
+      setKnowledgeError(err.message);
+    } finally {
+      setKnowledgeBusy(false);
+    }
+  };
+
+  const handleDeleteKnowledge = async (docId) => {
+    if (activePlanId == null) return;
+    setKnowledgeBusy(true);
+    setKnowledgeError(null);
+    try {
+      await deleteKnowledgeDoc(activePlanId, docId);
+      setKnowledgeDocs((prev) => prev.filter((doc) => doc.id !== docId));
+    } catch (err) {
+      setKnowledgeError(err.message);
+    } finally {
+      setKnowledgeBusy(false);
+    }
+  };
 
   // 스크롤 자동으로 아래로 내리기
   const scrollToBottom = () => {
@@ -2466,6 +2520,95 @@ export default function ChatCoach({ agentEnabled = false }) {
           >
             <span>다시 만들기</span>
           </button>
+        </div>
+      )}
+
+      {/* 참고 자료(v0.29.0) — 고정하면 전문 에이전트가 이 자료를 검색해 근거로 답한다.
+          추가·삭제는 종결 전까지, 목록 조회는 언제나. 서버가 같은 규칙을 다시 판정한다. */}
+      {draftChecklist && activePlanId != null && (
+        <div style={{ padding: '0 12px 10px', borderBottom: '1px solid var(--border)' }}>
+          <button
+            type="button"
+            onClick={() => setKnowledgeOpen((open) => !open)}
+            style={{ ...exportButtonStyle, width: '100%', justifyContent: 'space-between' }}
+            aria-expanded={knowledgeOpen}
+          >
+            <span>참고 자료 ({knowledgeDocs.length})</span>
+            <span style={{ color: 'var(--text-muted)' }}>{knowledgeOpen ? '접기' : '펼치기'}</span>
+          </button>
+          {knowledgeOpen && (
+            <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                {isTerminal
+                  ? '종결된 계획이라 자료를 추가·삭제할 수 없습니다. 회고 도우미가 참고하는 데는 그대로 쓰입니다.'
+                  : '강의 노트·기출 요약 같은 자료를 붙여넣으면, 계획을 고정한 뒤 전문 에이전트가 이 자료에서 근거를 찾아 답합니다.'}
+              </div>
+              {!isTerminal && (
+                <>
+                  <input
+                    type="text"
+                    value={knowledgeTitle}
+                    onChange={(e) => setKnowledgeTitle(e.target.value)}
+                    placeholder="자료 제목 (예: 정규화 요약)"
+                    maxLength={100}
+                    style={{
+                      padding: '8px', fontSize: '13px', border: '1px solid var(--border)',
+                      borderRadius: '6px', background: 'var(--bg-card)', color: 'var(--text-main)'
+                    }}
+                  />
+                  <textarea
+                    value={knowledgeContent}
+                    onChange={(e) => setKnowledgeContent(e.target.value)}
+                    placeholder="자료 내용을 붙여넣으세요 (최대 20,000자)"
+                    rows={4}
+                    style={{
+                      padding: '8px', fontSize: '13px', border: '1px solid var(--border)',
+                      borderRadius: '6px', background: 'var(--bg-card)', color: 'var(--text-main)',
+                      resize: 'vertical', fontFamily: 'inherit'
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddKnowledge}
+                    disabled={knowledgeBusy || !knowledgeTitle.trim() || !knowledgeContent.trim()}
+                    style={exportButtonStyle}
+                  >
+                    <span>자료 추가</span>
+                  </button>
+                </>
+              )}
+              {knowledgeDocs.map((doc) => (
+                <div
+                  key={doc.id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '8px', padding: '8px',
+                    border: '1px solid var(--border)', borderRadius: '6px'
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', fontWeight: 600, wordBreak: 'break-all' }}>{doc.title}</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      {doc.chars}자 · 검색 조각 {doc.chunkCount}개
+                    </div>
+                  </div>
+                  {!isTerminal && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteKnowledge(doc.id)}
+                      disabled={knowledgeBusy}
+                      aria-label={`${doc.title} 삭제`}
+                      style={{ ...exportButtonStyle, minHeight: '30px', color: 'var(--text-muted)' }}
+                    >
+                      <span>삭제</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+              {knowledgeError && (
+                <div style={{ fontSize: '12px', color: 'var(--danger, #d33)', lineHeight: 1.5 }}>{knowledgeError}</div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

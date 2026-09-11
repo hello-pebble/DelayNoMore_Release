@@ -44,6 +44,8 @@ public abstract class AbstractPostgresIntegrationTest {
     void truncateAll() {
         jdbcTemplate.execute("TRUNCATE plans, reflections, audit_events, "
                 + "challenges, challenge_participants, challenge_seeds, point_wallets, "
-                + "users, auth_sessions RESTART IDENTITY CASCADE");
+                + "users, auth_sessions, plan_knowledge_docs, plan_knowledge_chunks, "
+                + "slack_links, slack_link_codes, slack_daily_sends, slack_event_dedup, "
+                + "slack_reflection_sessions RESTART IDENTITY CASCADE");
     }
 }

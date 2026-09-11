@@ -334,6 +334,8 @@ flowchart TD
 erDiagram
     plans ||--o{ reflections : "하루에 1개씩 회고"
     plans ||..o{ audit_events : "변경 기록 (FK 없음)"
+    plans ||--o{ plan_knowledge_docs : "참고 자료 (v0.29.0)"
+    plan_knowledge_docs ||--o{ plan_knowledge_chunks : "검색용 조각"
     challenges ||--o{ challenge_participants : "정원만큼 참가"
 
     plans {
@@ -352,6 +354,20 @@ erDiagram
         bigint saved_at "정렬 기준"
         text category "목적 (LLM이 초안과 함께 판정)"
         text condition_key "어떤 조건으로 묶이나 (파생)"
+    }
+
+    plan_knowledge_docs {
+        bigint id PK "자료 번호"
+        bigint plan_id "어느 계획 (FK · 삭제 시 CASCADE)"
+        text title "자료 제목"
+        text content "원문 (재청크 대비 보존)"
+        text created_at "등록 시각"
+    }
+
+    plan_knowledge_chunks {
+        bigint doc_id PK "어느 자료 (FK · CASCADE)"
+        int seq PK "조각 번호"
+        text content "500자 조각 (오버랩 100자)"
     }
 
     reflections {

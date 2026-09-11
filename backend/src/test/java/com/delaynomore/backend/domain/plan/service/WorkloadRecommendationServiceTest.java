@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepo
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.ai.service.AiService;
 import com.delaynomore.backend.domain.ai.service.RecommendationReasonWriter;
+import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
 import com.delaynomore.backend.domain.plan.dto.AuditEventResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.RecommendationConfirmRequest;
@@ -51,7 +52,7 @@ class WorkloadRecommendationServiceTest {
         planRepository = new InMemoryPlanRepository();
         reflectionRepository = new InMemoryReflectionRepository();
         auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
-        PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
+        PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
                 new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
         aiService = mock(AiService.class);
         reasonWriter = mock(RecommendationReasonWriter.class);

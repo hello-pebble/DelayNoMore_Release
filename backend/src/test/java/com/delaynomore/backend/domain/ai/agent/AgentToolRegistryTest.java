@@ -5,7 +5,9 @@ import com.delaynomore.backend.domain.ai.agent.tools.GetReflectionHistoryTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetTodayTasksTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetWeeklySummaryTool;
 import com.delaynomore.backend.domain.ai.agent.tools.GetWorkloadRecommendationTool;
+import com.delaynomore.backend.domain.ai.agent.tools.SearchDomainKnowledgeTool;
 import com.delaynomore.backend.domain.ai.agent.tools.UpdatePlanTasksTool;
+import com.delaynomore.backend.domain.knowledge.service.PlanKnowledgeService;
 import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.ReflectionService;
@@ -33,6 +35,7 @@ class AgentToolRegistryTest {
             new GetWeeklySummaryTool(mock(PlanService.class)),
             new GetReflectionHistoryTool(mock(ReflectionService.class)),
             new GetWorkloadRecommendationTool(mock(WorkloadRecommendationService.class)),
+            new SearchDomainKnowledgeTool(mock(PlanKnowledgeService.class)),
             new UpdatePlanTasksTool(),
             new CarryOverTool(mock(PlanService.class))));
 
@@ -41,7 +44,9 @@ class AgentToolRegistryTest {
     }
 
     @Test
-    void toolsFor_초안_수정과이월을포함한전체노출() {
+    void toolsFor_초안_수정과이월을포함하되_자료검색은빠진다() {
+        // 자료 검색(v0.29.0)은 초안에 없다 — 고정이 전문 에이전트로의 인계 전환점이라는 설계가
+        // allowsDomainResearch 플래그로 표현된 결과다(containsExactlyInAnyOrder가 부재까지 고정).
         assertThat(namesFor(PlanStatus.DRAFT)).containsExactlyInAnyOrder(
                 "get_today_tasks", "get_weekly_summary", "get_reflection_history",
                 "get_workload_recommendation", "update_plan_tasks", "carry_over_tasks");
@@ -55,6 +60,8 @@ class AgentToolRegistryTest {
 
         assertThat(names).doesNotContain("update_plan_tasks");
         assertThat(names).contains("carry_over_tasks", "get_today_tasks", "get_weekly_summary");
+        // 반대 방향 — 초안에 없던 자료 검색이 고정에서 열린다(v0.29.0).
+        assertThat(names).contains("search_domain_knowledge");
     }
 
     @Test
@@ -65,8 +72,8 @@ class AgentToolRegistryTest {
                     .as("%s 상태", terminal)
                     .noneMatch(AgentTool::mutating);
             assertThat(namesFor(terminal)).containsExactlyInAnyOrder(
-                    "get_today_tasks", "get_weekly_summary",
-                    "get_reflection_history", "get_workload_recommendation");
+                    "get_today_tasks", "get_weekly_summary", "get_reflection_history",
+                    "get_workload_recommendation", "search_domain_knowledge");
         }
     }
 
@@ -76,6 +83,8 @@ class AgentToolRegistryTest {
         assertThat(registry.find("update_plan_tasks", PlanStatus.DRAFT)).isPresent();
         assertThat(registry.find("update_plan_tasks", PlanStatus.CONFIRMED)).isEmpty();
         assertThat(registry.find("carry_over_tasks", PlanStatus.COMPLETED)).isEmpty();
+        assertThat(registry.find("search_domain_knowledge", PlanStatus.DRAFT)).isEmpty();
+        assertThat(registry.find("search_domain_knowledge", PlanStatus.CONFIRMED)).isPresent();
         assertThat(registry.find("존재하지_않는_도구", PlanStatus.DRAFT)).isEmpty();
     }
 

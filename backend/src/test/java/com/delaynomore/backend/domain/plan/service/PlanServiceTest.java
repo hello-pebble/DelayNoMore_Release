@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
+import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
 import com.delaynomore.backend.domain.plan.dto.CarryOverResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
@@ -39,8 +40,9 @@ class PlanServiceTest {
     private final PlanRepository planRepository = new InMemoryPlanRepository();
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
+    private final InMemoryKnowledgeRepository knowledgeRepository = new InMemoryKnowledgeRepository();
     private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
-            auditEventService,
+            knowledgeRepository, auditEventService,
                 new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
@@ -1010,6 +1012,21 @@ class PlanServiceTest {
 
         // then
         assertThat(planService.getPlans(OWNER)).isEmpty();
+    }
+
+    @Test
+    void delete_참고자료도함께사라진다() {
+        // given — 계획에 참고 자료 1건(청크 포함). JDBC에는 FK CASCADE가 있지만 인메모리 프로필엔
+        // FK가 없으므로, 두 프로필의 계약을 맞추는 것은 서비스 캐스케이드다(회고와 같은 관례).
+        PlanResponse saved = planService.create(request("정보처리기사"), OWNER, null, null);
+        knowledgeRepository.saveDoc(saved.id(), "노트", "원문", "2026-07-21T10:00:00Z", java.util.List.of("청크"));
+
+        // when
+        planService.delete(saved.id(), OWNER, null);
+
+        // then — 고아 자료가 남지 않는다
+        assertThat(knowledgeRepository.findDocsByPlanId(saved.id())).isEmpty();
+        assertThat(knowledgeRepository.findChunksByPlanId(saved.id())).isEmpty();
     }
 
     @Test

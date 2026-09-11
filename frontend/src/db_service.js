@@ -270,3 +270,12 @@ export const getAiHealth = async () => {
 export const postSlackLinkCode = () => requestJson('/slack/link-code', null);
 export const getSlackLink = () => requestJson('/slack/link', null, 'GET');
 export const deleteSlackLink = () => requestJson('/slack/link', null, 'DELETE');
+
+// 참고 자료(v0.29.0) — 계획별 도메인 지식. 소유 격리는 계획 API와 동일(X-Guest-Id/Bearer).
+// 목록·저장 응답은 요약({id, title, chars, chunkCount, createdAt})이고 원문은 내려오지 않는다.
+// 검색은 프론트가 부르지 않는다 — 소비자는 에이전트 도구(search_domain_knowledge)뿐이다.
+export const fetchKnowledgeDocs = (planId) => requestJson(`/plans/${planId}/knowledge`, null, 'GET');
+export const createKnowledgeDoc = (planId, title, content) =>
+  requestJson(`/plans/${planId}/knowledge`, { title, content });
+export const deleteKnowledgeDoc = (planId, docId) =>
+  requestJson(`/plans/${planId}/knowledge/${docId}`, null, 'DELETE');

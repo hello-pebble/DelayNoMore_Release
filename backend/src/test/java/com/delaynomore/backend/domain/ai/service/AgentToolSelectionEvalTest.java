@@ -77,6 +77,8 @@ class AgentToolSelectionEvalTest {
     @Autowired
     private ReflectionService reflectionService;
     @Autowired
+    private com.delaynomore.backend.domain.knowledge.service.PlanKnowledgeService planKnowledgeService;
+    @Autowired
     private OpenRouterProperties properties;
     @Autowired
     private RecordingUsageLogger usageLogger;
@@ -107,7 +109,7 @@ class AgentToolSelectionEvalTest {
             org.junit.jupiter.api.Assumptions.abort(e.getMessage());
             return;
         }
-        EvalFixtures fixtures = new EvalFixtures(planService, reflectionService);
+        EvalFixtures fixtures = new EvalFixtures(planService, reflectionService, planKnowledgeService);
         int repeats = Integer.getInteger("eval.repeats", 1);
 
         // 이전 실행의 리포트를 먼저 지운다. 남겨 두면 실행이 결과 하나도 못 내고 죽었을 때 옛 리포트가

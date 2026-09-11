@@ -60,6 +60,15 @@ public enum PlanStatus {
         return !isTerminal();
     }
 
+    // 도메인 지식 검색(v0.29.0)은 고정 후에 열린다 — "고정은 잠금이 아니라 전문 에이전트로의
+    // 인계 전환점"(로드맵)이라, 검색은 인계된 전문가의 능력이다. 종결 후에도 허용하는 이유:
+    // 회고 도우미가 "다음 계획 준비"를 도울 때 올려 둔 자료를 참고할 수 있어야 한다.
+    // 자료의 추가·삭제는 별개 판정(!isTerminal — 종결 전면 잠금 관례)이고, 이 플래그는
+    // 검색 도구의 노출만 결정한다.
+    public boolean allowsDomainResearch() {
+        return this != DRAFT;
+    }
+
     // 저장값 → 상태 파싱. null/blank는 DRAFT로 본다(PlanSaveRequest의 status 기본값 규칙과 동일).
     // 알 수 없는 값은 IllegalArgumentException — DB CHECK 제약이 있어 정상 경로에선 나올 수 없다.
     public static PlanStatus fromStored(String raw) {

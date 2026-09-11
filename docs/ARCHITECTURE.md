@@ -34,6 +34,10 @@ DelayNoMore_Release/
         ├── domain/challenge/ # 정원 한정 챌린지(조건부 UPDATE 정원 판정, v0.21.0) — /api/v1/challenges
         │                     # 개설 없음(v0.23.0) — 계획 고정 시 조건별 자동 생성(support/ChallengeCondition)
         ├── domain/auth/ # Google 로그인 + 세션 + 게스트 흡수(re-key) (v0.22.0) — /api/v1/auth/{google,logout,config}
+        ├── domain/knowledge/ # 계획별 참고 자료(v0.29.0) — /api/v1/plans/{id}/knowledge CRUD. 소유는 plan 경유(자체 owner 없음)
+        │                     #   · service(PlanKnowledgeService 상한·검색 · KnowledgeChunker 500자/오버랩 100자)
+        │                     #   · search(DomainKnowledgeSearcher 인터페이스 + BigramLexicalSearcher — 임베딩 교체 지점)
+        │                     #   · repository(InMemory/Jdbc — 점수 계산 없이 청크 로드만)
         ├── domain/slack/ # 슬랙 연동 1단계(v0.26.0) — 계정 연결 + 일일 체크리스트 DM. controller(events 웹훅·link API)
         │                 #   · service(연결/DM 코드 인식/메시지 조립/@Scheduled 발송 루프) · client(Slack Web API, 토큰 미설정 시 드라이런)
         │                 #   · support(서명 검증) · repository(InMemory/Jdbc 이중 구현 — 발송 멱등 클레임)
@@ -54,5 +58,7 @@ DelayNoMore_Release/
 - **메타(선택지·라벨)** — `GET /api/v1/meta/{reflection-options, audit-event-types}`(읽기 전용). 회고 선택지·이력 라벨의 소스오브트루스인 서버 enum을 코드+한글 라벨로 내려준다(프론트는 마운트 시 수신, 미가용 시 폴백 사본).
 - **슬랙 연동(v0.26.0)** — 연결 관리 3종 `POST /api/v1/slack/link-code`(봇 DM에 입력할 1회용 코드 발급, 10분 유효) · `GET /api/v1/slack/link`(연결 상태) · `DELETE /api/v1/slack/link`(해제)은 **로그인(회원) 전용**이다(게스트는 403 `SLACK_LOGIN_REQUIRED`). `POST /api/v1/slack/events`는 사용자용이 아니라 **Slack 전용 웹훅**으로, 서명 검증(HMAC) → `event_id` 중복 클레임 → 3초 내 ACK 후 비동기 처리하며 유일하게 ApiResponse 래핑을 쓰지 않는다(응답 형식이 Slack 쪽 계약). 일일 체크리스트 DM은 API 호출이 아니라 서버의 `@Scheduled` 60초 발송 루프가 보내고, 시크릿 미설정이면 기능이 통째로 꺼진다(수신 503 `SLACK_DISABLED`). 상세는 [API_REFERENCE.md](API_REFERENCE.md).
 - 응답은 `{ success, data, error }`(ApiResponse)로 래핑되고, 검증 실패는 `error.fieldErrors`, 오류 분기는 `error.code`(ErrorCode)로 판별합니다. Swagger UI: `/swagger-ui.html`.
+
+- **참고 자료(도메인 지식)** — `/api/v1/plans/{planId}/knowledge` CRUD(v0.29.0). 계획별 학습 자료를 텍스트로 등록하면 서버가 검색용 청크로 나눠 보관하고(500자/오버랩 100자, 계획당 10개·자료당 20,000자), 에이전트 도구 `search_domain_knowledge`가 그 청크를 검색해 근거로 인용한다. 소유는 자체 컬럼이 아니라 **계획 경유 판정**(불일치 404 `PLAN_NOT_FOUND`)이고, 추가·삭제는 종결 전까지(409 `PLAN_LOCKED`)다. 검색 순위는 `search/DomainKnowledgeSearcher` 구현 한 곳(문자 bigram Dice)이 매기고 저장소는 로드만 해, 인메모리·JDBC 두 프로필이 같은 결과를 낸다 — 임베딩으로 갈아끼울 때 바뀌는 것은 이 빈 하나다. 도구 노출은 `PlanStatus.allowsDomainResearch()`(초안 제외)가 결정한다. 상세는 [API 레퍼런스](API_REFERENCE.md).
 
 관련 문서: [기능 상세](FEATURES.md) · [에이전트](AGENT.md) · [실행·배포](DEPLOY.md)

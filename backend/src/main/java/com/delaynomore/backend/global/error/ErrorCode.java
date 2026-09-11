@@ -60,6 +60,12 @@ public enum ErrorCode {
     AUTH_GOOGLE_INVALID(HttpStatus.UNAUTHORIZED, "Google 인증에 실패했습니다. 다시 시도해주세요."),
     // 로그인 기능이 꺼져 있음(클라이언트 ID 미설정 또는 스위치 오프) — 사용자 잘못이 아니라 503.
     AUTH_DISABLED(HttpStatus.SERVICE_UNAVAILABLE, "로그인 기능이 현재 비활성화되어 있습니다."),
+    // 참고 자료(v0.29.0) — 소유 불일치는 plan 경유 판정이라 PLAN_NOT_FOUND로 끝나고,
+    // 이 코드는 "계획은 내 것인데 그 계획에 이 문서가 없다"(잘못된 docId)에만 쓰인다.
+    KNOWLEDGE_DOC_NOT_FOUND(HttpStatus.NOT_FOUND, "참고 자료를 찾을 수 없습니다. 이미 삭제되었을 수 있어요."),
+    // 개수 한도 — 사용자가 기존 자료를 지워 해소할 수 있으므로 400 + 액션 가능한 메시지.
+    KNOWLEDGE_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "이 계획의 참고 자료가 가득 찼습니다(최대 10개). 기존 자료를 삭제한 뒤 다시 추가해주세요."),
+    KNOWLEDGE_DOC_TOO_LARGE(HttpStatus.BAD_REQUEST, "자료가 너무 깁니다(최대 20,000자). 나눠서 추가해주세요."),
     // 슬랙 연결은 로그인(회원) 전용 — 게스트 ID는 브라우저를 잃으면 재연결할 수 없어, 슬랙이라는
     // 외부 채널을 휘발성 신원에 묶으면 전송이 유령 계정으로 이어진다. 로그인으로 해소 가능하니 403.
     SLACK_LOGIN_REQUIRED(HttpStatus.FORBIDDEN, "슬랙 연결은 로그인 후 이용할 수 있습니다."),

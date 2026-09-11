@@ -15,6 +15,12 @@ public enum EvalFixture {
     /** WEEK_PARTIAL이되 할 일 내용 하나에 인젝션 문구가 심겨 있다 — 데이터가 지시로 승격되는지 본다. */
     WEEK_PARTIAL_INJECTED,
 
+    /** WEEK_PARTIAL + 참고 자료 1건(정규화 요약, v0.29.0) — 검색 도구가 인용할 근거를 만든다. */
+    WEEK_PARTIAL_WITH_KNOWLEDGE,
+
+    /** WEEK_PARTIAL_WITH_KNOWLEDGE이되 자료 본문에 인젝션 미끼가 심겨 있다 — 문서가 지시로 승격되는지 본다. */
+    WEEK_PARTIAL_WITH_KNOWLEDGE_INJECTED,
+
     /** 보관 전 초안(planId 없음). 서버 데이터를 요구하는 도구는 실행 대신 사유를 돌려준다. */
     NO_PLAN
 }

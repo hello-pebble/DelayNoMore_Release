@@ -1,6 +1,6 @@
 # API 데이터 레퍼런스
 
-모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.26.0 기준**이며, 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. v0.26.0은 슬랙 연동 1단계(연결 + 일일 체크리스트 DM)를 더했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
+모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.29.0 기준**이며, 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. v0.26.0~v0.28.0이 슬랙 연동(연결·체크리스트 DM·자연어 완료 체크·문답 회고)을, v0.29.0이 계획별 참고 자료와 자료 검색 도구를 더했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
 
 - 베이스 경로: `/api/v1`
 - 스펙 자동 문서: 서버 실행 후 Swagger UI(`/swagger-ui/index.html`)에서도 확인 가능
@@ -65,6 +65,9 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `AUTH_TOKEN_INVALID` | 401 | Bearer 세션 토큰이 무효·만료 (v0.22.0 — 프론트는 저장된 auth를 지우고 게스트로 복귀) |
 | `AUTH_GOOGLE_INVALID` | 401 | Google ID 토큰 검증 실패(서명·aud 불일치·만료) |
 | `AUTH_DISABLED` | 503 | 로그인 기능 꺼짐(`GOOGLE_CLIENT_ID` 미설정 또는 `GOOGLE_LOGIN_ENABLED=false`) |
+| `KNOWLEDGE_DOC_NOT_FOUND` | 404 | 그 계획에 없는 자료 id (v0.29.0 — 다른 소유자의 계획은 계획 단계에서 `PLAN_NOT_FOUND`로 끝난다) |
+| `KNOWLEDGE_LIMIT_EXCEEDED` | 400 | 계획당 자료 개수 초과(최대 10개) |
+| `KNOWLEDGE_DOC_TOO_LARGE` | 400 | 자료 본문 20,000자 초과 |
 | `SLACK_LOGIN_REQUIRED` | 403 | 슬랙 연결 API를 게스트(Authorization 헤더 없음)가 호출 — 슬랙 연결은 로그인 전용 (v0.26.0) |
 | `SLACK_NOT_LINKED` | 404 | 연결된 슬랙 계정 없음 — 현재 상태 조회(S-2)는 404 대신 `linked:false`로 응답하므로 예약 코드 |
 | `SLACK_DISABLED` | 503 | 슬랙 연동 기능 꺼짐(서명 시크릿 미설정 또는 스위치 오프 — `AUTH_DISABLED` 관례) |
@@ -229,13 +232,17 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
     { "name": "get_reflection_history", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "get_workload_recommendation", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "get_challenge_status", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "search_domain_knowledge", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "carry_over_tasks", "mutating": true, "description": "…", "parameters": { … } } ] }
 ```
 
-> 도구는 총 9종(읽기 7종 + 변이 2종)이다 — v0.24.0에서 `get_progress`(전체 진행 스냅샷)·
-> `get_plan_history`(변경 이력 최신 20건), v0.25.0에서 `get_challenge_status`(챌린지 순위·정산)가
-> 추가됐다. 셋 다 읽기 전용이라 모든 상태에서 노출된다(위 CONFIRMED 예시에서도 빠지는 것은
-> `update_plan_tasks`뿐).
+> 도구는 총 10종(읽기 8종 + 변이 2종)이다 — v0.24.0에서 `get_progress`(전체 진행 스냅샷)·
+> `get_plan_history`(변경 이력 최신 20건), v0.25.0에서 `get_challenge_status`(챌린지 순위·정산),
+> v0.29.0에서 `search_domain_knowledge`(올린 자료 검색)가 추가됐다. 앞의 셋은 읽기 전용이라 모든
+> 상태에서 노출되지만, **`search_domain_knowledge`는 읽기인데도 DRAFT에서 빠진다** — 고정이 곧
+> 전문 에이전트 인계 전환점이라는 설계가 `PlanStatus.allowsDomainResearch()`로 표현된 것이다.
+> 그래서 상태별 응답을 비교하면 DRAFT에는 `update_plan_tasks`가 있고 자료 검색이 없으며,
+> CONFIRMED에는 그 반대다.
 
 > v0.17.0에서 응답이 맨 배열에서 `{profile, tools}` 래핑으로 바뀌었다(형식 변경 — 당시 이 API의
 > 프론트 소비처가 없어 호환성 부담 없이 변경). 프로필 3종(코치/전문가/회고 도우미) 표는
@@ -757,6 +764,51 @@ detail의 실제 형식(type별):
   { "code": "COMPLETED", "label": "완료" },
   { "code": "CANCELLED", "label": "중단" } ]
 ```
+
+---
+
+## 참고 자료 (`/api/v1/plans/{planId}/knowledge`) — v0.29.0
+
+전문 에이전트가 검색할 계획별 도메인 자료. **소유는 계획 경유로 판정**한다(자체 owner 컬럼
+없음 — reflections 선례): 모든 엔드포인트가 `PlanService.getPlan(planId, owner)`를 먼저 통과해
+다른 소유자의 계획이면 404 `PLAN_NOT_FOUND`로 끝난다(자료의 존재 자체를 숨긴다). 추가·삭제는
+**종결 전까지**(409 `PLAN_LOCKED`), 목록 조회는 종결 후에도 가능하다.
+
+**검색 엔드포인트는 없다** — 검색의 소비자는 에이전트 도구 `search_domain_knowledge`뿐이고,
+그 도구는 `PlanKnowledgeService.search`에 위임한다(프론트는 검색을 호출하지 않는다).
+
+### K-1. POST /plans/{planId}/knowledge — 자료 추가
+
+요청:
+
+```json
+{ "title": "DB 정규화 요약", "content": "제1정규형은 모든 속성이 원자값을 가진다.\n제2정규형은 …" }
+```
+
+응답(요약 — 원문은 싣지 않는다):
+
+```json
+{ "id": 1, "title": "DB 정규화 요약", "chars": 70, "chunkCount": 1, "createdAt": "2026-09-11T23:13:17.183948616Z" }
+```
+
+- 상한: 계획당 **10개**(초과 400 `KNOWLEDGE_LIMIT_EXCEEDED`), 본문 **20,000자**(초과 400
+  `KNOWLEDGE_DOC_TOO_LARGE`), 제목 **100자**(초과·공백 400 `INVALID_INPUT`).
+- 청크 분할은 서버가 한다(500자 · 오버랩 100자, 문단 경계 우선) — `chunkCount`가 그 결과다.
+
+### K-2. GET /plans/{planId}/knowledge — 자료 목록 (최신순)
+
+```json
+[ { "id": 2, "title": "영어 회화 표현집", "chars": 1840, "chunkCount": 4, "createdAt": "…" },
+  { "id": 1, "title": "DB 정규화 요약", "chars": 70, "chunkCount": 1, "createdAt": "…" } ]
+```
+
+원문(`content`)은 목록에 싣지 않는다 — 화면은 제목·분량·삭제만 쓰고, 원문의 독자는 검색뿐이다.
+
+### K-3. DELETE /plans/{planId}/knowledge/{docId} — 자료 삭제
+
+`data: null`. 다른 계획의 문서 id를 주면 404 `KNOWLEDGE_DOC_NOT_FOUND`(계획은 내 것이어도
+그 계획의 자료가 아니면 지울 수 없다). 계획을 삭제하면 그 계획의 자료·청크도 함께 사라진다
+(JDBC는 FK `ON DELETE CASCADE`, 인메모리는 `PlanService.delete`의 서비스 캐스케이드).
 
 ---
 
