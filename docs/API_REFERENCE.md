@@ -1,6 +1,6 @@
 # API 데이터 레퍼런스
 
-모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.19.0 기준**이며, 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. v0.19.0은 프론트의 작성 흐름·작업 토글·오늘 화면 조합을 서버 명령과 읽기 모델로 이관했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
+모든 동작(엔드포인트)의 요청·응답 데이터를 JSON 예시로 정리한 문서입니다. **v0.26.0 기준**이며, 소스(컨트롤러·DTO)와 1:1로 대조해 작성했습니다. v0.26.0은 슬랙 연동 1단계(연결 + 일일 체크리스트 DM)를 더했습니다. QA 시 curl 호출·네트워크 탭 확인의 기준 자료로 사용합니다.
 
 - 베이스 경로: `/api/v1`
 - 스펙 자동 문서: 서버 실행 후 Swagger UI(`/swagger-ui/index.html`)에서도 확인 가능
@@ -43,6 +43,8 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `GUEST_ID_REQUIRED` | 400 | `X-Guest-Id` 헤더 누락/공백 |
 | `GUEST_ID_INVALID` | 400 | `X-Guest-Id` 형식 위반(영문·숫자·하이픈 8~64자 아님) |
 | `PLAN_LIMIT_EXCEEDED` | 400 | 소유자당 계획 개수 초과(최대 10개) |
+| `PLAN_DAILY_LIMIT_EXCEEDED` | 429 | 하루 계획 생성 한도(5회) 초과 — 카운트 소스는 감사 이력(`PLAN_CREATED`)이라 삭제-재생성으로 우회 불가 |
+| `METHOD_NOT_ALLOWED` | 405 | 지원하지 않는 메서드 — 없어진 엔드포인트(예: v0.22.0의 챌린지 개설 POST)를 부르는 구형 클라이언트 대응 |
 | `REFLECTION_DATE_INVALID` | 400 | 회고 날짜가 YYYY-MM-DD가 아님 |
 | `REFLECTION_DATE_NOT_TODAY` | 400 | 회고 날짜가 KST 오늘이 아님 |
 | `PLAN_NOT_FOUND` | 404 | 계획 단건 조회·수정·삭제·회고 저장 시 없는 id 또는 다른 소유자 |
@@ -53,9 +55,19 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `PLAN_STORE_FULL` | 503 | 전역 저장소 상한 초과(서버 메모리 보호, 최대 200개) |
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
+| `AI_TOOL_LOOP_EXCEEDED` | 502 | 에이전트 루프가 도구 호출 상한(4턴)까지 가고도 최종 답을 못 냄 — 프론트는 자유 대화로 폴백 (v0.15.0) |
+| `CHALLENGE_NOT_FOUND` | 404 | 없는 챌린지 id (v0.21.0) |
+| `CHALLENGE_FULL` | 409 | 챌린지 참가 시 정원 마감 — 판정은 조건부 UPDATE(`WHERE participant_count < capacity`) 단독 |
+| `CHALLENGE_ALREADY_JOINED` | 409 | 이미 참가한 챌린지에 재참가 |
+| `CHALLENGE_CLOSED` | 409 | 정산 마감된 챌린지에 참가 — 미달 환불로 닫힌 챌린지 포함 (v0.25.0) |
+| `CHALLENGE_PLAN_REQUIRED` | 400 | 참가 자격 미달 — 같은 조건(카테고리+기간)의 고정된 계획 없음 (v0.25.0) |
+| `POINTS_INSUFFICIENT` | 400 | 참가비보다 포인트 잔액 부족 |
 | `AUTH_TOKEN_INVALID` | 401 | Bearer 세션 토큰이 무효·만료 (v0.22.0 — 프론트는 저장된 auth를 지우고 게스트로 복귀) |
 | `AUTH_GOOGLE_INVALID` | 401 | Google ID 토큰 검증 실패(서명·aud 불일치·만료) |
 | `AUTH_DISABLED` | 503 | 로그인 기능 꺼짐(`GOOGLE_CLIENT_ID` 미설정 또는 `GOOGLE_LOGIN_ENABLED=false`) |
+| `SLACK_LOGIN_REQUIRED` | 403 | 슬랙 연결 API를 게스트(Authorization 헤더 없음)가 호출 — 슬랙 연결은 로그인 전용 (v0.26.0) |
+| `SLACK_NOT_LINKED` | 404 | 연결된 슬랙 계정 없음 — 현재 상태 조회(S-2)는 404 대신 `linked:false`로 응답하므로 예약 코드 |
+| `SLACK_DISABLED` | 503 | 슬랙 연동 기능 꺼짐(서명 시크릿 미설정 또는 스위치 오프 — `AUTH_DISABLED` 관례) |
 | `INTERNAL_ERROR` | 500 | 그 외 서버 오류 |
 
 ---
@@ -211,11 +223,19 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
     { "name": "get_today_tasks", "mutating": false,
       "description": "Read the tasks and their completion state for one date …",
       "parameters": { "type": "object", "properties": { "date": { "type": "string", "description": "…" } }, "required": [] } },
+    { "name": "get_progress", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "get_plan_history", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "get_weekly_summary", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "get_reflection_history", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "get_workload_recommendation", "mutating": false, "description": "…", "parameters": { … } },
+    { "name": "get_challenge_status", "mutating": false, "description": "…", "parameters": { … } },
     { "name": "carry_over_tasks", "mutating": true, "description": "…", "parameters": { … } } ] }
 ```
+
+> 도구는 총 9종(읽기 7종 + 변이 2종)이다 — v0.24.0에서 `get_progress`(전체 진행 스냅샷)·
+> `get_plan_history`(변경 이력 최신 20건), v0.25.0에서 `get_challenge_status`(챌린지 순위·정산)가
+> 추가됐다. 셋 다 읽기 전용이라 모든 상태에서 노출된다(위 CONFIRMED 예시에서도 빠지는 것은
+> `update_plan_tasks`뿐).
 
 > v0.17.0에서 응답이 맨 배열에서 `{profile, tools}` 래핑으로 바뀌었다(형식 변경 — 당시 이 API의
 > 프론트 소비처가 없어 호환성 부담 없이 변경). 프로필 3종(코치/전문가/회고 도우미) 표는
@@ -531,6 +551,65 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 
 ---
 
+## 챌린지 (`/api/v1/challenges`) — v0.21.0, v0.23.0 자동 개설, v0.25.0 정산·리더보드
+
+소유자 헤더(`X-Guest-Id` 또는 `Authorization`)는 전 메서드 필수 — 목록 자체는 공개 모집
+게시판이라 소유자 스코프가 없지만, "누가 참가했는가"와 포인트 잔액이 소유자별로 갈린다.
+**개설 엔드포인트는 없다**(v0.23.0): 챌린지는 비슷한 조건(카테고리 + 기간 버킷)의 계획을 고정한
+사람이 3명 모이면 서버가 자동으로 연다 — 생성 시점은 `POST /plans/{id}/confirm`이고, 구형
+클라이언트의 개설 POST는 405 `METHOD_NOT_ALLOWED`.
+
+### C-1. GET /challenges — 목록 + 내 포인트 잔액 (만기 챌린지 lazy 정산 포함)
+
+**목록 진입이 정산의 트리거다**(v0.25.0 — 스케줄러 없이 lazy): 만기 챌린지는 누군가 목록을 보는
+순간 정산된다("최대 한 번"의 판정 주체는 조건부 UPDATE `WHERE settled_at IS NULL`). `balance`는
+요청 소유자의 지갑 잔액 — 화면이 항상 둘을 함께 그리므로 별도 지갑 엔드포인트가 없다.
+
+```json
+// 응답 data — status는 서버 파생: RECRUITING(모집중) / ACTIVE(진행중) / CLOSED(정산 종료).
+// endsAt은 시작 전 null — 정원이 찬 순간(started_at)부터 기간을 센다(v0.25.0).
+// myPayout: null = 미참가 또는 미정산, 0 = 미완주, 양수 = 배당/환불액.
+{ "balance": 900,
+  "challenges": [
+    { "id": 3, "title": "자격증 목표 14일 챌린지", "durationDays": 14, "capacity": 3,
+      "entryFee": 100, "participantCount": 3, "remainingSeats": 0, "full": true, "joined": true,
+      "createdAt": "2026-08-01T09:00:00Z", "status": "ACTIVE",
+      "endsAt": "2026-08-16T02:11:05Z", "myPayout": null } ] }
+```
+
+### C-2. GET /challenges/{id}/participants — 참가자 현황(리더보드) [v0.25.0]
+
+완료율 내림차순의 **익명** 배열 — 배열 순서가 곧 순위다. 소유자 식별자·닉네임은 싣지 않는다
+(닉네임은 서버가 모르는 프론트 라벨, 게스트 ID는 데이터를 여는 키): "누가 나인가"만 `me` 플래그.
+목록 응답에 넣지 않고 별도 엔드포인트인 이유는 비용 — 카드를 펼칠 때만 계획 조회가 돈다.
+
+```json
+// 응답 data — payout: null = 미정산, 0 = 미완주(정산 후), 양수 = 배당/환불액
+[ { "ratePercent": 100, "done": 10, "total": 10, "me": false, "payout": 150 },
+  { "ratePercent": 40, "done": 4, "total": 10, "me": true, "payout": 0 } ]
+```
+
+오류: 404 `CHALLENGE_NOT_FOUND`(없는 id)
+
+### C-3. POST /challenges/{id}/join — 참가 (정원 한정, 참가비 차감)
+
+**본문 없는 POST** — 클라이언트가 정원·잔액을 실어 보내지 않고, 판정 규칙은 전부 서버(저장소의
+원자 구간)가 소유한다. 참가 시점에 **같은 조건의 고정된 계획을 서버가 자동으로 찾아 연결**한다
+(완주 판정의 근거, 여러 개면 최신 — v0.25.0). 응답은 갱신된 챌린지와 차감 후 잔액.
+
+```json
+// 응답 data
+{ "challenge": { "id": 3, "participantCount": 3, "remainingSeats": 0, "full": true,
+                 "joined": true, "status": "ACTIVE", "endsAt": "2026-08-16T02:11:05Z", "myPayout": null },
+  "balance": 800 }
+```
+
+오류: 404 `CHALLENGE_NOT_FOUND`, 409 `CHALLENGE_FULL`(정원 마감) / `CHALLENGE_ALREADY_JOINED` /
+`CHALLENGE_CLOSED`(정산 마감, v0.25.0), 400 `POINTS_INSUFFICIENT` / `CHALLENGE_PLAN_REQUIRED`(같은
+조건의 고정된 계획 없음, v0.25.0)
+
+---
+
 ## 오늘 Dashboard (`/api/v1/dashboard`)
 
 ### GET /dashboard/today — 오늘 화면 읽기 모델 (v0.19.0)
@@ -678,6 +757,62 @@ detail의 실제 형식(type별):
   { "code": "COMPLETED", "label": "완료" },
   { "code": "CANCELLED", "label": "중단" } ]
 ```
+
+---
+
+## 슬랙 연동 (`/api/v1/slack`) — v0.26.0
+
+연결·상태·해제(S-1~S-3)는 **로그인(회원) 전용**이다: `Authorization: Bearer <token>` 헤더가
+없으면 403 `SLACK_LOGIN_REQUIRED` — 게스트 ID는 브라우저를 잃으면 재연결할 수 없어, 슬랙이라는
+외부 채널을 휘발성 신원에 묶으면 전송이 유령 계정으로 이어지기 때문이다. `@Owner` 리졸버는
+Bearer가 없으면 게스트로 폴백하므로, 컨트롤러가 헤더 존재를 먼저 확인해 게스트를 막는다.
+
+### S-1. POST /slack/link-code — 연결 코드 발급
+
+봇 DM에 붙여넣을 1회용 코드(8자, 헷갈리는 글자 0/O·1/I 제외 알파벳)를 발급한다. **10분 유효**,
+재발급하면 이전 코드는 무효. 코드를 봇 DM에 입력하면 연결이 완성된다(OAuth 콜백 없음 — 코드
+소비는 DELETE RETURNING 한 문장이라 동시 입력도 한 번만 성공).
+
+```json
+// 응답 data
+{ "code": "7GXKQ2ML", "expiresInMinutes": 10 }
+```
+
+오류: 403 `SLACK_LOGIN_REQUIRED`(게스트 — Authorization 헤더 없음), 503 `SLACK_DISABLED`(기능 꺼짐)
+
+### S-2. GET /slack/link — 연결 상태 (연결 여부 + 활동시간)
+
+미연결은 404가 아니라 `linked: false` + 나머지 null — 프론트 카드가 분기만 하면 되게 상태
+플래그로 내린다. `activeStart`/`activeEnd`는 `"HH:mm"` 문자열(일일 체크리스트 DM이 나가는
+활동시간 창, 기본 09:00~21:00 — 분 단위 원값은 서버 전용).
+
+```json
+// 응답 data (연결됨 / 미연결)
+{ "linked": true, "slackUserId": "U0123ABCD", "activeStart": "09:00", "activeEnd": "21:00" }
+{ "linked": false, "slackUserId": null, "activeStart": null, "activeEnd": null }
+```
+
+오류: 403 `SLACK_LOGIN_REQUIRED`(게스트)
+
+### S-3. DELETE /slack/link — 연결 해제
+
+멱등 — 연결이 없어도 200(목표 상태는 "연결 없음"이다). 응답 `data: null`.
+
+오류: 403 `SLACK_LOGIN_REQUIRED`(게스트)
+
+### S-4. POST /slack/events — Slack Events 수신 웹훅 (일반 클라이언트용 API 아님)
+
+**Slack 서버만 호출하는 수신 전용 엔드포인트**로, 웹 프론트·curl QA의 대상이 아니다. 이
+엔드포인트만 `ApiResponse` 래핑을 쓰지 않는다 — 응답 형식(challenge 평문, 3초 내 2xx)이 Slack
+쪽 계약이기 때문이다. 처리 순서:
+
+1. 기능 오프면 503 `"slack disabled"` (평문)
+2. **서명 검증** — HMAC-SHA256, 원문 바이트 기준, 타임스탬프 ±5분 창, 상수시간 비교. 실패 시
+   401 `"invalid signature"`
+3. `url_verification`이면 **`challenge` 값을 평문으로 즉답** (Slack 앱 설정의 URL 검증)
+4. `event_id` 중복 클레임 — Slack은 3초 내 무응답이면 같은 이벤트를 재전송하므로, 이미 클레임된
+   이벤트는 처리 없이 200 (재전송을 멈추게 한다)
+5. 즉시 200 `"ok"` 반환 후 실제 처리(연결 코드 소비 등)는 비동기(slackExecutor)로 잇는다
 
 ---
 

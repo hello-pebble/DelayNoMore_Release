@@ -37,9 +37,12 @@ patch 병합·상태 전이가 차례로 프론트에서 서버로 옮겨왔고,
 | 도구 | DRAFT (초안) | CONFIRMED (고정) | COMPLETED · CANCELLED (종결) |
 | :--- | :---: | :---: | :---: |
 | `get_today_tasks` | ✅ | ✅ | ✅ |
+| `get_progress` [v0.24.0] | ✅ | ✅ | ✅ |
+| `get_plan_history` [v0.24.0] | ✅ | ✅ | ✅ |
 | `get_weekly_summary` | ✅ | ✅ | ✅ |
 | `get_reflection_history` | ✅ | ✅ | ✅ |
 | `get_workload_recommendation` | ✅ | ✅ | ✅ |
+| `get_challenge_status` [v0.25.0] | ✅ | ✅ | ✅ |
 | `update_plan_tasks` ✏️ | ✅ | ❌ | ❌ |
 | `carry_over_tasks` ✏️ | ✅ | ✅ | ❌ |
 
@@ -52,6 +55,10 @@ public boolean isAvailableFor(PlanStatus status) { return status.allowsStructura
 // CarryOverTool — 이월은 실행 단계 액션이라 고정 후에도 남는다(v0.14.1의 판단을 승계)
 public boolean isAvailableFor(PlanStatus status) { return status.allowsCarryOver(); }
 ```
+
+읽기 도구 7종은 `isAvailableFor`를 재정의하지 않습니다 — 인터페이스 기본값(모든 상태 노출)이
+곧 판정입니다. 그래서 v0.24.0(`get_progress`·`get_plan_history`)·v0.25.0(`get_challenge_status`)의
+읽기 도구 추가는 권한 표에 ✅ 행만 늘렸을 뿐 어떤 ❌도 바꾸지 않았습니다.
 
 그래서 상태 수명주기의 소스오브트루스는 여전히 `PlanStatus` 하나이고, **에이전트 권한은 그
 표의 결과**입니다. 상태 규칙이 바뀌면 에이전트 권한도 자동으로 따라옵니다.
@@ -78,9 +85,9 @@ public boolean isAvailableFor(PlanStatus status) { return status.allowsCarryOver
 
 | 상태 | 프로필 | 페르소나 | 도구 집합(위 표 그대로) |
 | :--- | :--- | :--- | :--- |
-| DRAFT | `CHECKLIST_COACH` | 체크리스트 완성 코치 | 6종 전체 |
-| CONFIRMED | `DOMAIN_EXPERT` | **목표명 특화** 전문 에이전트 — 도메인 지식 질문에 직접 답한다 | 수정 제외 5종 |
-| COMPLETED·CANCELLED | `RETRO_COMPANION` | 회고 도우미 — 돌아보기 + 다음 계획 준비 | 읽기 4종 |
+| DRAFT | `CHECKLIST_COACH` | 체크리스트 완성 코치 | 9종 전체 |
+| CONFIRMED | `DOMAIN_EXPERT` | **목표명 특화** 전문 에이전트 — 도메인 지식 질문에 직접 답한다 | 수정 제외 8종 |
+| COMPLETED·CANCELLED | `RETRO_COMPANION` | 회고 도우미 — 돌아보기 + 다음 계획 준비 | 읽기 7종 |
 
 **권한은 프로필이 아니라 여전히 `PlanStatus`가 소유합니다.** 프로필은 프롬프트(페르소나·잠금
 안내)만 고르고, 도구 노출·실행 게이트는 위 절의 메커니즘 그대로입니다. 같은 상태를 두 곳이
@@ -111,9 +118,12 @@ fixed(고정)"라고 설명하는데, 종결 상태는 고정이 아니라 완�
 | 도구 | 위임 대상 | 하는 일 |
 | :--- | :--- | :--- |
 | `get_today_tasks` | `PlanService.getPlan` + `KstDates` | 특정 날짜(기본 오늘 KST)의 할 일과 완료 상태 |
+| `get_progress` [v0.24.0] | `PlanService.getPlan` + `KstDates` | 계획 전체 진행 스냅샷 — 상태·기간·남은 일수·서버 계산 done/total·완료율 |
+| `get_plan_history` [v0.24.0] | `AuditEventService.getEvents` | 계획 변경 이력(v0.7.0 Audit) 최신 20건 — "언제 뭐가 바뀌었나"를 기록으로 인용 |
 | `get_weekly_summary` | `PlanService.getWeeklySummary` | 서버가 계산한 주별 완료율(7일 버킷) |
 | `get_reflection_history` | `ReflectionService.getAll` | 일일 회고 최근 14건(난이도·이유 + 한글 라벨) |
 | `get_workload_recommendation` | `WorkloadRecommendationService.recommend` | 규칙이 정한 다음 하루 분량 + 통계 |
+| `get_challenge_status` [v0.25.0] | `ChallengeService.settleDue`·`list`·`participants` | 참가 챌린지별 상태·종료일·내 순위·완주율·정산 결과(v0.25.0 리더보드) |
 | `update_plan_tasks` ✏️ | `ChatPatchMerger.merge` | sparse patch를 현재 계획에 병합(저장은 프론트 경유) |
 | `carry_over_tasks` ✏️ | `PlanService.carryOver` | 오늘 미완료 → 내일(서버가 직접 저장·이력 발행) |
 
@@ -127,7 +137,11 @@ fixed(고정)"라고 설명하는데, 종결 상태는 고정이 아니라 완�
 - **`update_plan_tasks`는 저장하지 않는다.** 병합 결과를 `plan` 이벤트로 내보내면 프론트가
   초안으로 채택하고 기존 디바운스 PUT이 영속화합니다 — 예전 `/chats/stream`과 같은 경로입니다.
 - **`get_reflection_history`는 14건으로 자른다.** 계획이 길어져도 입력 토큰이 선형으로 늘지
-  않게(v0.3.0부터의 토큰 절약 기조).
+  않게(v0.3.0부터의 토큰 절약 기조). **`get_plan_history`의 최신 20건도 같은 기조**다 — 이력은
+  계획 수명만큼 자라는데, 답변 근거로는 최근 것이 거의 항상 충분하다.
+- **`get_challenge_status`는 조회 전에 `settleDue`를 부른다.** 정산 트리거가 목록 조회
+  lazy(v0.25.0)라, 여기서도 같은 관례를 따라야 만기 챌린지의 정산 결과가 낡지 않은 채 답변에
+  실린다(챌린지 목록 컨트롤러와 같은 순서).
 
 ### 도구 결과를 쓸 때의 두 가지 규칙 [v0.15.1]
 
@@ -193,6 +207,18 @@ sequenceDiagram
     end
     R-->>F: {"type":"done"}
 ```
+
+### 전송 계층 — LangChain4j, 전송만 [v0.24.0]
+
+그림의 R→L 왕복(업스트림 프로토콜)은 v0.24.0부터 수제 구현 대신
+`langchain4j-open-ai`의 저수준 `ChatModel`/`StreamingChatModel`이 담당합니다 — 요청 바디
+손조립·SSE 라인 파싱·`tool_calls` JSON 추출 코드는 삭제됐습니다. **채택한 것은 전송뿐**이고
+고수준 기능(AiServices·`@Tool`·ChatMemory)은 의도적으로 배제했습니다: `@Tool` 어노테이션
+스캔은 "도구 권한의 소스오브트루스는 `PlanStatus` 하나"(2절)와, AiServices의 자동 툴 루프는
+아래 상한·SSE 이벤트를 가진 커스텀 루프와, ChatMemory는 프론트가 히스토리를 소유하는
+stateless 설계와 충돌하기 때문입니다. 그래서 이 문서가 설명하는 루프(`AgentRunner`)·권한
+필터링(`AgentToolRegistry`)·프롬프트(`AiPromptBuilder`, 평가 동결 대상)·토큰 계측(6장)의
+소유권은 전부 기존 코드 그대로이며, 타입 변환은 `OpenRouterClient` 내부에 갇혀 있습니다.
 
 ### 상한과 방어
 
@@ -330,7 +356,9 @@ ai.usage site=agent.total  model=qwen/qwen3.7-plus calls=2 prompt=3000 completio
 - **`cost`는 있을 때만 찍습니다.** 실측에서 OpenRouter는 **별도 옵트인 없이** `usage.cost`를 함께
   내려줬습니다([평가 48회 = $0.048](EVAL.md#8-첫-실측-기준선)). 다만 표준 필드가 아니어서 다른
   게이트웨이나 프록시에서는 빠질 수 있으므로 선택 필드로 다룹니다 — 없을 때 `cost=null`을 남기면
-  집계 스크립트가 0으로 오해하니, 아예 생략합니다.
+  집계 스크립트가 0으로 오해하니, 아예 생략합니다. v0.24.0의 전송 교체 후에는 LangChain4j
+  `TokenUsage`가 `cost`를 노출하지 않아 **실제로는 항상 생략**됩니다 — 토큰 수는 그대로 남으므로
+  단가 환산은 가능하고, 정확한 값이 다시 필요하면 그때 복원을 판단합니다(CHANGELOG [0.24.0]).
 
 ```bash
 OPENROUTER_STREAM_USAGE=false   # 기본값 true — 끄면 스트리밍 경로의 사용량 로그만 사라진다

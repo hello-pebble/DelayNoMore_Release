@@ -1,6 +1,6 @@
 # 운영 가이드 (Operations)
 
-이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.25.0.
+이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.26.0.
 배포 절차 자체는 [DEPLOY.md](DEPLOY.md) · [DEPLOY_OCI.md](DEPLOY_OCI.md)가 소유하고,
 이 문서는 **배포 이후의 운영** — 감시·백업·비용·복구·루틴 — 을 다룬다.
 
@@ -116,14 +116,14 @@ EVAL 하네스로 실측 후가 원칙([EVAL.md](EVAL.md)).
 - 스테이징 환경(별도 컨테이너 + Supabase 브랜치/별도 프로젝트)에서 Flyway 마이그레이션 사전 검증
 - 배포 후 스모크 테스트 자동화(QA 체크리스트 중 curl 가능한 항목을 스크립트로)
 - Supabase 유료 플랜 검토(PITR, 일시정지 없음), OCI 외 대체 호스팅 시나리오
-- 키 로테이션 주기화(OpenRouter · Google OAuth · DB 비밀번호)
+- 키 로테이션 주기화(OpenRouter · Google OAuth · DB 비밀번호 · Slack 봇 토큰·서명 시크릿)
 
 ## 6. 운영 루틴 요약
 
 | 주기 | 할 일 |
 | :--- | :--- |
 | 상시(자동) | 업타임 감시·알림(정산 트리거 겸용), 일일 DB 백업 cron, OpenRouter 비용 알림 |
-| 주 1회 | 정산·포인트 원장 점검, `ai.usage` 비용 집계, 디스크·로그·Supabase 상태 확인 |
+| 주 1회 | 정산·포인트 원장 점검, `ai.usage` 비용 집계, 슬랙 발송 실패 확인(`docker logs`에서 `slack dispatch failed`·`slack postMessage failed`), 디스크·로그·Supabase 상태 확인 |
 | 릴리스마다 | (기존 관례) QA 체크리스트 + README 변경 표, 배포 후 health 확인, 스키마 변경 유무(롤백 가능 여부) 기록 |
 | 분기 1회 | 복원 리허설, 키 로테이션, OS 패치 상태 점검 |
 

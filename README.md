@@ -62,14 +62,14 @@ docker build -t delaynomore . && docker run -p 8080:8080 -e OPENROUTER_API_KEY=<
 
 | 문서 | 내용 |
 | :--- | :--- |
-| [기능 상세](docs/FEATURES.md) | 화면 구성과 13가지 기능의 상세 동작 |
+| [기능 상세](docs/FEATURES.md) | 화면 구성과 16가지 기능의 상세 동작 |
 | [에이전트](docs/AGENT.md) | 도구 카탈로그 · 상태 기반 권한 모델 · 루프와 폴백 체인 · 토큰 사용량 계측 |
 | [평가 하네스](docs/EVAL.md) | 실제 모델로 도구 선택 정확도 측정 · 채점 기준 · 정확도와 비용을 한 표에 |
 | [데이터 흐름](docs/DATA_FLOW.md) | 그림으로 보는 전체 구조 · 데이터 흐름 · 상태 전이 · ERD (입문자용) |
 | [동시성](docs/CONCURRENCY.md) | 정원 경쟁에서 데이터 정합성을 지키는 방법 · 틀린 구현이 깨지는 인터리빙 · 대안 비교 |
 | [구조](docs/ARCHITECTURE.md) | 디렉토리 구조 · 기술 스택 · API 개요 |
 | [발전 과정](docs/EVOLUTION.md) | v0.1.0부터의 버전별 다이어그램·의도 · 토큰 절감 증빙 · 버전 관리 정책 |
-| [로드맵](docs/ROADMAP.md) | 다음 단계 6가지와 최종 목표(전문 에이전트 인계) |
+| [로드맵](docs/ROADMAP.md) | 슬랙 후속(v0.27·v0.28) · 완료된 단계들 · 최종 목표(전문 에이전트 인계) |
 | [실행·배포](docs/DEPLOY.md) | 로컬 실행 · 단일 컨테이너 배포 · 환경변수 |
 | [운영 가이드](docs/OPERATIONS.md) | 배포 이후의 운영 — 감시·백업·비용 가드레일 · 장애 복구 런북 · 운영 루틴 |
 | [CHANGELOG](CHANGELOG.md) | 버전별 상세 변경 이력 |
