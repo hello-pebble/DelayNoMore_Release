@@ -263,3 +263,10 @@ export const getAiHealth = async () => {
     return { success: false, reason: '네트워크 연결 오류', toolCalling: false };
   }
 };
+
+// 슬랙 연결(v0.26.0) — 전부 로그인 전용(서버가 Authorization 없으면 403 SLACK_LOGIN_REQUIRED).
+// 코드 발급 → 사용자가 봇 DM에 붙여넣기 → 서버가 연결. 상태 조회는 미연결이어도 성공하며
+// { linked, slackUserId, activeStart, activeEnd }를 돌려준다.
+export const postSlackLinkCode = () => requestJson('/slack/link-code', null);
+export const getSlackLink = () => requestJson('/slack/link', null, 'GET');
+export const deleteSlackLink = () => requestJson('/slack/link', null, 'DELETE');

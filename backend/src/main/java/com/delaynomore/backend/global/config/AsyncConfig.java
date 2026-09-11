@@ -16,4 +16,11 @@ public class AsyncConfig {
     public ExecutorService sseExecutor() {
         return Executors.newCachedThreadPool();
     }
+
+    // 슬랙 이벤트 비동기 처리 전용 풀. Slack Events는 3초 안에 200을 요구하므로 컨트롤러는
+    // 즉시 반환하고 실제 처리는 여기서 잇는다. SSE 풀과 분리해 스트리밍 릴레이에 간섭하지 않는다.
+    @Bean(destroyMethod = "shutdown")
+    public ExecutorService slackExecutor() {
+        return Executors.newCachedThreadPool();
+    }
 }

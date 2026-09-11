@@ -55,7 +55,34 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 | `OPENROUTER_STREAM_USAGE` | backend | 스트리밍 응답 끝의 usage 청크 요청 on/off (선택, 기본 `true`). 끄면 스트리밍 경로의 토큰 사용량 로그만 사라지고 스트리밍 자체는 그대로 동작한다. |
 | `GOOGLE_CLIENT_ID` | backend | Google 로그인(GIS) 클라이언트 ID (선택, v0.22.0). 미설정 시 로그인 기능이 통째로 꺼지고 프론트 버튼이 숨는다. GIS는 https(또는 localhost) 오리진 필수 — 배포 스크립트의 `DOMAIN` 옵션으로 HTTPS를 먼저 켠다([DEPLOY_OCI.md](DEPLOY_OCI.md)). |
 | `GOOGLE_LOGIN_ENABLED` | backend | 로그인 긴급 오프 스위치 (선택, 기본 `true`). 클라이언트 ID를 지우지 않고 로그인만 끈다. |
+| `SLACK_BOT_TOKEN` | backend | Slack 봇 토큰(`xoxb-…`, 서버 전용 — v0.26.0). 미설정 시 발송은 로그 전용 드라이런. |
+| `SLACK_SIGNING_SECRET` | backend | Slack Events 서명 검증 키(서버 전용). **미설정이면 슬랙 기능 통째 OFF**(수신 503·발송 무동작·프론트 카드 숨김). |
+| `SLACK_ENABLED` | backend | 슬랙 긴급 오프 스위치 (선택, 기본 `true`). 토큰·시크릿을 지우지 않고 슬랙 연동만 끈다. |
 | `DOMAIN` | 배포 스크립트 | HTTPS 도메인 (선택). 설정하면 Caddy 컨테이너가 80/443에 서고 Let's Encrypt 인증서를 자동 발급한다. |
+
+## Slack 앱 설정 (v0.26.0 · 선택)
+
+슬랙 연동(오늘 할 일 DM 발송)을 쓰려면 Slack 앱을 1회 수동으로 만든다. 1단계는 **단일
+워크스페이스**(운영 워크스페이스에 초대된 사용자 지원)이며, HTTPS 도메인이 먼저 필요하다
+(`DOMAIN` 설정 — Slack이 이벤트를 https로만 보낸다).
+
+1. <https://api.slack.com/apps> → **Create New App**(From scratch) → 워크스페이스 선택.
+2. **OAuth & Permissions → Bot Token Scopes**: `chat:write` · `im:write` · `im:history` ·
+   `app_mentions:read` 추가 → **Install to Workspace** → **Bot User OAuth Token**(`xoxb-…`) 복사.
+3. **Basic Information → Signing Secret** 복사.
+4. 서버 env 파일(`~/.delaynomore.env`)에 두 값을 넣고 재배포:
+   ```bash
+   SLACK_BOT_TOKEN=xoxb-...
+   SLACK_SIGNING_SECRET=...
+   ```
+5. **Event Subscriptions → Enable Events** → Request URL에
+   `https://<도메인>/api/v1/slack/events` 입력(서버가 떠 있어야 Verified가 된다) →
+   **Subscribe to bot events**에 `message.im` · `app_mention` 추가 → Save.
+6. 확인: 웹 마이페이지(로그인)에서 연결 코드 발급 → 슬랙에서 봇에게 DM으로 코드 전송 →
+   "연결되었습니다" 응답. 이후 매일 활동 시작 시각(기본 09:00 KST)에 체크리스트 DM이 온다.
+   점검 항목은 [QA_CHECKLIST F-36](QA_CHECKLIST.md).
+
+> 토큰·시크릿은 `OPENROUTER_API_KEY`와 같은 규칙 — **서버 전용, 절대 커밋 금지**.
 
 > **토큰 사용량 보기** — 모든 LLM 호출이 `ai.usage`로 시작하는 로그 한 줄을 남깁니다.
 > 경로별 비교는 `site` 라벨로 합니다(`chat.stream` = 에이전트 이전 경로, `agent.total` = 에이전트

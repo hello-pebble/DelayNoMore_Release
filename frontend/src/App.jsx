@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ChatCoach from './components/chat_coach';
 import NicknameSetup from './components/nickname_setup';
+import SlackLinkCard from './components/slack_link';
 import { checkOpenRouterConnection } from './ai_engine';
 import { getNickname, setNickname, randomGuestNickname } from './nickname';
 import { getGuestId, isGuestIdPersisted } from './guest_id';
@@ -435,6 +436,10 @@ export default function App() {
                   </button>
                 )}
               </div>
+
+              {/* 슬랙 연결(v0.26.0) — 연결은 로그인 전용이라 auth 있을 때만 카드를 그린다.
+                  서버가 기능을 꺼 뒀으면(503) 카드가 스스로 숨는다. */}
+              {auth && <SlackLinkCard />}
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 # 기능 점검 체크리스트 (QA)
 
-- **대상 버전**: `v0.21.0`
+- **대상 버전**: `v0.26.0`
 - **범위**: 대화형 투두리스트 생성 데모 — 모바일 전용 UI(하단 탭바: 대화/오늘 할 일/체크리스트), 슬롯필링, 계획 생성/수정, mock 폴백, 여러 계획 보관(브라우저별 보관함), 오늘 할 일(오늘 보기), 오늘 마무리(일일 회고)·지난 회고 목록, 미완료 항목 내일로 이동, 계획 변경 이력(Audit), 서버 규칙 강제(고정 가드·형식 검증·날짜 산출/검증·채팅 patch 병합), 서버 계산 진행률·이월 도메인 액션·회고/이력 선택지 메타 API. **v0.9.2**: 자유 대화 patch 병합 서버 이관. **v0.9.3**: 이관 backlog 정리(문서 전용, 신규 QA 항목 없음). **v0.10.0**: 주간 완료율 요약(주 단위 완료율 API + 요약 카드). **v0.11.0**: 브라우저 단위 개인화(게스트 ID `X-Guest-Id` 헤더 격리, 닉네임은 표시용 라벨, 소유자당 10 + 전역 200 한도, 응답 no-store). **v0.12.0**: DB 영속화(`postgres` 프로필은 PostgreSQL(Supabase)에 영속되어 서버 재시작에도 데이터 유지, 기본 프로필은 기존처럼 휘발성 — 두 경우 모두 데이터 접근 키는 여전히 브라우저 게스트 ID라 이를 잃으면 닉네임만으로 재연결 불가). **v0.13.0**: 다음 계획 분량 추천(서버가 수행 기록 계산 + 규칙 분량 결정, AI는 이유·내용만, 승인 전 미저장 — F-22). **v0.13.1**: 추천 통계를 같은 목표의 최근 계획 최대 3건으로 합산(스키마 변경 없음 — F-22). **v0.14.x**: 계획 상태 수명주기(명시적 전이 명령·종결 전면 잠금 — F-23)·이월의 실행 단계화·지난 날짜 완료 체크 잠금(`PAST_TASK_LOCKED`). **v0.15.x**: AI 코치의 에이전트화(도구 호출 — F-25)·토큰 사용량 로그. **v0.16.x**: 도구 선택 평가 하네스(자동, CI). **v0.17.0**: 상태별 에이전트 프로필(F-26, `/agent/tools` 응답이 `{profile, tools}`로 변경). **v0.18.0**: 모바일 전용 화면(F-27 — 가로 3칸 폐지, 하단 탭바 전환, 넓은 화면도 폰 폭 컬럼. 프론트 전용 변경이라 API 영향 없음)
 - **사용법**: 배포 URL(`http://<PUBLIC_IP>` 또는 배포 주소)에 접속해 아래 항목을 순서대로 확인.
 - **버전 갱신 시**: 새 버전에서 바뀐 항목을 추가하고 "대상 버전"을 올린다.
@@ -795,6 +795,65 @@
 - [ ] `curl -s http://localhost/api/v1/ai/health` → `{"connected":true,"toolCalling":true}` (에이전트 경로 가용) (v0.15.0)
 - [ ] `curl -s -H 'X-Guest-Id: <게스트 ID>' 'http://localhost/api/v1/ai/agent/tools'` → `{"success":true,"data":{"profile":{...},"tools":[...6개...]}}` 정상 응답(보관 전 초안 기준, v0.17.0부터 `{profile, tools}` 구조) (v0.15.0)
 - [ ] 같은 요청에서 `X-Guest-Id` 헤더를 빼면 → `{"success":false,"error":{"code":"GUEST_ID_REQUIRED"}}` + HTTP 400 (v0.15.0)
+
+---
+
+## F-36. 슬랙 연결 + 일일 체크리스트 전송 (v0.26.0)
+
+> 슬랙 연동 1단계. 마이페이지(로그인 전용)에서 **연결 코드를 발급**받아 봇 DM에 붙여넣으면
+> 연결되고, 매일 **활동 시작 시각(기본 09:00 KST)에 오늘 할 일 체크리스트가 슬랙 DM으로**
+> 도착한다. 발송 멱등은 `slack_daily_sends` 조건부 클레임이, 수신 보안은 서명 검증이 지킨다.
+> 사전 조건: Slack 앱 생성·`SLACK_BOT_TOKEN`/`SLACK_SIGNING_SECRET` 설정([DEPLOY.md](DEPLOY.md)의
+> 슬랙 절), 배포 도메인의 `/api/v1/slack/events`가 Slack 앱 설정에서 Verified 상태.
+
+- [ ] **코드 발급(로그인)** — Google 로그인 후 마이페이지 하단 "슬랙으로 오늘 할 일 받기"에서
+      [슬랙 연결 코드 발급]을 누르면 8자 코드와 유효 시간(10분)이 표시된다
+- [ ] **게스트 차단** — 게스트 상태에서는 마이페이지에 슬랙 카드 자체가 보이지 않는다.
+      서버 확인(curl):
+
+  ```bash
+  curl -s -X POST https://<도메인>/api/v1/slack/link-code -H "X-Guest-Id: qa-guest-00000001"
+  # 기대: {"success":false,"error":{"code":"SLACK_LOGIN_REQUIRED",...}} + HTTP 403
+  ```
+
+- [ ] **연결** — 슬랙에서 봇에게 DM으로 코드를 보내면 "✅ 연결되었습니다!" 응답이 오고,
+      마이페이지 카드가 "연결됨 — 매일 활동 시작 시각(09:00)에..." 표시로 바뀐다
+- [ ] **잘못된 코드** — 아무 8자 문자열(예: `AAAAAAAA`)을 보내면 연결되지 않고 연결 안내
+      문구가 온다. 발급 후 10분이 지난 코드도 동일
+- [ ] **재발급 무효** — 코드를 두 번 발급받으면 첫 코드는 무효가 되고 두 번째 코드만 연결된다
+- [ ] **체크리스트 수신** — 활동 시작 시각이 지난 뒤 1분 안에 오늘 할 일 DM이 도착한다.
+      계획별 묶음 + **전역 번호(1..N)** + 완료 여부(✅/⬜)가 표시된다. 오늘 작업이 없으면 오지 않는다
+- [ ] **중복 발송 없음** — 같은 날 컨테이너를 재기동(`./deploy/oci-pull.sh`)해도 체크리스트가
+      다시 오지 않는다. (postgres 프로필) 클레임 행 확인:
+
+  ```bash
+  # Supabase SQL Editor 등에서
+  # SELECT * FROM slack_daily_sends WHERE send_date = CURRENT_DATE;
+  # 기대: owner당 kind='CHECKLIST' 1행, sent_at NOT NULL
+  ```
+
+- [ ] 서버 확인(curl) — 서명 불일치 요청은 401:
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}" -X POST https://<도메인>/api/v1/slack/events \
+    -H "Content-Type: application/json" \
+    -H "X-Slack-Signature: v0=bad" -H "X-Slack-Request-Timestamp: $(date +%s)" -d '{}'
+  # 기대: 401
+  ```
+
+  올바른 서명은 로컬에서 openssl로 재현할 수 있다(시크릿을 아는 쪽만 통과):
+
+  ```bash
+  TS=$(date +%s); BODY='{"type":"url_verification","challenge":"qa"}'
+  SIG="v0=$(printf "v0:%s:%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$SLACK_SIGNING_SECRET" | awk '{print $2}')"
+  curl -s -X POST https://<도메인>/api/v1/slack/events -H "Content-Type: application/json" \
+    -H "X-Slack-Signature: $SIG" -H "X-Slack-Request-Timestamp: $TS" -d "$BODY"
+  # 기대: qa  (challenge 평문 반환)
+  ```
+
+- [ ] **연결 해제** — 마이페이지 [슬랙 연결 해제] 후 다음 날 체크리스트가 오지 않는다
+- [ ] **긴급 오프** — `SLACK_ENABLED=false`로 재배포하면 발송이 멈추고 `/api/v1/slack/events`가
+      503, 마이페이지 카드가 숨는다
 
 ---
 

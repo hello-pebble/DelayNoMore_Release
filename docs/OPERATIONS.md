@@ -38,12 +38,16 @@
 스크립트는 있지만 사람이 돌려야 한다. Supabase 자동 백업이 1차 보호막이고,
 `db-backup.sh`는 이식 가능한 오프사이트 사본이다.
 
-- VM cron으로 일 1회 실행 + 오래된 덤프 정리:
+- VM에서 `deploy/setup-backup-cron.sh`를 한 번 실행하면 일 1회 cron이 등록된다
+  (기본 매일 19:00 VM시 = UTC VM 기준 KST 새벽 4시, 14일 보존·자동 정리, 등록 직후 첫 백업 1회로 검증):
 
-  ```cron
-  # crontab -e (VM, KST 새벽 4시)
-  0 4 * * * cd ~/DelayNoMore_Release && ./deploy/db-backup.sh && find backups -name '*.dump' -mtime +14 -delete
+  ```bash
+  ./deploy/setup-backup-cron.sh          # 등록(멱등 — 재실행하면 갱신) + 첫 백업 검증
+  ./deploy/setup-backup-cron.sh remove   # 해제
+  tail backups/backup.log                # 야간 실행 확인
   ```
+
+  스케줄·보존 일수는 `BACKUP_CRON`·`RETENTION_DAYS` 환경변수로 조정한다(스크립트 머리 주석 참고).
 
 - 덤프를 VM 밖(OCI Object Storage, 로컬 PC 등)으로 주기 복사 — VM과 백업이 같이 죽는 구성을 피한다.
 - 분기 1회 `db-restore.sh`로 **복원 리허설**(별도 DB에). 복원해 본 적 없는 백업은 백업이 아니다.
