@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.slack.service;
 
 import com.delaynomore.backend.domain.slack.client.SlackApiClient;
 import com.delaynomore.backend.domain.slack.repository.SlackRepository.SlackLink;
+import com.delaynomore.backend.global.time.KstDates;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,10 +13,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 슬랙 인바운드 이벤트 처리(비동기 본체). v0.26.0 범위는 LLM 없는 두 갈래다:
- * ① DM의 연결 코드 인식(정규식) → 연결, ② 그 외 메시지·멘션 → 고정 안내 문구.
- * 자연어 완료 체크(의도 파서)는 v0.27.0에서 이 분기 뒤에 붙는다 — 프롬프트·도구 변경은
- * 평가 하네스 실측을 동반해야 하므로(CLAUDE.md) 릴리스를 분리했다.
+ * 슬랙 인바운드 이벤트 처리(비동기 본체). 분기 순서:
+ * ① DM의 연결 코드 인식(정규식 — LLM 불요) → 연결,
+ * ② 연결된 사용자의 메시지·멘션 → 자연어 명령({@link SlackCommandService}, v0.27.0),
+ * ③ 미연결 사용자 → 연결 안내 고정 문구.
  */
 @Slf4j
 @Service
@@ -23,10 +24,12 @@ import java.util.regex.Pattern;
 public class SlackEventService {
 
     // 연결 코드 후보: 대문자·숫자 8자 단어. 코드 알파벳(SlackLinkService)의 상위집합이라
-    // 오탐은 consumeLinkCode가 걸러낸다(없는 코드 = 그냥 일반 메시지).
+    // 오탐은 consumeLinkCode가 걸러낸다(없는 코드 = 그냥 일반 메시지 → 명령 처리로 넘어간다).
     private static final Pattern CODE_PATTERN = Pattern.compile("\\b[A-Z0-9]{8}\\b");
 
     private final SlackLinkService linkService;
+    private final SlackCommandService commandService;
+    private final SlackReflectionFlowService reflectionFlow;
     private final SlackApiClient apiClient;
 
     public void handle(JsonNode payload) {
@@ -45,35 +48,45 @@ public class SlackEventService {
             return;
         }
 
-        if ("message".equals(type) && "im".equals(event.path("channel_type").asString(""))) {
-            handleDm(teamId, slackUserId, channel, text);
-        } else if ("app_mention".equals(type)) {
-            apiClient.postMessage(channel, guidanceFor(teamId, slackUserId));
+        boolean isDm = "message".equals(type) && "im".equals(event.path("channel_type").asString(""));
+        boolean isMention = "app_mention".equals(type);
+        if (!isDm && !isMention) {
+            return;
+        }
+
+        // ① DM에서는 연결 코드부터 시도한다 — 연결 여부와 무관(재연결 허용). 코드가 실제로
+        //    소비됐을 때만 여기서 끝난다.
+        if (isDm && tryLinkByCode(teamId, slackUserId, channel, text)) {
+            return;
+        }
+        // ② 연결된 사용자 → 진행 중 회고 문답이 있으면 그 답변으로(v0.28.0), 아니면 자연어 명령.
+        //    ③ 미연결 → 안내.
+        Optional<SlackLink> link = linkService.findBySlackUser(teamId, slackUserId);
+        if (link.isPresent()) {
+            String owner = link.get().owner();
+            java.time.LocalDate today = KstDates.today();
+            String reply = reflectionFlow.hasAwaitingSession(owner, today)
+                    ? reflectionFlow.handleAnswer(owner, today, SlackCommandService.stripMentions(text))
+                    : commandService.handle(link.get(), text);
+            apiClient.postMessage(channel, reply);
+        } else {
+            apiClient.postMessage(channel, "아직 연결된 계정이 없어요. 웹 마이페이지에서 [슬랙 연결 코드]를 발급받아 "
+                    + "이 채팅에 붙여넣어 주세요. (코드는 발급 후 " + SlackLinkService.CODE_TTL_MINUTES + "분간 유효)");
         }
     }
 
-    private void handleDm(String teamId, String slackUserId, String channel, String text) {
-        // 코드 후보가 있으면 연결부터 시도한다 — 연결 여부와 무관하게(재연결 허용).
+    private boolean tryLinkByCode(String teamId, String slackUserId, String channel, String text) {
         Matcher matcher = CODE_PATTERN.matcher(text.toUpperCase());
         while (matcher.find()) {
             Optional<SlackLink> linked = linkService.linkByCode(matcher.group(), teamId, slackUserId, channel);
             if (linked.isPresent()) {
                 apiClient.postMessage(channel, """
                         ✅ 연결되었습니다! 매일 활동 시작 시각(%s)에 오늘 할 일 체크리스트를 보내드릴게요.
-                        활동시간은 웹 마이페이지에서 확인할 수 있어요.""".formatted(formatMin(linked.get().activeStartMin())));
-                return;
+                        "1번 완료했어"처럼 말씀하시면 완료 체크도 해드립니다.""".formatted(formatMin(linked.get().activeStartMin())));
+                return true;
             }
         }
-        apiClient.postMessage(channel, guidanceFor(teamId, slackUserId));
-    }
-
-    private String guidanceFor(String teamId, String slackUserId) {
-        if (linkService.findBySlackUser(teamId, slackUserId).isPresent()) {
-            return "이미 연결된 계정이에요. 매일 활동 시작 시각에 오늘 할 일 체크리스트를 보내드립니다. "
-                    + "(대화로 완료 체크하는 기능은 준비 중이에요)";
-        }
-        return "아직 연결된 계정이 없어요. 웹 마이페이지에서 [슬랙 연결 코드]를 발급받아 이 채팅에 붙여넣어 주세요. "
-                + "(코드는 발급 후 " + SlackLinkService.CODE_TTL_MINUTES + "분간 유효)";
+        return false;
     }
 
     static String formatMin(int minutesOfDay) {

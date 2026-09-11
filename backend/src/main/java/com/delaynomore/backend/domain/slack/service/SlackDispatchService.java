@@ -30,6 +30,7 @@ import java.time.ZonedDateTime;
 public class SlackDispatchService {
 
     static final String KIND_CHECKLIST = "CHECKLIST";
+    static final String KIND_REFLECTION_PROMPT = "REFLECTION_PROMPT";
     private static final int RETRY_AFTER_MINUTES = 5;
     private static final int MAX_ATTEMPTS = 3;
 
@@ -37,6 +38,7 @@ public class SlackDispatchService {
     private final SlackRepository slackRepository;
     private final TodayDashboardService todayDashboardService;
     private final SlackMessageComposer composer;
+    private final SlackReflectionFlowService reflectionFlow;
     private final SlackApiClient apiClient;
 
     @Scheduled(fixedDelay = 60_000)
@@ -50,15 +52,38 @@ public class SlackDispatchService {
         int nowMin = now.getHour() * 60 + now.getMinute();
 
         for (SlackLink link : slackRepository.findAllLinks()) {
-            if (nowMin < link.activeStartMin()) {
-                continue;
-            }
-            boolean claimed = slackRepository.claimDailySend(link.owner(), today, KIND_CHECKLIST)
-                    || slackRepository.reclaimUnsent(link.owner(), today, KIND_CHECKLIST,
-                    RETRY_AFTER_MINUTES, MAX_ATTEMPTS);
-            if (claimed) {
+            if (nowMin >= link.activeStartMin()
+                    && claim(link.owner(), today, KIND_CHECKLIST)) {
                 sendChecklist(link, today);
             }
+            // 활동 종료 시각 — 회고 문답 시작(v0.28.0). 같은 클레임 테이블의 kind 하나가 늘었을 뿐
+            // 멱등 계약은 체크리스트와 동일하다(CONCURRENCY.md 9절).
+            if (nowMin >= link.activeEndMin()
+                    && claim(link.owner(), today, KIND_REFLECTION_PROMPT)) {
+                sendReflectionPrompt(link, today);
+            }
+        }
+    }
+
+    private boolean claim(String owner, LocalDate today, String kind) {
+        return slackRepository.claimDailySend(owner, today, kind)
+                || slackRepository.reclaimUnsent(owner, today, kind, RETRY_AFTER_MINUTES, MAX_ATTEMPTS);
+    }
+
+    private void sendReflectionPrompt(SlackLink link, LocalDate today) {
+        try {
+            var prompt = reflectionFlow.startFlow(link.owner(), today);
+            if (prompt.isEmpty()) {
+                // 회고할 계획이 없다(오늘 작업 없음 또는 이미 웹에서 회고 완료) — 클레임만 닫는다.
+                slackRepository.markSent(link.owner(), today, KIND_REFLECTION_PROMPT);
+                return;
+            }
+            String channel = channelOf(link);
+            if (channel != null && apiClient.postMessage(channel, prompt.get())) {
+                slackRepository.markSent(link.owner(), today, KIND_REFLECTION_PROMPT);
+            }
+        } catch (Exception e) {
+            log.warn("slack reflection prompt failed owner={}", link.owner(), e);
         }
     }
 
@@ -70,10 +95,8 @@ public class SlackDispatchService {
                 slackRepository.markSent(link.owner(), today, KIND_CHECKLIST);
                 return;
             }
-            String channel = link.channelId() != null ? link.channelId()
-                    : apiClient.openDm(link.slackUserId()).orElse(null);
+            String channel = channelOf(link);
             if (channel == null) {
-                log.warn("slack dispatch: no DM channel owner={} — 재시도 대기", link.owner());
                 return; // sent_at을 비워 둔 채 반환 → 재클레임이 이어받는다
             }
             if (apiClient.postMessage(channel, composer.composeChecklist(dashboard))) {
@@ -84,5 +107,14 @@ public class SlackDispatchService {
             // 재클레임 재시도가 상한(3회)까지 이어받는다.
             log.warn("slack dispatch failed owner={}", link.owner(), e);
         }
+    }
+
+    private String channelOf(SlackLink link) {
+        String channel = link.channelId() != null ? link.channelId()
+                : apiClient.openDm(link.slackUserId()).orElse(null);
+        if (channel == null) {
+            log.warn("slack dispatch: no DM channel owner={} — 재시도 대기", link.owner());
+        }
+        return channel;
     }
 }

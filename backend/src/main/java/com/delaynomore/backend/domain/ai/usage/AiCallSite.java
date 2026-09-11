@@ -24,7 +24,9 @@ public enum AiCallSite {
     /** 에이전트 요청 하나의 합계(턴별 호출을 모두 더한 값) — 개별 호출이 아니라 집계 라벨이다. */
     AGENT_TOTAL("agent.total"),
     /** 분량 추천 이유 문장 생성. */
-    RECOMMENDATION_REASON("recommendation.reason");
+    RECOMMENDATION_REASON("recommendation.reason"),
+    /** 슬랙 메시지 의도 해석(v0.27.0) — 단일 비스트리밍 호출, 루프 없음. */
+    SLACK_INTENT("slack.intent");
 
     private final String label;
 

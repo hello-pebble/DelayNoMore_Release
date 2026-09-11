@@ -114,6 +114,56 @@ public class InMemorySlackRepository implements SlackRepository {
     }
 
     @Override
+    public boolean updateActiveHours(String owner, int activeStartMin, int activeEndMin) {
+        return linksByOwner.computeIfPresent(owner, (key, link) -> new SlackLink(link.owner(),
+                link.teamId(), link.slackUserId(), link.channelId(), activeStartMin, activeEndMin)) != null;
+    }
+
+    // key: owner + "/" + date + "/" + planId
+    private final ConcurrentHashMap<String, ReflectionSession> reflectionSessions = new ConcurrentHashMap<>();
+
+    @Override
+    public void createReflectionSession(String owner, LocalDate date, long planId, String state) {
+        reflectionSessions.putIfAbsent(owner + "/" + date + "/" + planId,
+                new ReflectionSession(owner, date, planId, state, null));
+    }
+
+    @Override
+    public Optional<ReflectionSession> findAwaitingReflectionSession(String owner, LocalDate date) {
+        return sessionsOf(owner, date)
+                .filter(s -> s.state().startsWith("AWAITING_"))
+                .min(java.util.Comparator.comparingLong(ReflectionSession::planId));
+    }
+
+    @Override
+    public Optional<ReflectionSession> findPendingReflectionSession(String owner, LocalDate date) {
+        return sessionsOf(owner, date)
+                .filter(s -> "PENDING".equals(s.state()))
+                .min(java.util.Comparator.comparingLong(ReflectionSession::planId));
+    }
+
+    @Override
+    public void updateReflectionSession(String owner, LocalDate date, long planId, String state, String difficulty) {
+        reflectionSessions.computeIfPresent(owner + "/" + date + "/" + planId, (key, s) ->
+                new ReflectionSession(s.owner(), s.sessionDate(), s.planId(), state,
+                        difficulty != null ? difficulty : s.difficulty()));
+    }
+
+    @Override
+    public void closeReflectionSessions(String owner, LocalDate date, String state) {
+        reflectionSessions.replaceAll((key, s) ->
+                s.owner().equals(owner) && s.sessionDate().equals(date)
+                        && (s.state().startsWith("AWAITING_") || "PENDING".equals(s.state()))
+                        ? new ReflectionSession(s.owner(), s.sessionDate(), s.planId(), state, s.difficulty())
+                        : s);
+    }
+
+    private java.util.stream.Stream<ReflectionSession> sessionsOf(String owner, LocalDate date) {
+        return reflectionSessions.values().stream()
+                .filter(s -> s.owner().equals(owner) && s.sessionDate().equals(date));
+    }
+
+    @Override
     public boolean claimEvent(String eventId) {
         return eventDedup.putIfAbsent(eventId, Instant.now()) == null;
     }

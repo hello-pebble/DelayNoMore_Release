@@ -63,8 +63,9 @@ export default function SlackLinkCard() {
       {status?.linked ? (
         <>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '12px' }}>
-            연결됨 — 매일 활동 시작 시각({status.activeStart})에 오늘 할 일 체크리스트를
-            슬랙 DM으로 보내드립니다.
+            연결됨 — 매일 {status.activeStart}에 오늘 할 일 체크리스트를, {status.activeEnd}에
+            하루를 닫는 회고 질문을 슬랙 DM으로 보내드립니다. 활동시간은 봇에게
+            &ldquo;활동시간 9시부터 21시까지로 바꿔줘&rdquo;라고 말하면 바뀝니다.
           </div>
           <button
             onClick={handleUnlink}
