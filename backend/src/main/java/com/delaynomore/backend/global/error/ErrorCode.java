@@ -60,6 +60,12 @@ public enum ErrorCode {
     AUTH_GOOGLE_INVALID(HttpStatus.UNAUTHORIZED, "Google 인증에 실패했습니다. 다시 시도해주세요."),
     // 로그인 기능이 꺼져 있음(클라이언트 ID 미설정 또는 스위치 오프) — 사용자 잘못이 아니라 503.
     AUTH_DISABLED(HttpStatus.SERVICE_UNAVAILABLE, "로그인 기능이 현재 비활성화되어 있습니다."),
+    // 슬랙 연결은 로그인(회원) 전용 — 게스트 ID는 브라우저를 잃으면 재연결할 수 없어, 슬랙이라는
+    // 외부 채널을 휘발성 신원에 묶으면 전송이 유령 계정으로 이어진다. 로그인으로 해소 가능하니 403.
+    SLACK_LOGIN_REQUIRED(HttpStatus.FORBIDDEN, "슬랙 연결은 로그인 후 이용할 수 있습니다."),
+    SLACK_NOT_LINKED(HttpStatus.NOT_FOUND, "연결된 슬랙 계정이 없습니다."),
+    // 서명 시크릿 미설정 또는 스위치 오프 — 사용자 잘못이 아니라 503(AUTH_DISABLED 관례).
+    SLACK_DISABLED(HttpStatus.SERVICE_UNAVAILABLE, "슬랙 연동 기능이 현재 비활성화되어 있습니다."),
     REFLECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 날짜의 회고가 아직 없습니다."),
     REFLECTION_DATE_INVALID(HttpStatus.BAD_REQUEST, "날짜 형식이 올바르지 않습니다(YYYY-MM-DD)."),
     REFLECTION_DATE_NOT_TODAY(HttpStatus.BAD_REQUEST, "회고는 오늘(한국 시간 기준) 날짜에만 저장할 수 있습니다."),

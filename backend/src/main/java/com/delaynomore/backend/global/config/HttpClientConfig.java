@@ -28,4 +28,14 @@ public class HttpClientConfig {
     public RestClient googleTokenInfoRestClient(RestClient.Builder builder) {
         return builder.baseUrl("https://oauth2.googleapis.com").build();
     }
+
+    // Slack Web API 전용 RestClient. 봇 토큰은 서버에만 두고 Bearer 헤더로 실어 보낸다 —
+    // 토큰 미설정 시에도 빈은 만들어지되 SlackApiClient가 호출 전에 드라이런으로 분기한다.
+    @Bean
+    public RestClient slackRestClient(RestClient.Builder builder, SlackProperties slackProperties) {
+        return builder
+                .baseUrl("https://slack.com/api")
+                .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + slackProperties.botToken())
+                .build();
+    }
 }

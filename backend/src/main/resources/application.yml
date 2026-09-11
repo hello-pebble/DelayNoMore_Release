@@ -44,6 +44,14 @@ google:
     # 긴급 오프 스위치 — 클라이언트 ID를 지우지 않고도 코드 배포 없이 로그인만 끌 수 있다.
     enabled: ${GOOGLE_LOGIN_ENABLED:true}
 
+slack:
+  # Slack 앱의 Bot User OAuth Token(xoxb-…)과 Signing Secret — 둘 다 서버 전용 비밀값.
+  # 미설정이면 슬랙 기능이 통째로 꺼진다(발송 루프 무동작, /slack/events 503, 프론트 카드 안내).
+  bot-token: ${SLACK_BOT_TOKEN:YOUR_SLACK_BOT_TOKEN_HERE}
+  signing-secret: ${SLACK_SIGNING_SECRET:YOUR_SLACK_SIGNING_SECRET_HERE}
+  # 긴급 오프 스위치 — 토큰을 지우지 않고도 코드 배포 없이 슬랙 연동만 끌 수 있다(GOOGLE_LOGIN_ENABLED 관례).
+  enabled: ${SLACK_ENABLED:true}
+
 # postgres 프로필 — PostgreSQL(Supabase) 영속화. SPRING_PROFILES_ACTIVE=postgres로 켠다.
 # 기본(프로필 미지정) 기동은 datasource 설정이 없고 Flyway도 위에서 꺼뒀으므로 DataSource가
 # 전혀 필요 없이 인메모리 저장소(@Profile("!postgres"))로 동작한다 — 롤백 경로이자 단위 테스트 체제.
