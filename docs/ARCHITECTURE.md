@@ -21,7 +21,8 @@ DelayNoMore_Release/
 │       ├── date_utils.js              # 로컬 기준 'YYYY-MM-DD' 포맷/파싱/오늘 날짜 유틸
 │       └── components/
 │           ├── chat_coach.jsx         # 하단 탭 4개: 대화 패널(+에이전트 실행 추적) · 오늘 할 일(+미완료 이월) · 체크리스트/보관함(+변경 이력) · 챌린지
-│           └── nickname_setup.jsx     # 닉네임(표시 이름) 변경 오버레이(v0.22.0부터 최초 진입 게이트에서는 빠짐)
+│           ├── nickname_setup.jsx     # 닉네임(표시 이름) 변경 오버레이(v0.22.0부터 최초 진입 게이트에서는 빠짐)
+│           └── slack_link.jsx         # 마이페이지 "슬랙 연결" 카드(로그인 전용, v0.26.0) — 코드 발급·상태·해제, 서버가 기능 OFF면 미표시
 └── backend/    # Spring Boot 4.1 / Java 21 (AI 프록시 + 계획 보관함 + 정적 화면 서빙)
     └── src/main/java/.../
         ├── domain/ai/   # controller·service·client·dto — /api/v1/ai/{health,drafts,chats}(+/stream) + plan-draft-sessions
@@ -33,8 +34,12 @@ DelayNoMore_Release/
         ├── domain/challenge/ # 정원 한정 챌린지(조건부 UPDATE 정원 판정, v0.21.0) — /api/v1/challenges
         │                     # 개설 없음(v0.23.0) — 계획 고정 시 조건별 자동 생성(support/ChallengeCondition)
         ├── domain/auth/ # Google 로그인 + 세션 + 게스트 흡수(re-key) (v0.22.0) — /api/v1/auth/{google,logout,config}
+        ├── domain/slack/ # 슬랙 연동 1단계(v0.26.0) — 계정 연결 + 일일 체크리스트 DM. controller(events 웹훅·link API)
+        │                 #   · service(연결/DM 코드 인식/메시지 조립/@Scheduled 발송 루프) · client(Slack Web API, 토큰 미설정 시 드라이런)
+        │                 #   · support(서명 검증) · repository(InMemory/Jdbc 이중 구현 — 발송 멱등 클레임)
         └── global/      # 공통: response(ApiResponse) · error(ErrorCode, GlobalExceptionHandler) · config
                          #   + auth(@Owner ArgumentResolver — Bearer 세션이면 회원, 없으면 게스트 폴백, v0.22.0)
+                         #   + config에 SchedulingConfig(@EnableScheduling — 저장소 최초, 근거는 주석)·SlackProperties(미설정=OFF, v0.26.0)
 ```
 
 ## API 개요
@@ -47,6 +52,7 @@ DelayNoMore_Release/
 - **계획 상태 수명주기** — 상태 집합·전이 규칙(`DRAFT → CONFIRMED → COMPLETED`, `DRAFT|CONFIRMED → CANCELLED`)·상태별 허용 동작은 `domain/plan/entity/PlanStatus` enum의 **선언적 전이표**가 단일 소유한다. 전이는 명시적 명령 엔드포인트(`POST /api/v1/plans/{id}/{confirm, complete, cancel}` — 본문 없는 POST, 시각은 서버 발급)로 실행되고, 전이표에 없는 전이는 409 `INVALID_STATUS_TRANSITION`. 레거시 PUT 경로(바디 status로 DRAFT→CONFIRMED 고정)는 하위 호환으로 유지되며 같은 전이표를 참조해 판정한다(위반은 기존 409 `PLAN_LOCKED`). 종결 상태(COMPLETED·CANCELLED)는 전면 잠금(조회·회고·삭제만). DB에는 상태가 String으로 저장되고(행 1:1 관례) `V2` 마이그레이션의 CHECK 제약이 최후 안전망. 상태 코드+라벨은 `GET /api/v1/meta/plan-statuses`로 내려간다.
 - **변경 이력(Audit)** — `GET /api/v1/plans/{id}/audit-events`(최신순, 읽기 전용 — 이벤트는 서버가 변경 서비스 안에서 직접 발행). 변이 요청(POST/PUT/DELETE)의 선택 헤더 `X-Session-Id`(브라우저 단위 익명 ID)로 "어느 세션의 변경인지"를 기록한다. 계획을 삭제해도 이력은 남는다(전역 1,000건 링버퍼 상한).
 - **메타(선택지·라벨)** — `GET /api/v1/meta/{reflection-options, audit-event-types}`(읽기 전용). 회고 선택지·이력 라벨의 소스오브트루스인 서버 enum을 코드+한글 라벨로 내려준다(프론트는 마운트 시 수신, 미가용 시 폴백 사본).
+- **슬랙 연동(v0.26.0)** — 연결 관리 3종 `POST /api/v1/slack/link-code`(봇 DM에 입력할 1회용 코드 발급, 10분 유효) · `GET /api/v1/slack/link`(연결 상태) · `DELETE /api/v1/slack/link`(해제)은 **로그인(회원) 전용**이다(게스트는 403 `SLACK_LOGIN_REQUIRED`). `POST /api/v1/slack/events`는 사용자용이 아니라 **Slack 전용 웹훅**으로, 서명 검증(HMAC) → `event_id` 중복 클레임 → 3초 내 ACK 후 비동기 처리하며 유일하게 ApiResponse 래핑을 쓰지 않는다(응답 형식이 Slack 쪽 계약). 일일 체크리스트 DM은 API 호출이 아니라 서버의 `@Scheduled` 60초 발송 루프가 보내고, 시크릿 미설정이면 기능이 통째로 꺼진다(수신 503 `SLACK_DISABLED`). 상세는 [API_REFERENCE.md](API_REFERENCE.md).
 - 응답은 `{ success, data, error }`(ApiResponse)로 래핑되고, 검증 실패는 `error.fieldErrors`, 오류 분기는 `error.code`(ErrorCode)로 판별합니다. Swagger UI: `/swagger-ui.html`.
 
 관련 문서: [기능 상세](FEATURES.md) · [에이전트](AGENT.md) · [실행·배포](DEPLOY.md)
