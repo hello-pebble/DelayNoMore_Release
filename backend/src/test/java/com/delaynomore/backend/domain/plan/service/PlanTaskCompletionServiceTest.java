@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
+import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
@@ -23,7 +24,7 @@ class PlanTaskCompletionServiceTest {
     void changes_only_the_target_task_without_requiring_a_full_plan_payload() {
         PlanRepository repository = new InMemoryPlanRepository();
         AuditEventService auditEvents = new AuditEventService(new InMemoryAuditEventRepository());
-        PlanService service = new PlanService(repository, new InMemoryReflectionRepository(), auditEvents,
+        PlanService service = new PlanService(repository, new InMemoryReflectionRepository(), new InMemoryKnowledgeRepository(), auditEvents,
                 new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
         // 날짜는 오늘(KST)로 동적 생성 — 하드코딩하면 그 날짜가 지나는 순간
         // PAST_TASK_LOCKED 가드(지난 날짜 토글 거부)에 걸려 테스트가 영구 실패한다.

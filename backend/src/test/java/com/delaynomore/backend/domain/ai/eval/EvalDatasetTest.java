@@ -34,7 +34,13 @@ class EvalDatasetTest {
 
     private static Set<String> realToolNames() {
         // 레지스트리를 실제로 조립해 이름을 얻는다 — 목록을 여기 다시 적으면 그 목록이 또 썩는다.
-        return Set.copyOf(registry().toolsFor(PlanStatus.DRAFT).stream().map(AgentTool::name).toList());
+        // 전 상태의 합집합이어야 한다: v0.29.0부터 DRAFT에 노출되지 않는 도구
+        // (search_domain_knowledge)가 있어 한 상태만 보면 실제 도구가 빠진다.
+        AgentToolRegistry registry = registry();
+        return Set.copyOf(java.util.Arrays.stream(PlanStatus.values())
+                .flatMap(status -> registry.toolsFor(status).stream())
+                .map(AgentTool::name)
+                .toList());
     }
 
     private final EvalDataset dataset = EvalDataset.loadDefault();
@@ -177,6 +183,7 @@ class EvalDatasetTest {
                 new GetReflectionHistoryTool(mock()), new GetWorkloadRecommendationTool(mock()),
                 new GetProgressTool(mock()), new GetPlanHistoryTool(mock()),
                 new GetChallengeStatusTool(mock()),
+                new com.delaynomore.backend.domain.ai.agent.tools.SearchDomainKnowledgeTool(mock()),
                 new UpdatePlanTasksTool(), new CarryOverTool(mock())));
     }
 

@@ -184,6 +184,7 @@ export const AGENT_TOOL_LABELS = {
   get_progress: '전체 진행 조회',
   get_plan_history: '변경 이력 조회',
   get_challenge_status: '챌린지 현황 조회',
+  search_domain_knowledge: '올린 자료 검색',
   update_plan_tasks: '계획 수정',
   carry_over_tasks: '미완료 이월'
 };
@@ -200,5 +201,6 @@ export const AGENT_TOOL_QUESTIONS = {
   get_plan_history: '그동안 뭐가 바뀌었어?',
   get_reflection_history: '내 회고에서 보이는 패턴은?',
   get_workload_recommendation: '다음 계획 분량 추천해줘',
-  get_challenge_status: '내 챌린지 몇 등이야?'
+  get_challenge_status: '내 챌린지 몇 등이야?',
+  search_domain_knowledge: '내 자료에서 관련 내용 찾아줘'
 };

@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
+import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.dto.ReflectionResponse;
@@ -39,7 +40,7 @@ class ReflectionServiceTest {
     private final ReflectionRepository reflectionRepository = new InMemoryReflectionRepository();
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
-    private final PlanService planService = new PlanService(planRepository, reflectionRepository, auditEventService,
+    private final PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
                 new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 

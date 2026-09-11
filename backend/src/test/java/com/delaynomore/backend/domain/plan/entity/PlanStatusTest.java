@@ -71,6 +71,16 @@ class PlanStatusTest {
     }
 
     @Test
+    void allowsDomainResearch_초안만불허_고정과종결은허용() {
+        // 고정은 전문 에이전트로의 인계 전환점이라 그때 자료 검색이 열리고, 종결 후에도 회고
+        // 도우미가 "다음 계획 준비"에 자료를 참고할 수 있어야 한다(v0.29.0).
+        assertThat(PlanStatus.DRAFT.allowsDomainResearch()).isFalse();
+        assertThat(PlanStatus.CONFIRMED.allowsDomainResearch()).isTrue();
+        assertThat(PlanStatus.COMPLETED.allowsDomainResearch()).isTrue();
+        assertThat(PlanStatus.CANCELLED.allowsDomainResearch()).isTrue();
+    }
+
+    @Test
     void fromStored_null과blank는DRAFT() {
         // PlanSaveRequest의 status 기본값 규칙과 동일해야 한다(미지정 → DRAFT).
         assertThat(PlanStatus.fromStored(null)).isEqualTo(PlanStatus.DRAFT);

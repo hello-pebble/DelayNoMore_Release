@@ -8,6 +8,7 @@ import com.delaynomore.backend.domain.plan.dto.WeeklySummaryResponse;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
+import com.delaynomore.backend.domain.knowledge.repository.KnowledgeRepository;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.domain.plan.support.PlanDates;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -40,6 +41,7 @@ public class PlanService {
 
     private final PlanRepository planRepository;
     private final ReflectionRepository reflectionRepository;
+    private final KnowledgeRepository knowledgeRepository;
     private final AuditEventService auditEventService;
     // 고정된 계획을 챌린지 자동 생성의 씨앗으로 넘기기 위한 단방향 의존 — 챌린지는 계획을 모른다.
     private final ChallengeService challengeService;
@@ -370,6 +372,9 @@ public class PlanService {
         // 변경 이력은 지우지 않는다 — "언제 삭제됐는가"에 답해야 하므로 PLAN_DELETED와 함께
         // 남기고, 메모리는 이력 저장소의 전역 상한이 관리한다.
         reflectionRepository.deleteAllByPlanId(id);
+        // 참고 자료(v0.29.0)도 동일 — JDBC는 FK CASCADE가 있지만 인메모리 프로필에는 FK가
+        // 없으므로 서비스 캐스케이드가 두 프로필의 계약을 맞춘다.
+        knowledgeRepository.deleteAllByPlanId(id);
         auditEventService.recordPlanDeleted(deleted, sessionId);
     }
 }

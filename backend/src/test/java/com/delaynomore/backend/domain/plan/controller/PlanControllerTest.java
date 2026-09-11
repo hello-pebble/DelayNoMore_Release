@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
+import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.InMemoryAuditEventRepository;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
@@ -39,7 +40,7 @@ class PlanControllerTest {
     void setUp() {
         PlanRepository planRepository = new InMemoryPlanRepository();
         AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
-        PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), auditEventService,
+        PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), new InMemoryKnowledgeRepository(), auditEventService,
                 new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
         // 이 테스트는 X-Guest-Id 헤더 계약만 검증하며 추천 엔드포인트를 호출하지 않으므로 추천 서비스는 null.
         mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService, null))
