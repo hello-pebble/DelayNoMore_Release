@@ -343,6 +343,7 @@ ai.usage site=agent.total  model=qwen/qwen3.7-plus calls=2 prompt=3000 completio
 | `agent.final` | 루프 상한에서 도구 없이 강제하는 마지막 호출 |
 | `agent.total` | 요청 하나의 합계 — 개별 호출이 아니라 집계 |
 | `recommendation.reason` | 분량 추천 이유 문장 |
+| `slack.intent` | 슬랙 메시지 의도 해석(v0.27.0) — 단일 비스트리밍 호출, 루프 없음 |
 
 몇 가지 설계 판단:
 
