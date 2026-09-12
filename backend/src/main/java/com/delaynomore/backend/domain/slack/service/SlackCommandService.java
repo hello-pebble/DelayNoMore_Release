@@ -4,6 +4,7 @@ import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient.Completion;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient.ToolCall;
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
 import com.delaynomore.backend.domain.plan.dto.TodayDashboardResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
 import com.delaynomore.backend.domain.plan.service.TodayDashboardService;
@@ -49,6 +50,8 @@ public class SlackCommandService {
             "지금은 자연어 명령을 처리할 수 없는 설정이에요(AI 미연결). 완료 체크는 웹 화면에서 부탁드려요.";
     private static final String AI_ERROR_REPLY =
             "지금은 메시지를 이해하지 못했어요. 잠시 후 다시 말씀해 주세요.";
+    private static final String AI_LIMIT_REPLY =
+            "오늘 AI 사용량 한도를 모두 썼어요. 완료 체크는 웹 화면에서 하실 수 있고, 내일이면 다시 대화할 수 있어요.";
 
     private final OpenRouterProperties openRouterProperties;
     private final OpenRouterClient openRouterClient;
@@ -56,6 +59,7 @@ public class SlackCommandService {
     private final SlackMessageComposer composer;
     private final PlanService planService;
     private final SlackRepository slackRepository;
+    private final AiRateLimiter rateLimiter;
     private final JsonMapper jsonMapper;
 
     /** 메시지 한 건을 처리하고 사용자에게 보낼 답장을 돌려준다(항상 non-null). */
@@ -67,6 +71,11 @@ public class SlackCommandService {
         }
         if (!openRouterProperties.isKeyConfigured() || !openRouterProperties.isToolCallingEnabled()) {
             return AI_OFF_REPLY;
+        }
+        // 소유자 일일 상한(v0.30.0) — 슬랙에도 웹과 같은 지갑을 쓰므로 같은 한도를 적용한다.
+        // 전역 상한은 OpenRouterClient가 별도로 덮는다(그때는 AI_ERROR_REPLY로 떨어진다).
+        if (!rateLimiter.tryAcquireOwner(owner)) {
+            return AI_LIMIT_REPLY;
         }
         List<NumberedTask> tasks = composer.numberTasks(todayDashboardService.get(owner));
         Completion completion;

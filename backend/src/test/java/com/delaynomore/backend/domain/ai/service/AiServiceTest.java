@@ -5,6 +5,8 @@ import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.domain.ai.dto.AiHealthResponse;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
+import com.delaynomore.backend.global.config.AiRateLimitProperties;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
@@ -34,9 +36,31 @@ class AiServiceTest {
     private final OpenRouterClient openRouterClient = mock(OpenRouterClient.class);
 
     private AiService serviceWithKey(String key) {
+        // 한도를 끈 리미터 — 대부분의 테스트는 응답 정제가 관심사다(한도는 전용 테스트가 본다).
+        return serviceWith(key, new AiRateLimiter(new AiRateLimitProperties(0, 0)));
+    }
+
+    private AiService serviceWith(String key, AiRateLimiter rateLimiter) {
         OpenRouterProperties properties = new OpenRouterProperties("https://openrouter.example", key, "test-model", true, true);
         return new AiService(openRouterClient, new AiPromptBuilder(jsonMapper), new AiResponseParser(jsonMapper),
-                properties, Executors.newSingleThreadExecutor(), jsonMapper);
+                properties, rateLimiter, Executors.newSingleThreadExecutor(), jsonMapper);
+    }
+
+    @Test
+    void getHealth_전역한도소진_미연결과사유반환() {
+        // given — 상한 1을 이미 다 쓴 상태(오늘은 AI가 없는 것과 같다)
+        AiRateLimiter limiter = new AiRateLimiter(new AiRateLimitProperties(0, 1));
+        limiter.tryAcquireGlobal();
+        AiService aiService = serviceWith("sk-live-key", limiter);
+
+        // when
+        AiHealthResponse health = aiService.getHealth();
+
+        // then — 프론트는 이 신호만으로 mock 경로를 택한다(프론트 변경 없이 폴백이 작동하는 근거)
+        assertThat(health.connected()).isFalse();
+        assertThat(health.reason()).contains("한도 소진");
+        // 한도가 다한 날은 업스트림 키 점검조차 부르지 않는다 — 점검도 호출이다.
+        verifyNoInteractions(openRouterClient);
     }
 
     @Test

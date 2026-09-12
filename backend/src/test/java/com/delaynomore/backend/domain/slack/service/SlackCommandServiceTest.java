@@ -4,6 +4,8 @@ import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient.Completion;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient.ToolCall;
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
+import com.delaynomore.backend.global.config.AiRateLimitProperties;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
 import com.delaynomore.backend.domain.plan.dto.TodayDashboardResponse;
 import com.delaynomore.backend.domain.plan.service.PlanService;
@@ -55,7 +57,7 @@ class SlackCommandServiceTest {
         slackRepository = new InMemorySlackRepository();
         slackRepository.upsertLink(LINK);
         service = new SlackCommandService(AI_ON, openRouterClient, dashboardService,
-                new SlackMessageComposer(), planService, slackRepository, JsonMapper.builder().build());
+                new SlackMessageComposer(), planService, slackRepository, unlimited(), JsonMapper.builder().build());
         when(dashboardService.get("user-1")).thenReturn(dashboard(false));
     }
 
@@ -118,12 +120,28 @@ class SlackCommandServiceTest {
         SlackCommandService off = new SlackCommandService(
                 new OpenRouterProperties("https://example", null, "model", true, true),
                 openRouterClient, dashboardService, new SlackMessageComposer(), planService,
-                slackRepository, JsonMapper.builder().build());
+                slackRepository, unlimited(), JsonMapper.builder().build());
 
         String reply = off.handle(LINK, "1번 완료");
 
         verify(openRouterClient, never()).completeWithTools(any(), anyList(), anyInt(), anyList());
         assertThat(reply).contains("웹 화면");
+    }
+
+    @Test
+    void 소유자_일일상한을_넘기면_LLM을_부르지_않고_웹_화면을_안내한다() {
+        // 슬랙도 같은 지갑을 쓴다 — 상한 1을 이미 쓴 소유자의 두 번째 메시지.
+        AiRateLimiter limiter = new AiRateLimiter(new AiRateLimitProperties(1, 0));
+        limiter.tryAcquireOwner("user-1");
+        SlackCommandService limited = new SlackCommandService(AI_ON, openRouterClient, dashboardService,
+                new SlackMessageComposer(), planService, slackRepository, limiter, JsonMapper.builder().build());
+
+        String reply = limited.handle(LINK, "2번 완료");
+
+        verify(openRouterClient, never()).completeWithTools(any(), anyList(), anyInt(), anyList());
+        verify(planService, never()).updateTaskCompletion(anyLong(), anyString(), anyBoolean(), anyString(), anyString());
+        // 막혔다고 침묵하지 않는다 — 사람이 다음에 뭘 하면 되는지(웹 화면·내일)를 알려야 한다.
+        assertThat(reply).contains("한도").contains("웹 화면");
     }
 
     @Test
@@ -183,6 +201,11 @@ class SlackCommandServiceTest {
         assertThat(SlackCommandService.parseHhmm("24:00")).isNull();
         assertThat(SlackCommandService.parseHhmm("9시")).isNull();
         assertThat(SlackCommandService.parseHhmm("")).isNull();
+    }
+
+    /** 한도를 끈 리미터 — 이 테스트의 관심사는 의도 해석이지 비용 방어가 아니다. */
+    private static AiRateLimiter unlimited() {
+        return new AiRateLimiter(new AiRateLimitProperties(0, 0));
     }
 
     private void modelReturnsTool(String name, String argsJson) {

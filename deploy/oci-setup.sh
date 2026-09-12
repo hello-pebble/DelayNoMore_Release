@@ -83,15 +83,16 @@ sudo docker rm -f "${NAME}" 2>/dev/null || true
 # 값이 비어 있으면 -e 자체를 생략한다. 빈 문자열을 넘기면 Spring이 "변수 존재"로 보고
 # application.yml의 기본값 대신 빈 값을 써버려 AI 호출이 조용히 실패한다.
 ENV_ARGS=(-e PORT=8080)
-if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-  ENV_ARGS+=(-e OPENROUTER_API_KEY="${OPENROUTER_API_KEY}")
-fi
-if [ -n "${OPENROUTER_MODEL:-}" ]; then
-  ENV_ARGS+=(-e OPENROUTER_MODEL="${OPENROUTER_MODEL}")
-fi
-if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then
-  ENV_ARGS+=(-e GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}")
-fi
+# 컨테이너로 넘길 선택 변수 목록 — env 파일에 적어도 여기에 없으면 앱까지 닿지 않는다
+# (oci-pull.sh와 같은 목록을 유지한다).
+for _opt in OPENROUTER_API_KEY OPENROUTER_MODEL OPENROUTER_TOOL_CALLING OPENROUTER_STREAM_USAGE \
+            AI_DAILY_CALLS_PER_OWNER AI_DAILY_CALLS_GLOBAL \
+            GOOGLE_CLIENT_ID GOOGLE_LOGIN_ENABLED \
+            SLACK_BOT_TOKEN SLACK_SIGNING_SECRET SLACK_ENABLED; do
+  if [ -n "${!_opt:-}" ]; then
+    ENV_ARGS+=(-e "${_opt}=${!_opt}")
+  fi
+done
 
 if [ -n "${DOMAIN}" ]; then
   # HTTPS 모드: Caddy만 외부(80/443)에 서고, 앱은 내부 네트워크로만 Caddy 뒤에 선다.

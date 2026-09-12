@@ -53,6 +53,8 @@ docker run -p 8080:8080 -e OPENROUTER_API_KEY=<your_key> delaynomore
 | `OPENROUTER_MODEL` | backend | 사용할 모델 ID (선택). |
 | `OPENROUTER_TOOL_CALLING` | backend | 에이전트(도구 호출) 경로 on/off (선택, 기본 `true`). 도구 미지원 모델로 바꿀 때 `false`. |
 | `OPENROUTER_STREAM_USAGE` | backend | 스트리밍 응답 끝의 usage 청크 요청 on/off (선택, 기본 `true`). 끄면 스트리밍 경로의 토큰 사용량 로그만 사라지고 스트리밍 자체는 그대로 동작한다. |
+| `AI_DAILY_CALLS_PER_OWNER` | backend | 소유자(로그인 사용자·게스트)당 하루 AI **요청** 수 상한 (선택, 기본 `60`, v0.30.0). `0` 이하면 무제한. KST 자정 리셋. |
+| `AI_DAILY_CALLS_GLOBAL` | backend | 서버 전체의 하루 **업스트림 호출** 수 상한 (선택, 기본 `1500`). 도구 루프의 내부 호출까지 세는 비용 단위이고, 이 층이 지갑을 지킨다(게스트 ID는 새로 발급하면 소유자 카운터가 초기화되므로). 소진되면 `/ai/health`가 사유와 함께 `connected:false` → 프론트는 mock 폴백. 운영 지침은 [OPERATIONS.md 2-3장](OPERATIONS.md). |
 | `GOOGLE_CLIENT_ID` | backend | Google 로그인(GIS) 클라이언트 ID (선택, v0.22.0). 미설정 시 로그인 기능이 통째로 꺼지고 프론트 버튼이 숨는다. GIS는 https(또는 localhost) 오리진 필수 — 배포 스크립트의 `DOMAIN` 옵션으로 HTTPS를 먼저 켠다([DEPLOY_OCI.md](DEPLOY_OCI.md)). |
 | `GOOGLE_LOGIN_ENABLED` | backend | 로그인 긴급 오프 스위치 (선택, 기본 `true`). 클라이언트 ID를 지우지 않고 로그인만 끈다. |
 | `SLACK_BOT_TOKEN` | backend | Slack 봇 토큰(`xoxb-…`, 서버 전용 — v0.26.0). 미설정 시 발송은 로그 전용 드라이런. |

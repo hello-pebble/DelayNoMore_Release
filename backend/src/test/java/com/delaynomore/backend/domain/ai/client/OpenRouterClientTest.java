@@ -4,7 +4,11 @@ import com.delaynomore.backend.domain.ai.usage.AiCallSite;
 import com.delaynomore.backend.domain.ai.usage.AiUsageLogger;
 import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.global.config.LangChainConfig;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
+import com.delaynomore.backend.global.config.AiRateLimitProperties;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
+import com.delaynomore.backend.global.error.BusinessException;
+import com.delaynomore.backend.global.error.ErrorCode;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -18,8 +22,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -40,6 +46,7 @@ class OpenRouterClientTest {
 
     private HttpServer server;
     private volatile String lastRequestBody;
+    private final AtomicInteger upstreamCalls = new AtomicInteger();
 
     @AfterEach
     void stopServer() {
@@ -50,8 +57,16 @@ class OpenRouterClientTest {
 
     private OpenRouterClient clientWith(boolean streamUsage, String contentType, String responseBody)
             throws IOException {
+        // 한도를 끈 리미터 — 이 테스트들의 관심사는 전송 계약이다(한도는 아래 전용 테스트가 본다).
+        return clientWith(streamUsage, contentType, responseBody,
+                new AiRateLimiter(new AiRateLimitProperties(0, 0)));
+    }
+
+    private OpenRouterClient clientWith(boolean streamUsage, String contentType, String responseBody,
+                                        AiRateLimiter rateLimiter) throws IOException {
         server = HttpServer.create(new InetSocketAddress(0), 0);
         server.createContext("/chat/completions", exchange -> {
+            upstreamCalls.incrementAndGet();
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             byte[] bytes = responseBody.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", contentType);
@@ -68,7 +83,8 @@ class OpenRouterClientTest {
                 LangChainConfig.streamingChatModel(properties),
                 RestClient.builder().baseUrl(baseUrl).build(),
                 properties,
-                usageLogger);
+                usageLogger,
+                rateLimiter);
     }
 
     private JsonNode requestBody() {
@@ -180,6 +196,27 @@ class OpenRouterClientTest {
         client.streamCompletion(AiCallSite.CHAT_STREAM, List.of(message()), 1200, delta -> { });
 
         verify(usageLogger, never()).record(eq(AiCallSite.CHAT_STREAM), any());
+    }
+
+    @Test
+    void 전역_일일_상한을_넘기면_업스트림을_부르지_않고_막는다() throws IOException {
+        // 상한 1 — 첫 호출만 실제로 나가고, 두 번째는 네트워크 이전에 끊긴다(비용 방어선의 정의).
+        OpenRouterClient client = clientWith(true, "application/json", """
+                {"id":"c1","object":"chat.completion","created":1,"model":"test-model",
+                 "choices":[{"index":0,"message":{"role":"assistant","content":"안녕하세요"},"finish_reason":"stop"}],
+                 "usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}""",
+                new AiRateLimiter(new AiRateLimitProperties(0, 1)));
+
+        client.completeWithTools(AiCallSite.CHAT, List.of(message()), 1200, null);
+
+        assertThatThrownBy(() -> client.completeWithTools(AiCallSite.CHAT, List.of(message()), 1200, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.AI_DAILY_LIMIT_EXCEEDED);
+        // 스트리밍 경로도 같은 상한을 지난다 — 진입점이 늘어도 여기 하나로 덮인다.
+        assertThatThrownBy(() -> client.streamCompletion(AiCallSite.CHAT_STREAM, List.of(message()), 1200, d -> { }))
+                .isInstanceOf(BusinessException.class);
+        assertThat(upstreamCalls.get()).isEqualTo(1);
     }
 
     private static Map<String, Object> message() {

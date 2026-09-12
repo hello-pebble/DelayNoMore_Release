@@ -388,6 +388,25 @@ ai.usage site=agent.total  model=qwen/qwen3.7-plus calls=2 prompt=3000 completio
 OPENROUTER_STREAM_USAGE=false   # 기본값 true — 끄면 스트리밍 경로의 사용량 로그만 사라진다
 ```
 
+**일일 상한 [v0.30.0]** — 사용량을 아는 다음 단계는 한도를 거는 것입니다. 토큰은 응답이 와야
+알 수 있어 사전 차단에 쓸 수 없으므로 **호출 수**로 막습니다(실제 소비량은 위 `ai.usage`로 사후
+집계). 상한은 두 층이고 세는 단위가 다릅니다: 소유자별은 **요청 수**(`AgentRunner`·슬랙 진입점),
+서버 전역은 **업스트림 호출 수**(`OpenRouterClient` — 위 표의 `calls`에 해당하는 단위이자 비용
+단위)입니다. 전역 상한을 클라이언트에 둔 덕분에 `@Owner`를 받지 않는 예전 경로(`/chats`·
+`/drafts`)까지 자동으로 덮입니다. 막힌 호출은 사용량 로그와 같은 자리에 남습니다:
+
+```
+ai.ratelimit blocked scope=global site=agent.turn used=1500 limit=1500
+ai.ratelimit reset date=2026-09-13
+```
+
+```bash
+AI_DAILY_CALLS_PER_OWNER=60     # 0 이하면 무제한(로컬·부하 측정 탈출구)
+AI_DAILY_CALLS_GLOBAL=1500      # KST 자정 리셋, 카운터는 인메모리
+```
+
+운영 관점의 한도값·점검 절차는 [OPERATIONS.md 2-3장](OPERATIONS.md)이 소유합니다.
+
 이 사용량은 [평가 하네스](EVAL.md)의 리포트에도 그대로 실립니다 — 정확도와 비용을 같은 표에서
 봐야 "정답이지만 3왕복 쓰는 케이스"가 눈에 띕니다.
 

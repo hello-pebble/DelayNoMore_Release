@@ -11,6 +11,13 @@
 #   DATABASE_URL : (선택) libpq 접속 URL. 지정하면 그대로 쓴다.
 #   ENV_FILE     : (선택) DB_URL/DB_USERNAME/DB_PASSWORD 로부터 URL을 조립할 env 파일(기본 ~/.delaynomore.env)
 #   OUT_DIR      : (선택) 덤프 저장 폴더(기본 ./backups)
+#   BACKUP_UPLOAD_CMD : (선택) 덤프를 VM 밖으로 복사하는 명령. 덤프 경로가 마지막 인자로 붙어
+#                    실행된다(sh -c). 예)
+#                      BACKUP_UPLOAD_CMD='oci os object put --bucket-name dnm-backups --file'
+#                      BACKUP_UPLOAD_CMD='rclone copy --config /home/ubuntu/rclone.conf'   # → rclone copy <dump> 는 대상이 필요하므로 래퍼 스크립트 권장
+#                      BACKUP_UPLOAD_CMD='/home/ubuntu/upload-backup.sh'
+#                    자격증명은 이 변수가 아니라 해당 CLI의 설정 파일·인스턴스 프린시펄에 둔다
+#                    (명령줄은 ps에 노출된다 — 비밀값 금지).
 #
 # 주의: pg_dump 클라이언트 버전은 서버(PG17)와 맞추는 것이 안전하다(예: postgresql-client-17).
 set -euo pipefail
@@ -42,4 +49,19 @@ echo "==> pg_dump → ${OUT_FILE}"
 pg_dump -Fc --no-owner --no-privileges -f "${OUT_FILE}" "${DATABASE_URL}"
 
 echo "완료: ${OUT_FILE} ($(du -h "${OUT_FILE}" | cut -f1))"
+
+# 오프사이트 복사(선택) — VM이 통째로 사라지면 로컬 덤프도 함께 사라지므로, 밖으로 옮기는
+# 수단은 각자 다르다(OCI Object Storage·S3·rclone·scp). 여기서는 명령을 주입받기만 한다:
+# 업로드 도구·자격증명을 스크립트가 알 필요가 없고, 미설정이면 지금까지와 똑같이 동작한다.
+if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
+  echo "==> 오프사이트 복사: ${BACKUP_UPLOAD_CMD} ${OUT_FILE}"
+  # 실패해도 로컬 덤프는 이미 남아 있다. 그래도 비정상 종료로 알린다 — 조용히 성공하면
+  # "오프사이트 백업이 있다"는 믿음만 남고 실제로는 없는 상태가 된다(cron 로그에 남는다).
+  if ! sh -c "${BACKUP_UPLOAD_CMD} \"\$1\"" _ "${OUT_FILE}"; then
+    echo "오류: 오프사이트 복사 실패 — 로컬 덤프(${OUT_FILE})는 남아 있습니다." >&2
+    exit 1
+  fi
+  echo "오프사이트 복사 완료"
+fi
+
 echo "복원:  ./deploy/db-restore.sh ${OUT_FILE}"

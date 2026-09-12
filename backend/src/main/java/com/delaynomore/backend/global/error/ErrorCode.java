@@ -19,6 +19,11 @@ public enum ErrorCode {
     // 에이전트 루프가 도구 호출 상한(MAX_TOOL_TURNS)까지 가고도 최종 답을 못 낸 경우.
     // 폭주 방어라 사용자 잘못이 아니고, 프론트는 기존 자유 대화 경로로 폴백한다.
     AI_TOOL_LOOP_EXCEEDED(HttpStatus.BAD_GATEWAY, "AI가 답을 정리하지 못했습니다. 다시 한 번 물어봐 주세요."),
+    // LLM 일일 호출 상한 소진(v0.30.0) — 종량제 키를 쓰는 데모 서버의 비용 방어선이다.
+    // 시간이 지나면 해소되는 속도 제한이라 429(계획 생성 한도와 같은 계열). 프론트는 이 응답을
+    // 기존 실패 폴백 체인으로 받아 mock으로 수렴하므로 화면이 멈추지 않는다 —
+    // "한도 소진 = 오늘은 AI가 없는 것과 같다"가 이 코드의 정확한 의미다.
+    AI_DAILY_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "오늘 AI 사용량 한도를 모두 썼습니다. 내일 다시 이용해주세요."),
     PLAN_NOT_FOUND(HttpStatus.NOT_FOUND, "계획을 찾을 수 없습니다. 이미 삭제되었을 수 있어요."),
     // 소유자당 한도 초과 — 사용자가 직접 해소할 수 있으므로 400 + 액션 가능한 메시지.
     PLAN_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "내 보관함이 가득 찼습니다(최대 10개). 기존 계획을 삭제한 뒤 다시 저장해주세요."),

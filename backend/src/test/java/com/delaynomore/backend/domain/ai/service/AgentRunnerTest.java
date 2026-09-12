@@ -11,6 +11,8 @@ import com.delaynomore.backend.domain.ai.agent.tools.UpdatePlanTasksTool;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
+import com.delaynomore.backend.global.config.AiRateLimitProperties;
 import com.delaynomore.backend.domain.ai.usage.AiUsageLogger;
 import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
@@ -41,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -68,9 +71,14 @@ class AgentRunnerTest {
             new UpdatePlanTasksTool(),
             new CarryOverTool(planService)));
 
-    private final AgentRunner runner = new AgentRunner(openRouterClient, new AiPromptBuilder(jsonMapper),
-            new AiResponseParser(jsonMapper), registry, planService,
-            Executors.newSingleThreadExecutor(), jsonMapper, usageLogger);
+    // 한도를 끈 리미터 — 대부분의 테스트는 루프 동작이 관심사다(한도는 전용 테스트가 본다).
+    private final AgentRunner runner = runnerWith(new AiRateLimiter(new AiRateLimitProperties(0, 0)));
+
+    private AgentRunner runnerWith(AiRateLimiter rateLimiter) {
+        return new AgentRunner(openRouterClient, new AiPromptBuilder(jsonMapper),
+                new AiResponseParser(jsonMapper), registry, planService,
+                Executors.newSingleThreadExecutor(), jsonMapper, usageLogger, rateLimiter);
+    }
 
     // 이벤트를 모으는 sink — SSE 대신 리스트에 쌓아 순서와 내용을 그대로 검증한다.
     private final List<Map<String, Object>> events = new ArrayList<>();
@@ -168,6 +176,25 @@ class AgentRunnerTest {
         // then — 합계 한 줄에 "업스트림을 몇 번 때렸는가(calls)"와 누적 토큰이 함께 남는다
         verify(usageLogger).recordTotal(AiCallSite.AGENT_TOTAL, 2,
                 new TokenUsage(3000, 70, 3070, null));
+    }
+
+    @Test
+    void run_소유자_일일상한초과_업스트림을_부르지않고_막는다() throws IOException {
+        // given — 소유자 상한 1. 한 요청이 도구로 업스트림을 여러 번 불러도 소유자 카운터는 1이다.
+        AgentRunner limited = runnerWith(new AiRateLimiter(new AiRateLimitProperties(1, 0)));
+        when(openRouterClient.completeWithTools(any(), anyList(), anyInt(), anyList()))
+                .thenReturn(reply("안녕하세요"));
+        limited.run(request("안녕하세요", null, Map.of()), OWNER, "sess-1", sink);
+
+        // when — 같은 소유자의 두 번째 요청
+        BusinessException thrown = catchThrowableOfType(BusinessException.class,
+                () -> limited.run(request("또 물어볼게요", null, Map.of()), OWNER, "sess-2", sink));
+
+        // then — 프론트는 이 429를 기존 실패 폴백 체인으로 받아 mock으로 수렴한다
+        assertThat(thrown.getErrorCode()).isEqualTo(ErrorCode.AI_DAILY_LIMIT_EXCEEDED);
+        verify(openRouterClient, times(1)).completeWithTools(any(), anyList(), anyInt(), anyList());
+        // 다른 소유자는 자기 한도를 그대로 가진다 — 한 사람의 폭주가 서비스를 닫지 않는다.
+        limited.run(request("저는요?", null, Map.of()), "other-owner", "sess-3", sink);
     }
 
     @Test

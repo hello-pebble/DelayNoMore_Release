@@ -36,6 +36,16 @@ openrouter:
     # 로그 오염을 막는 계측 차단으로 남는다.
     stream-usage: ${OPENROUTER_STREAM_USAGE:true}
 
+# LLM 호출 일일 상한(v0.30.0) — 종량제 키를 쓰는 데모 서버의 비용 방어선.
+# 전역 상한이 실제 지갑을 지킨다: 게스트 ID는 브라우저가 새로 만들 수 있어 소유자 한도만으로는
+# 우회된다. 0 이하면 무제한(로컬·테스트 탈출구).
+ai:
+  rate-limit:
+    # 소유자당 하루 AI 요청 수(에이전트 대화·슬랙 명령 — 요청 단위).
+    daily-calls-per-owner: ${AI_DAILY_CALLS_PER_OWNER:60}
+    # 서버 전체의 하루 업스트림 호출 수(도구 루프의 내부 호출까지 포함 — 비용 단위).
+    daily-calls-global: ${AI_DAILY_CALLS_GLOBAL:1500}
+
 google:
   oauth:
     # GCP 콘솔의 OAuth 클라이언트 ID. 비밀값은 아니지만 배포 환경마다 달라 환경변수로 주입한다.

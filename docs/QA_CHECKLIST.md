@@ -981,6 +981,81 @@
   # 리포트: backend/build/eval/report.md
   ```
 
+## F-40. LLM 일일 상한 + 오프사이트 백업 훅 (v0.30.0)
+
+> 대화·에이전트 경로에 **일일 상한 2층**(소유자별=요청 수, 서버 전역=업스트림 호출 수)이 걸린다.
+> 막히는 모습은 경로마다 다르다 — **SSE 경로**(에이전트·스트리밍 대화·초안)는 HTTP 200에
+> `error` 이벤트로 사유가 실려 프론트가 기존 폴백을 타고, **비스트리밍 JSON 경로**(`/ai/chats`·
+> `/ai/drafts`)는 429 `AI_DAILY_LIMIT_EXCEEDED`다. `/ai/health`는 전역 소진을 사유와 함께 알린다.
+> 스키마 변경 없음 — 점검은 환경변수만으로 재현한다. 기본값은 `AI_DAILY_CALLS_PER_OWNER=60`,
+> `AI_DAILY_CALLS_GLOBAL=1500`이고 `0` 이하는 무제한이다.
+
+- [ ] **상한을 낮춰 기동** — 재현용 서버를 띄운다(로컬 권장. 키가 없으면 mock 경로라 상한을
+      지나지 않으므로 이 절은 키가 있어야 한다):
+
+  ```bash
+  cd backend
+  AI_DAILY_CALLS_PER_OWNER=2 AI_DAILY_CALLS_GLOBAL=3 OPENROUTER_API_KEY=... ./gradlew bootRun
+  ```
+
+- [ ] **소유자 상한(에이전트 SSE)** — 같은 게스트로 3번 보내면 3번째 응답에 한도 안내가 실린다:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-limit-0001
+  BODY='{"message":"안녕","goalName":"정보처리기사","duration":3,"dailyHours":2,"currentLevel":"초급"}'
+  for i in 1 2 3; do
+    echo "--- $i ---"
+    curl -sN -X POST $API/ai/agent/chats/stream -H "X-Guest-Id: $G" \
+      -H 'Content-Type: application/json' -d "$BODY" | tail -2
+  done
+  # 기대: 1·2번째는 token/done 이벤트, 3번째는 {"type":"error","m":"오늘 AI 사용량 한도를 모두 썼습니다. …"}
+  ```
+
+- [ ] **다른 소유자는 영향 없다** — `X-Guest-Id`를 `qa-limit-0002`로 바꾸면 다시 정상 응답
+      (한 사람의 폭주가 서비스를 닫지 않는다)
+- [ ] **전역 상한(비스트리밍 JSON)** — 소유자를 바꿔 가며 계속 부르면 전역 한도에서 모두가 막히고,
+      이 경로는 429로 떨어진다:
+
+  ```bash
+  curl -s -o /tmp/r.json -w "%{http_code}\n" -X POST $API/ai/chats \
+    -H 'Content-Type: application/json' -d "$BODY"; cat /tmp/r.json
+  # 기대(전역 소진 후): 429 + {"success":false,"error":{"code":"AI_DAILY_LIMIT_EXCEEDED",...}}
+  ```
+
+- [ ] **차단이 로그에 남는다** — `ai.ratelimit blocked scope=global site=…`:
+
+  ```bash
+  docker logs delaynomore 2>&1 | grep 'ai.ratelimit blocked'   # 배포 환경
+  ```
+
+- [ ] **health가 사유를 알린다** — 전역 상한 소진 후:
+
+  ```bash
+  curl -s $API/ai/health
+  # 기대: connected:false, reason "오늘 AI 사용량 한도 소진 (내일 자동 해제)"
+  ```
+
+- [ ] **화면이 멈추지 않는다** — 상한 소진 상태에서 새 계획 만들기를 진행하면 헤더 LED가
+      "미연결"로 바뀌고 **mock 응답으로 계획이 생성된다**(오류 화면이 아니다)
+- [ ] **슬랙은 안내 답장** — (슬랙 연결 시) 소유자 상한 소진 후 봇을 멘션하면 "한도를 모두 썼다 ·
+      웹 화면에서 완료 체크 · 내일 다시"가 답장으로 온다(침묵하지 않는다)
+- [ ] **무제한 탈출구** — `AI_DAILY_CALLS_PER_OWNER=0 AI_DAILY_CALLS_GLOBAL=0`으로 재기동하면
+      횟수 제한 없이 동작하고 `/ai/health`도 정상(v0.29.0까지와 동일한 거동)
+- [ ] **오프사이트 백업 훅**(영속 모드 VM) — 덤프 후 지정한 명령이 덤프 경로를 인자로 받아 실행된다:
+
+  ```bash
+  printf '#!/usr/bin/env bash\necho "받은 파일: $1" >> ~/upload-test.log\n' > ~/upload-test.sh
+  chmod +x ~/upload-test.sh
+  BACKUP_UPLOAD_CMD=~/upload-test.sh ./deploy/db-backup.sh
+  cat ~/upload-test.log     # 기대: 방금 만든 .dump 경로 한 줄
+  # 실패 시 동작: BACKUP_UPLOAD_CMD=false ./deploy/db-backup.sh → 비정상 종료(exit 1),
+  #              "오프사이트 복사 실패" 메시지, 로컬 덤프는 남아 있다
+  ```
+
+- [ ] **cron 항목에 함께 기록된다** — `BACKUP_UPLOAD_CMD=~/upload-test.sh ./deploy/setup-backup-cron.sh`
+      실행 후 `crontab -l`에 `BACKUP_UPLOAD_CMD='...'`가 포함되고, 항목은 여전히 1줄이다(멱등)
+- [ ] **미설정이면 종전과 동일** — `BACKUP_UPLOAD_CMD` 없이 `./deploy/db-backup.sh` → 덤프만 생성
+
 ---
 
 ## 참고
