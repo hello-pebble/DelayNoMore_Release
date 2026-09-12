@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.ai.client;
 
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
 import com.delaynomore.backend.domain.ai.usage.AiUsageLogger;
 import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
@@ -44,6 +45,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>토큰 사용량 계측이 여기 집중되는 이유는 전과 같다 — 모든 업스트림 호출이 이 클래스를
  * 지나므로, 호출부가 각자 세는 것보다 여기서 한 번 세는 편이 빠뜨릴 여지가 없다.
+ * <b>전역 일일 상한(v0.30.0)도 같은 이유로 여기 있다</b> — 진입점마다 거는 대신 이 한 곳에
+ * 두면 레거시 경로(/chats·/drafts)든 나중에 생길 경로든 자동으로 덮인다.
  */
 @Component
 @RequiredArgsConstructor
@@ -55,6 +58,7 @@ public class OpenRouterClient {
     private final RestClient openRouterRestClient;
     private final OpenRouterProperties properties;
     private final AiUsageLogger usageLogger;
+    private final AiRateLimiter rateLimiter;
 
     // 스트리밍 델타 소비자 — SSE 전송(IOException)을 그대로 던질 수 있게 별도 함수형 인터페이스로 둔다.
     @FunctionalInterface
@@ -113,6 +117,7 @@ public class OpenRouterClient {
      */
     public Completion completeWithTools(AiCallSite site, List<Map<String, Object>> messages, int maxTokens,
                                         List<Map<String, Object>> tools) {
+        requireDailyBudget(site);
         try {
             ChatResponse response = chatModel.chat(buildRequest(messages, maxTokens, tools));
             TokenUsage usage = toDomainUsage(response.metadata().tokenUsage());
@@ -138,6 +143,7 @@ public class OpenRouterClient {
      */
     public void streamCompletion(AiCallSite site, List<Map<String, Object>> messages, int maxTokens,
                                  DeltaConsumer onDelta) {
+        requireDailyBudget(site);
         CountDownLatch done = new CountDownLatch(1);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         AtomicReference<TokenUsage> usage = new AtomicReference<>(TokenUsage.EMPTY);
@@ -187,6 +193,20 @@ public class OpenRouterClient {
         // 이제 LangChain4j가 관리한다 — 탈출구의 목적(이상 동작 시 로그 오염 방지)은 유지된다.
         if (properties.isStreamUsageEnabled()) {
             usageLogger.record(site, usage.get());
+        }
+    }
+
+    /**
+     * 전역 일일 상한 확인(v0.30.0). 한도를 넘으면 업스트림을 부르지 않고 429로 끊는다 —
+     * 호출부는 이 예외를 기존 실패 경로로 받아 mock 폴백까지 수렴하므로 화면은 멈추지 않는다.
+     * 소진은 운영자가 알아야 하는 사건이라 WARN으로 남긴다(정상 호출은 ai.usage INFO).
+     */
+    private void requireDailyBudget(AiCallSite site) {
+        if (!rateLimiter.tryAcquireGlobal()) {
+            AiRateLimiter.Snapshot snapshot = rateLimiter.snapshot();
+            log.warn("ai.ratelimit blocked scope=global site={} used={} limit={}",
+                    site.label(), snapshot.globalUsed(), snapshot.globalLimit());
+            throw new BusinessException(ErrorCode.AI_DAILY_LIMIT_EXCEEDED);
         }
     }
 

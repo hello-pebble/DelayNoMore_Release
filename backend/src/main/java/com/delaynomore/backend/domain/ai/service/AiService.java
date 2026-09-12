@@ -6,6 +6,7 @@ import com.delaynomore.backend.domain.ai.dto.AiChatResponse;
 import com.delaynomore.backend.domain.ai.dto.AiDraftRequest;
 import com.delaynomore.backend.domain.ai.dto.AiHealthResponse;
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
 import com.delaynomore.backend.global.config.OpenRouterProperties;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
@@ -36,6 +37,7 @@ public class AiService {
     private final AiPromptBuilder promptBuilder;
     private final AiResponseParser responseParser;
     private final OpenRouterProperties properties;
+    private final AiRateLimiter rateLimiter;
     private final ExecutorService sseExecutor;
     private final JsonMapper jsonMapper;
 
@@ -50,6 +52,11 @@ public class AiService {
     public AiHealthResponse getHealth() {
         if (!properties.isKeyConfigured()) {
             return AiHealthResponse.down("API Key 미설정");
+        }
+        // 전역 일일 상한을 다 쓴 날은 "오늘은 AI가 없는 것과 같다" — 키 미설정과 같은 상태로
+        // 알린다. 프론트는 이 신호로 mock 경로를 택하고, LED에 사유가 그대로 뜬다(v0.30.0).
+        if (rateLimiter.snapshot().globalExhausted()) {
+            return AiHealthResponse.down("오늘 AI 사용량 한도 소진 (내일 자동 해제)");
         }
         OpenRouterClient.KeyCheck check = openRouterClient.checkKey();
         // 연결됐을 때만 에이전트 가용 여부를 함께 알린다 — 프론트는 이 값으로 도구 경로와

@@ -56,6 +56,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
 | `AI_TOOL_LOOP_EXCEEDED` | 502 | 에이전트 루프가 도구 호출 상한(4턴)까지 가고도 최종 답을 못 냄 — 프론트는 자유 대화로 폴백 (v0.15.0) |
+| `AI_DAILY_LIMIT_EXCEEDED` | 429 | LLM 일일 상한 소진 (v0.30.0) — 소유자별(요청 수)·서버 전역(업스트림 호출 수) 2층. SSE 경로에서는 HTTP가 아니라 `error` 이벤트로 전달되고, `/ai/health`가 사유와 함께 `connected:false`를 내려 프론트는 mock으로 폴백 |
 | `CHALLENGE_NOT_FOUND` | 404 | 없는 챌린지 id (v0.21.0) |
 | `CHALLENGE_FULL` | 409 | 챌린지 참가 시 정원 마감 — 판정은 조건부 UPDATE(`WHERE participant_count < capacity`) 단독 |
 | `CHALLENGE_ALREADY_JOINED` | 409 | 이미 참가한 챌린지에 재참가 |
@@ -120,6 +121,9 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 //   서버 스위치는 OPENROUTER_TOOL_CALLING(기본 true) — 도구 미지원 모델로 바꿔도 코드 배포 불필요.
 { "connected": true, "toolCalling": true }
 { "connected": false, "reason": "API Key 미설정", "toolCalling": false }
+// v0.30.0: 전역 일일 상한을 다 쓴 날도 같은 모양으로 내려간다(업스트림 점검조차 하지 않는다).
+// 프론트는 이 신호로 mock 폴백을 택한다 — 생존 감시로 쓰면 상한 소진일에 오탐이 난다.
+{ "connected": false, "reason": "오늘 AI 사용량 한도 소진 (내일 자동 해제)", "toolCalling": false }
 ```
 
 ### 2. POST /ai/drafts — 계획 초안 생성

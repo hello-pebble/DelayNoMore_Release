@@ -8,6 +8,7 @@ import com.delaynomore.backend.domain.ai.agent.ToolResult;
 import com.delaynomore.backend.domain.ai.client.OpenRouterClient;
 import com.delaynomore.backend.domain.ai.dto.AiChatRequest;
 import com.delaynomore.backend.domain.ai.usage.AiCallSite;
+import com.delaynomore.backend.domain.ai.usage.AiRateLimiter;
 import com.delaynomore.backend.domain.ai.usage.AiUsageLogger;
 import com.delaynomore.backend.domain.ai.usage.TokenUsage;
 import com.delaynomore.backend.domain.plan.dto.PlanResponse;
@@ -81,6 +82,7 @@ public class AgentRunner {
     private final ExecutorService sseExecutor;
     private final JsonMapper jsonMapper;
     private final AiUsageLogger usageLogger;
+    private final AiRateLimiter rateLimiter;
 
     public SseEmitter stream(AiChatRequest request, String owner, String sessionId) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
@@ -113,6 +115,12 @@ public class AgentRunner {
      * done/error 이벤트는 전송 계층({@link #relay})이 붙인다(성공·실패 판정은 예외로 전달).
      */
     void run(AiChatRequest request, String owner, String sessionId, AgentEventSink sink) throws IOException {
+        // 소유자 일일 상한(v0.30.0)은 여기서 요청 단위로 센다 — 전역 상한(OpenRouterClient)이
+        // 업스트림 호출 수를 세는 것과 단위가 다르다. 한 요청이 도구 때문에 업스트림을 여러 번
+        // 부르는데 그걸 사용자 한도로 세면 "대화 20번 했는데 60이 다 찼다"가 되기 때문이다.
+        if (!rateLimiter.tryAcquireOwner(owner)) {
+            throw new BusinessException(ErrorCode.AI_DAILY_LIMIT_EXCEEDED);
+        }
         AgentContext context = buildContext(request, owner, sessionId);
         // 이번 실행이 실제로 고른 프로필을 가장 먼저 알린다(v0.17.0) — 프론트 로컬 추측이 아니라
         // 서버 저장 상태에서 파생된 값이라, 추적 패널이 "어떤 페르소나로 답했는가"의 증빙이 된다.

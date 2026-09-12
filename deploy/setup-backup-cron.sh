@@ -12,6 +12,10 @@
 #   RETENTION_DAYS : (선택) 덤프 보존 일수(기본 14). 지나면 run 단계에서 삭제.
 #   OUT_DIR        : (선택) 덤프 저장 폴더(기본 <저장소>/backups). 로그도 여기에 쌓인다.
 #   ENV_FILE       : (선택) DB_* env 파일(기본 ~/.delaynomore.env) — db-backup.sh로 전달.
+#   BACKUP_UPLOAD_CMD : (선택) 덤프를 VM 밖으로 복사하는 명령(db-backup.sh로 전달 — 덤프 경로가
+#                    마지막 인자로 붙는다). install 시점의 값이 cron 항목에 그대로 기록되므로,
+#                    바꾸려면 같은 변수로 다시 install 하면 된다. 예)
+#                      BACKUP_UPLOAD_CMD=/home/ubuntu/upload-backup.sh ./deploy/setup-backup-cron.sh
 #
 # 주의: cron은 이 스크립트의 **절대 경로**를 기록하므로 저장소를 옮기면 재등록해야 한다.
 #       백업은 VM 로컬에 남는다 — VM과 함께 잃지 않으려면 덤프를 주기적으로 VM 밖으로
@@ -30,7 +34,8 @@ LOG_FILE="${OUT_DIR}/backup.log"
 case "${1:-install}" in
   run)
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 백업 시작"
-    OUT_DIR="${OUT_DIR}" ENV_FILE="${ENV_FILE}" "${SCRIPT_DIR}/db-backup.sh"
+    OUT_DIR="${OUT_DIR}" ENV_FILE="${ENV_FILE}" BACKUP_UPLOAD_CMD="${BACKUP_UPLOAD_CMD:-}" \
+      "${SCRIPT_DIR}/db-backup.sh"
     find "${OUT_DIR}" -name 'delaynomore-*.dump' -mtime +"${RETENTION_DAYS}" -delete
     KEPT="$(find "${OUT_DIR}" -name 'delaynomore-*.dump' | wc -l)"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] 백업 끝 — 보존 ${RETENTION_DAYS}일, 현재 ${KEPT}개 보관"
@@ -57,13 +62,30 @@ case "${1:-install}" in
       exit 1
     fi
 
+    # 오프사이트 명령에 %가 있으면 cron이 개행으로 바꿔 항목이 깨진다 — 래퍼 스크립트로 우회.
+    if [ -n "${BACKUP_UPLOAD_CMD:-}" ] && [ "${BACKUP_UPLOAD_CMD}" != "${BACKUP_UPLOAD_CMD//%/}" ]; then
+      echo "오류: BACKUP_UPLOAD_CMD에 %를 쓸 수 없습니다(cron이 개행으로 해석)." >&2
+      echo "      그 명령을 셸 스크립트로 감싸고 그 경로를 BACKUP_UPLOAD_CMD로 주세요." >&2
+      exit 1
+    fi
+
     mkdir -p "${OUT_DIR}"
-    ENTRY="${BACKUP_CRON} ENV_FILE=${ENV_FILE} OUT_DIR=${OUT_DIR} RETENTION_DAYS=${RETENTION_DAYS} ${SCRIPT_DIR}/setup-backup-cron.sh run >> ${LOG_FILE} 2>&1 ${MARKER}"
+    # cron은 환경을 물려받지 않는다 — 필요한 변수는 항목에 직접 적는다.
+    UPLOAD_ASSIGN=""
+    if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
+      UPLOAD_ASSIGN="BACKUP_UPLOAD_CMD='${BACKUP_UPLOAD_CMD}' "
+    fi
+    ENTRY="${BACKUP_CRON} ENV_FILE=${ENV_FILE} OUT_DIR=${OUT_DIR} RETENTION_DAYS=${RETENTION_DAYS} ${UPLOAD_ASSIGN}${SCRIPT_DIR}/setup-backup-cron.sh run >> ${LOG_FILE} 2>&1 ${MARKER}"
     # crontab이 아직 없거나 기존 항목이 없어도(grep exit 1) 등록이 이어지게 || true
     { crontab -l 2>/dev/null | grep -vF "${MARKER}" || true; echo "${ENTRY}"; } | crontab -
 
     echo "==> cron 등록됨: ${BACKUP_CRON} (VM 시간대: $(date '+%Z %z'))"
     echo "    로그: ${LOG_FILE} · 보존: ${RETENTION_DAYS}일 · 확인: crontab -l"
+    if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
+      echo "    오프사이트: ${BACKUP_UPLOAD_CMD} <dump>"
+    else
+      echo "    오프사이트 복사 없음 — 백업이 VM에만 남습니다(BACKUP_UPLOAD_CMD로 켜세요)."
+    fi
     echo "==> 첫 백업을 지금 검증합니다..."
     "${SCRIPT_DIR}/setup-backup-cron.sh" run | tee -a "${LOG_FILE}"
     ;;

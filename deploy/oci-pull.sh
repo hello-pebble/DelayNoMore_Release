@@ -13,6 +13,10 @@
 #   OPENROUTER_API_KEY   : (선택) 미설정 시 프론트 mock 폴백
 #   OPENROUTER_MODEL     : (선택) 사용할 모델 ID
 #   GOOGLE_CLIENT_ID     : (선택) Google 로그인 클라이언트 ID. 미설정 시 로그인 버튼이 숨는다
+#   그 외 선택 변수       : OPENROUTER_TOOL_CALLING · OPENROUTER_STREAM_USAGE ·
+#                          AI_DAILY_CALLS_PER_OWNER · AI_DAILY_CALLS_GLOBAL(LLM 일일 상한) ·
+#                          GOOGLE_LOGIN_ENABLED · SLACK_BOT_TOKEN · SLACK_SIGNING_SECRET ·
+#                          SLACK_ENABLED — 값이 있으면 그대로 컨테이너에 전달한다(DEPLOY.md 환경변수 표)
 #   DB_URL               : (선택) PostgreSQL(Supabase) JDBC URL. 지정하면 영속 모드(postgres 프로필)로
 #                          기동한다. 미지정이면 인메모리(휘발성) 모드 — 재시작 시 데이터 소실.
 #   DB_USERNAME          : (DB_URL 지정 시 필수) DB 사용자. Supabase 세션 풀러는 postgres.<project-ref>
@@ -87,15 +91,16 @@ sudo docker pull "${IMAGE}"
 # 값이 비어 있으면 -e 자체를 생략한다(빈 문자열을 넘기면 Spring 기본값이 무시됨).
 # 낮은 사양 VM에서 JVM이 메모리를 과도하게 잡지 않도록 힙 상한도 건다.
 ENV_ARGS=(-e PORT=8080 -e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50)
-if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-  ENV_ARGS+=(-e OPENROUTER_API_KEY="${OPENROUTER_API_KEY}")
-fi
-if [ -n "${OPENROUTER_MODEL:-}" ]; then
-  ENV_ARGS+=(-e OPENROUTER_MODEL="${OPENROUTER_MODEL}")
-fi
-if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then
-  ENV_ARGS+=(-e GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID}")
-fi
+# 컨테이너로 넘길 선택 변수 목록 — env 파일에 적어도 여기에 없으면 앱까지 닿지 않는다.
+# (셸이 값을 export해도 docker run은 -e로 준 것만 컨테이너 환경에 넣기 때문.)
+for _opt in OPENROUTER_API_KEY OPENROUTER_MODEL OPENROUTER_TOOL_CALLING OPENROUTER_STREAM_USAGE \
+            AI_DAILY_CALLS_PER_OWNER AI_DAILY_CALLS_GLOBAL \
+            GOOGLE_CLIENT_ID GOOGLE_LOGIN_ENABLED \
+            SLACK_BOT_TOKEN SLACK_SIGNING_SECRET SLACK_ENABLED; do
+  if [ -n "${!_opt:-}" ]; then
+    ENV_ARGS+=(-e "${_opt}=${!_opt}")
+  fi
+done
 
 # DB_URL이 있으면 영속 모드(postgres 프로필)로 기동한다 — Flyway가 첫 부팅에 스키마를 적용하고
 # 데이터는 Supabase(외부 관리형)에 남아 컨테이너/VM 재시작과 무관하게 복원된다. DB_URL이 없으면
