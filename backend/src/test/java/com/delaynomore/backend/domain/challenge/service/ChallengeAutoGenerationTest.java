@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
@@ -18,7 +19,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 실제 Plan을 만들어 그 값을 넘긴다 — 카테고리→키 파생까지 같은 경로로 함께 검증된다.
 class ChallengeAutoGenerationTest {
 
-    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(new InMemoryPointLedgerRepository());
+    private final PointsFixture points = new PointsFixture();
+
+    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(points.wallets());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
 

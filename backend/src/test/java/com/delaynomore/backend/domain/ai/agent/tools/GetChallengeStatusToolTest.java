@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.ai.agent.tools;
 
 import com.delaynomore.backend.domain.ai.agent.AgentContext;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.ai.agent.ToolResult;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
@@ -21,7 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 순위 계산이 리더보드 정렬과 어긋나면 답이 틀린다. 목·스텁 없이 실제 서비스에 위임한다.
 class GetChallengeStatusToolTest {
 
-    private final InMemoryChallengeRepository challengeRepository = new InMemoryChallengeRepository(new InMemoryPointLedgerRepository());
+    private final PointsFixture points = new PointsFixture();
+
+    private final InMemoryChallengeRepository challengeRepository = new InMemoryChallengeRepository(points.wallets());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
     private final GetChallengeStatusTool tool = new GetChallengeStatusTool(challengeService);

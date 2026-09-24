@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
@@ -29,6 +30,8 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 // 인메모리 저장소라 Mock 없이 실제 PlanRepository를 주입해 Service+Repository를 함께 검증한다.
 class PlanServiceTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final int MAX_PLANS_PER_OWNER = 10;
     private static final int MAX_PLANS_GLOBAL = 200;
     private static final long MISSING_ID = 999L;
@@ -44,7 +47,8 @@ class PlanServiceTest {
     private final InMemoryKnowledgeRepository knowledgeRepository = new InMemoryKnowledgeRepository();
     private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
             knowledgeRepository, auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

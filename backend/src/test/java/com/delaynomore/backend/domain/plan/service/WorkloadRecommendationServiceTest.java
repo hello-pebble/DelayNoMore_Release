@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.ai.service.AiService;
@@ -38,6 +39,8 @@ import static org.mockito.Mockito.when;
 // Audit 기록, 원본 불변, AI 실패 시 서버 템플릿 폴백을 Docker 없이 검증한다.
 class WorkloadRecommendationServiceTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     // 관찰일수·완료율이 실행 시각(KstDates.today)에 흔들리지 않도록 충분히 과거 날짜를 쓴다.
     private static final String START = "2020-01-01";
 
@@ -54,7 +57,8 @@ class WorkloadRecommendationServiceTest {
         reflectionRepository = new InMemoryReflectionRepository();
         auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
         aiService = mock(AiService.class);
         reasonWriter = mock(RecommendationReasonWriter.class);
         service = new WorkloadRecommendationService(planRepository, reflectionRepository, auditEventService,

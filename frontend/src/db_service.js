@@ -197,6 +197,16 @@ export const joinChallenge = (id) => requestJson(`/challenges/${id}/join`, null)
 //              refType, refId, createdAt }] } — entries는 최신순, 서버가 정한 최근 N건.
 export const fetchPointLedger = () => requestJson('/points/ledger', null, 'GET');
 
+// 목표 예치(v0.32.0) — 고정한 계획에 포인트를 걸고, 계획이 종결되는 순간 달성률만큼 돌려받는다.
+// 해제(회수) API는 없다: 무를 수 있으면 약속이 아니다. 돌려받는 길은 종결(완료·중단)뿐이고
+// 중단도 종결이라 포인트가 잠기지 않는다. 판정(고정 여부·금액 범위·계획당 1건)은 전부 서버다.
+// 응답 data: { planId, amount, donePercent, projectedRefund, refunded, settledAt, createdAt, balance }
+//   projectedRefund = "지금 종결하면 받을 금액"(미정산) 또는 실제 환급액(정산 완료).
+// 오류 코드: DEPOSIT_NOT_ALLOWED(409, 고정 아님) / DEPOSIT_ALREADY_EXISTS(409) /
+//   DEPOSIT_AMOUNT_INVALID(400) / POINTS_INSUFFICIENT(400) / DEPOSIT_NOT_FOUND(404, 조회)
+export const fetchPlanDeposit = (planId) => requestJson(`/plans/${planId}/deposit`, null, 'GET');
+export const createPlanDeposit = (planId, amount) => requestJson(`/plans/${planId}/deposit`, { amount }, 'POST');
+
 // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
 // 서버 소유(plan.tasks 기준)라 프론트는 표시만 한다. 응답 data: { planId, startDate, endDate,
 // totalDone, totalTotal, weeks: [{ index, startDate, endDate, done, total, rate }] }

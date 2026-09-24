@@ -14,8 +14,17 @@ public final class PointAccounts {
     public static final String ISSUANCE = "system:issuance";
     /** 기초잔액의 상대 계정 — V12 백필 전용(원장 이전 세계의 몫). */
     public static final String OPENING = "system:opening";
+    /**
+     * 소각 계정(v0.32.0) — 목표 예치에서 달성하지 못한 몫이 여기로 온다.
+     *
+     * <p>발행 계정으로 되돌리지 않는 이유: {@link #ISSUANCE}의 잔액은 "지금까지 발행한 총량"이라는
+     * 한 가지 뜻이어야 한다. 소각을 거기로 보내면 그 숫자가 발행량도 소각량도 아닌 순발행량이 되어,
+     * 둘을 따로 볼 수 없게 된다. 계정을 나누면 둘 다 한 줄로 읽힌다.
+     */
+    public static final String BURN = "system:burn";
 
     private static final String ESCROW_CHALLENGE_PREFIX = "escrow:challenge:";
+    private static final String ESCROW_PLAN_PREFIX = "escrow:plan:";
 
     private PointAccounts() {
     }
@@ -26,6 +35,14 @@ public final class PointAccounts {
      */
     public static String escrowOfChallenge(long challengeId) {
         return ESCROW_CHALLENGE_PREFIX + challengeId;
+    }
+
+    /**
+     * 계획별 목표 예치 계정(v0.32.0) — 챌린지 예치와 같은 이유로 계획마다 나눈다. 정산이 끝나면
+     * 환급과 소각이 모두 여기서 빠져나가므로 이 계정은 정확히 0으로 닫힌다.
+     */
+    public static String escrowOfPlan(long planId) {
+        return ESCROW_PLAN_PREFIX + planId;
     }
 
     /** 시스템·예치 계정 여부 — 거래 내역은 소유자 계정만 보여준다. */

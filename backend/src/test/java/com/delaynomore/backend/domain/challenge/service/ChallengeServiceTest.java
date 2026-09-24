@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
 import com.delaynomore.backend.domain.challenge.dto.JoinResponse;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
@@ -28,11 +29,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 // 열린다. conditionKey는 문자열 매칭이라 기간과 어긋나도 참가 자격 판정에는 영향이 없다.
 class ChallengeServiceTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final int INITIAL_BALANCE = 1000;
     private static final String HOST = "guest-host-0001";
     private static final String CONDITION = "자격증:14";
 
-    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(new InMemoryPointLedgerRepository());
+    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(points.wallets());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
 

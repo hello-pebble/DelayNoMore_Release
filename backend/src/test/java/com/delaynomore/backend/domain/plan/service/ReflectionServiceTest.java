@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
@@ -30,6 +31,8 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 // "오늘"은 서비스와 같은 기준(Asia/Seoul)으로 만들어, UTC 컨테이너에서도 날짜가 어긋나지 않는다.
 class ReflectionServiceTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final long MISSING_ID = 999L;
     private static final String TODAY = LocalDate.now(ZoneId.of("Asia/Seoul")).toString();
 
@@ -42,7 +45,8 @@ class ReflectionServiceTest {
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
     // 오늘 5개 중 3개 완료된 계획을 보관한다(status 지정 가능 — CONFIRMED 회고 허용 검증용).
