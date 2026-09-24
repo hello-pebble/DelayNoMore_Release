@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
 import com.delaynomore.backend.domain.plan.entity.Plan;
@@ -36,7 +37,7 @@ class PlanServiceConcurrencyTest {
             new InMemoryReflectionRepository(),
             new com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository(),
             new AuditEventService(new InMemoryAuditEventRepository()),
-                new ChallengeService(new InMemoryChallengeRepository(), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

@@ -1056,6 +1056,68 @@
       실행 후 `crontab -l`에 `BACKUP_UPLOAD_CMD='...'`가 포함되고, 항목은 여전히 1줄이다(멱등)
 - [ ] **미설정이면 종전과 동일** — `BACKUP_UPLOAD_CMD` 없이 `./deploy/db-backup.sh` → 덤프만 생성
 
+## F-41. 포인트 원장 + 거래 내역 (v0.31.0)
+
+> 포인트의 진실이 잔액 한 칸에서 **복식부기 원장**으로 바뀌었다. 한 번의 이동은 두 줄(음수·양수)로
+> 남고 합이 0이며, 잔액은 파생 캐시다. 점검의 핵심은 **어떤 경로를 돌든 불변식 2종이 성립하는가**다:
+> ① 전체 원장 합계 = 0 ② 계정별 원장 합계 = 지갑 잔액.
+> 사전 조건: (postgres 프로필) V12 마이그레이션 적용. 키 없이 확인 가능하다.
+
+- [ ] **거래 내역 UI** — 챌린지 탭 헤더의 잔액 칩(`1,000P`)을 누르면 내역이 펼쳐지고,
+      신규 사용자라면 "신규 지급 +1,000P / 1,000P" 한 줄이 보인다
+- [ ] **참가하면 줄이 하나 는다** — 챌린지에 참가한 뒤 다시 펼치면 "챌린지 참가비 −100P"가
+      맨 위에 오고, 그 줄의 오른쪽 잔액이 900P다(거래 직후 잔액)
+- [ ] **정산 후** — 정산이 끝난 챌린지의 참가자는 "챌린지 배당 +N P"(완주) 또는
+      "챌린지 환불 +100P"(전원 환불)가 보인다. 미완주자는 새 줄이 없다(돈이 움직이지 않았으므로)
+- [ ] 서버 확인(curl) — 응답에 잔액과 원장 합계가 **둘 다** 실린다:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-ledger-0001
+  curl -s $API/challenges -H "X-Guest-Id: $G" > /dev/null        # 최초 조회 = 지갑 생성
+  curl -s $API/points/ledger -H "X-Guest-Id: $G" | python3 -m json.tool
+  # 기대: balance == ledgerSum == 1000, entries[0].kind == "SIGNUP_BONUS"
+  ```
+
+- [ ] **반복 조회가 포인트를 발행하지 않는다** — 목록을 10번 조회해도 내역은 "신규 지급" 한 줄:
+
+  ```bash
+  for i in $(seq 1 10); do curl -s $API/challenges -H "X-Guest-Id: $G" > /dev/null; done
+  curl -s $API/points/ledger -H "X-Guest-Id: $G" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['data']['entries']))"
+  # 기대: 1  (지갑 지연 생성 경로에서 발행이 새면 여기서 10이 나온다)
+  ```
+
+- [ ] **남의 원장은 볼 수 없다** — `X-Guest-Id`를 바꾸면 그 사람의 내역만 나온다
+      (계정을 인자로 받는 파라미터가 없다 — 시스템·예치 계정도 조회 불가)
+- [ ] **(postgres 프로필) 불변식 2종** — 운영 점검 쿼리와 같은 것이다([OPERATIONS.md 2-6장](OPERATIONS.md)):
+
+  ```sql
+  -- ① 전체 합계 = 0
+  SELECT sum(amount) AS must_be_zero FROM point_ledger;
+  -- ② 어긋난 계정 (0행이면 정상)
+  SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
+    FROM point_wallets w
+    LEFT JOIN (SELECT account, sum(amount) FROM point_ledger GROUP BY account) l ON l.account = w.owner
+   WHERE w.balance <> COALESCE(l.sum, 0);
+  ```
+
+- [ ] **(postgres 프로필) 계정 구조** — 발행·예치 계정이 기대대로 쌓인다:
+
+  ```sql
+  SELECT account, sum(amount) FROM point_ledger GROUP BY account ORDER BY account;
+  -- 기대: system:issuance 는 음수(= 총 발행량), escrow:challenge:<id> 는 진행 중이면 예치금,
+  --       정산 후 남은 값은 소멸분(정수 나눗셈 나머지), 나머지 계정은 각자의 지갑 잔액과 일치
+  ```
+
+- [ ] **(postgres 프로필) V12 적용 확인**:
+
+  ```bash
+  # Supabase SQL Editor: \d point_ledger
+  # 기대: UNIQUE (tx_key, account) 인덱스 존재, 기존 지갑마다 OPENING_BALANCE 두 줄
+  ```
+
+- [ ] **게스트 흡수 후 내역이 이어진다** — 게스트로 거래한 뒤 Google 로그인하면, 로그인 후
+      거래 내역에 **게스트 시절 줄까지** 그대로 보이고 잔액과 합계가 여전히 같다
+
 ---
 
 ## 참고

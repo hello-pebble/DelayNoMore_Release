@@ -9,6 +9,7 @@ import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.support.ChallengeCondition;
 import com.delaynomore.backend.domain.plan.entity.Plan;
+import com.delaynomore.backend.domain.points.entity.PointTxKind;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
@@ -49,6 +50,10 @@ public class ChallengeService {
     // 이미 있어, PlanService를 물면 순환이 된다. 여기서 필요한 건 조회뿐이라 저장소로 충분하다.
     private final PlanRepository planRepository;
 
+    // @Transactional인 이유는 읽기 때문이 아니라 쓰기 때문이다: 지갑이 없는 사람의 첫 조회가
+    // 지갑을 만들고 발행을 기표한다(balanceOf). 그 둘은 한 단위여야 한다 — 갈라지면 "지갑은
+    // 생겼는데 원장에 없는" 잔액이 만들어지고, 원장 검증이 영구히 어긋난다.
+    @Transactional
     public ChallengeListResponse list(String viewer) {
         Map<Long, ChallengeParticipant> mine = challengeRepository.findMyParticipations(viewer);
         List<ChallengeResponse> challenges = challengeRepository.findAll().stream()
@@ -137,7 +142,8 @@ public class ChallengeService {
         if (winners.isEmpty()) {
             // 완주자가 없으면 풀을 삼키지 않고 전원 환불한다 — 데모 포인트라도 "다 잃는 판"은
             // 참가 유인을 꺾는다.
-            participants.forEach(p -> challengeRepository.recordPayout(challenge.id(), p.owner(), challenge.entryFee()));
+            participants.forEach(p -> challengeRepository.recordPayout(
+                    challenge.id(), p.owner(), challenge.entryFee(), PointTxKind.CHALLENGE_REFUND));
             return;
         }
         int pool = challenge.entryFee() * participants.size();
@@ -145,9 +151,13 @@ public class ChallengeService {
         // ponytail: 정수 나눗셈 나머지(pool % winners, 최대 승리자수-1 포인트)는 소멸한다.
         // 분배 규칙의 소유권은 서버고 데모 비금전 포인트라 수용 — 아까워지면 "가장 먼저 참가한
         // 완주자에게 몰아주기"로 바꾼다.
+        // v0.31.0부터 이 소멸분은 추측이 아니라 관측 가능한 값이다: 참가비가 들어가고 배당이
+        // 나가는 계정이 같은 escrow:challenge:<id>라, 정산이 끝난 뒤 그 계정에 남은 잔액이 곧
+        // 소멸분이다(docs/OPERATIONS.md의 원장 점검 쿼리).
         for (ChallengeParticipant participant : participants) {
             boolean won = winners.stream().anyMatch(w -> w.owner().equals(participant.owner()));
-            challengeRepository.recordPayout(challenge.id(), participant.owner(), won ? share : 0);
+            challengeRepository.recordPayout(challenge.id(), participant.owner(), won ? share : 0,
+                    PointTxKind.CHALLENGE_PAYOUT);
         }
     }
 
@@ -158,7 +168,8 @@ public class ChallengeService {
             return;
         }
         challengeRepository.findParticipants(challenge.id())
-                .forEach(p -> challengeRepository.recordPayout(challenge.id(), p.owner(), challenge.entryFee()));
+                .forEach(p -> challengeRepository.recordPayout(
+                        challenge.id(), p.owner(), challenge.entryFee(), PointTxKind.CHALLENGE_REFUND));
     }
 
     /**

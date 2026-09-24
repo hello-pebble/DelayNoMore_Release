@@ -2,6 +2,7 @@ package com.delaynomore.backend.domain.challenge.repository;
 
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
+import com.delaynomore.backend.domain.points.entity.PointTxKind;
 
 import java.util.List;
 import java.util.Map;
@@ -15,6 +16,11 @@ import java.util.Optional;
 // 함께 성립시켜야 한다. 지갑을 별도 저장소로 쪼개면 원자 구간이 둘로 갈라져, 자리를 못 얻은 참가자의
 // 포인트만 사라지는 상태가 만들어질 수 있다. 그래서 join은 저장소 하나가 통째로 책임진다.
 // 정산의 지급(recordPayout)도 같은 이유로 여기 있다.
+//
+// [원장 기표도 같은 구간 안에서 한다 (v0.31.0)] 잔액이 바뀌는 곳에서는 반드시 원장에도 두 줄이
+// 남는다 — 지급(지갑 지연 생성)·참가비 차감·정산 지급 셋뿐이고, 셋 다 아래 메서드들 안에 있다.
+// 기표를 서비스 층으로 올리지 않은 이유가 이것이다: 잔액 변경과 기표가 다른 구간으로 갈라지면
+// "잔액은 줄었는데 원장에는 없는" 상태가 만들어질 수 있고, 그 순간 원장은 진실이 아니게 된다.
 //
 // [원자성 계약] join은 "검사와 변경 사이에 다른 참가 요청이 끼어들 수 없는 구간" 안에서 실행된다.
 //   - 인메모리: ConcurrentHashMap.computeIfPresent의 키 단위 원자 구간
@@ -62,10 +68,14 @@ public interface ChallengeRepository {
     // 마지막 참가로 시작된 챌린지를 환불로 마감하면 "시작됐는데 환불"이 된다(TOCTOU).
     boolean claimSettlement(long challengeId, String settledAt, boolean requireStarted);
 
-    // 정산 지급 — 지갑 잔액 증가 + 참가 행에 payout 기록. claimSettlement가 true를 돌려준
-    // 정산 트랜잭션 안에서만 호출한다(JDBC는 중간 실패 시 claim째 롤백, 인메모리는 실패할 수
-    // 없는 연산만으로 구성 — "검사를 변경 앞에" 규칙의 정산판).
-    void recordPayout(long challengeId, String owner, int amount);
+    // 정산 지급 — 지갑 잔액 증가 + 참가 행에 payout 기록 + 원장 기표. claimSettlement가 true를
+    // 돌려준 정산 트랜잭션 안에서만 호출한다(JDBC는 중간 실패 시 claim째 롤백, 인메모리는 실패할
+    // 수 없는 연산만으로 구성 — "검사를 변경 앞에" 규칙의 정산판).
+    //
+    // amount가 0이면(미완주자) 참가 행의 payout만 0으로 기록하고 원장은 건드리지 않는다 —
+    // 움직이지 않은 돈은 기표하지 않는다. kind는 호출자(정산 규칙)가 안다: 완주 배당이냐
+    // 환불이냐는 지급액만 봐서는 구분할 수 없기 때문이다.
+    void recordPayout(long challengeId, String owner, int amount, PointTxKind kind);
 
     // === 자동 생성 (v0.23.0) ===
     // 아래 둘은 계획 고정 트랜잭션 안에서 호출되므로 예외를 던지지 않는다 — 챌린지가 안 만들어지는

@@ -1,6 +1,6 @@
 # 운영 가이드 (Operations)
 
-이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.30.0.
+이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.31.0.
 배포 절차 자체는 [DEPLOY.md](DEPLOY.md) · [DEPLOY_OCI.md](DEPLOY_OCI.md)가 소유하고,
 이 문서는 **배포 이후의 운영** — 감시·백업·비용·복구·루틴 — 을 다룬다.
 
@@ -10,6 +10,7 @@
 | :--- | :--- | :--- |
 | **배포** | GitHub Actions → ghcr.io 이미지 빌드(`image.yml`, `latest`·sha·semver 태그), VM은 `deploy/oci-pull.sh`로 pull만, `--restart unless-stopped` | 스테이징 환경, 롤백 절차 문서화(→ 4장) |
 | **인프라** | OCI Always Free Ampere VM + Caddy(Let's Encrypt 자동 발급·갱신, `caddy_data` 볼륨 보존) + DuckDNS 도메인 | VM 1대 = 단일 장애점, VM 유실 시 재구축 런북(→ 4장), DuckDNS 갱신 관리 |
+| **포인트 무결성** | 복식부기 원장(`point_ledger`, v0.31.0) — 이동마다 두 줄·합 0, 멱등 키 UNIQUE. 잔액은 파생 캐시이고 불변식 2종으로 검증(2-6장) | 원장 검증 자동화(현재 수동 쿼리), 소멸분(나머지·병합 충돌 참가비) 회수 규칙 |
 | **데이터** | Supabase PostgreSQL(`postgres` 프로필, Flyway 스키마) + `deploy/db-backup.sh`·`db-restore.sh`(pg_dump), 일일 백업 cron(`setup-backup-cron.sh`, 14일 보존), 오프사이트 복사 훅(`BACKUP_UPLOAD_CMD`) | 오프사이트 대상 선택·설정은 운영자 몫(훅만 제공), 복원 리허설(분기 1회 수동) |
 | **관측** | `ai.usage` 토큰 사용량 로그([AGENT.md 6장](AGENT.md#6-관측--토큰-사용량-로그-v0152)), `ai.ratelimit` 차단 로그, `/api/v1/ai/health`(키·상한 소진 사유 포함) | 외부 업타임 감시·알림, 에러 알림, 로그 보존·로테이션 (Spring Actuator 미포함) |
 | **비용 방어** | 계획 생성 게스트당 하루 5회 제한(v0.20.0), LLM 일일 상한 2층(소유자별·서버 전역, v0.30.0) | 상한 소진 시 알림 없음(로그 `ai.ratelimit blocked`·`/ai/health` 사유로만 확인), 상한값 튜닝은 실사용 관측 후 |
@@ -118,13 +119,52 @@ Google 로그인으로 이메일을 수집·저장하고 있다(v0.22.0). 실서
 
 ### 2-5. 롤백 런북 (→ 4장)
 
+### 2-6. 포인트 원장 점검 (v0.31.0 적용)
+
+포인트는 이제 `point_ledger`에 **복식부기**로 남는다 — 한 번의 이동이 두 줄(나가는 계정 음수·
+들어오는 계정 양수)이고, 잔액은 그 파생 캐시다. 그래서 아래 두 쿼리가 곧 무결성 검증이다
+(설계 근거는 [CONCURRENCY.md 10장](CONCURRENCY.md)):
+
+```sql
+-- 불변식 1: 전체 합계는 언제나 0 (포인트가 무에서 생기거나 사라지지 않았다)
+SELECT sum(amount) AS must_be_zero FROM point_ledger;
+
+-- 불변식 2: 계정별 원장 합계 = 지갑 잔액. 0행이면 정상.
+SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
+  FROM point_wallets w
+  LEFT JOIN (SELECT account, sum(amount) FROM point_ledger GROUP BY account) l ON l.account = w.owner
+ WHERE w.balance <> COALESCE(l.sum, 0);
+```
+
+계정 구조를 읽는 법:
+
+| 계정 | 잔액의 의미 |
+| :--- | :--- |
+| `system:issuance` | 음수. 절댓값 = 지금까지 신규 지급한 포인트 총 발행량 |
+| `system:opening` | 음수. V12 마이그레이션 시점의 기초잔액 합계(원장 이전 세계의 몫) |
+| `escrow:challenge:<id>` | 진행 중이면 예치된 참가비, **정산 후 남은 값은 소멸분**(정수 나눗셈 나머지 + 게스트 병합 충돌로 버려진 참가비) |
+| 그 외 | 사용자·게스트 계정 — 지갑 잔액과 같아야 한다 |
+
+```sql
+-- 정산이 끝났는데도 예치 계정에 남아 있는 포인트(소멸분) 상위 목록
+SELECT l.account, sum(l.amount) AS residue
+  FROM point_ledger l
+  JOIN challenges c ON l.account = 'escrow:challenge:' || c.id
+ WHERE c.settled_at IS NOT NULL
+ GROUP BY l.account HAVING sum(l.amount) <> 0 ORDER BY residue DESC LIMIT 20;
+```
+
+> 잔액과 원장이 어긋나는 행이 나오면 **원장이 옳다고 보고** 잔액을 맞추는 것이 규칙이다
+> (원장은 append-only, 잔액은 캐시). 다만 그 전에 어긋난 경위를 먼저 찾는다 — 어긋남 자체가
+> 지갑을 원자 구간 밖에서 건드린 코드가 있다는 신호다.
+
 ## 3. 안정화 단계 (P1)
 
 - **관측 강화** — Spring Actuator(health/metrics) 도입 검토, `ai.usage` 로그를 주기 집계해
   모델별 비용 리포트, docker 로그 로테이션(`--log-opt max-size=...`).
-- **정산·포인트 무결성 점검** — 주 1회 점검 쿼리: 미정산·만기 초과 챌린지 수, 포인트
-  원장 합계 검증(참가비 차감 총액 = 분배 + 환불 + 미정산 풀). lazy 정산이라 "조회가 없으면
-  정산도 없다"는 특성을 감시로 보완한다(2-1의 겸용 트릭).
+- **정산·포인트 무결성 점검** — 원장 불변식 2종은 v0.31.0에서 쿼리 한 쌍으로 확정됐다(2-6장).
+  남은 것은 **자동화**(주기 실행 + 어긋남 시 알림)와 미정산·만기 초과 챌린지 수 감시다.
+  lazy 정산이라 "조회가 없으면 정산도 없다"는 특성은 계속 감시로 보완한다(2-1의 겸용 트릭).
 - **운영자 도구** — 문의 대응용 최소 조회 수단(게스트 ID/이메일로 계획·포인트·챌린지 조회).
   게스트 ID 유실 문의는 현재 구조상 복구 불가 — 안내 문구를 미리 정해 둔다.
 - **엣지 방어** — Caddy 요청 속도·크기 제한, OS 자동 보안 패치(`unattended-upgrades`).
@@ -170,7 +210,7 @@ EVAL 하네스로 실측 후가 원칙([EVAL.md](EVAL.md)).
 | 주기 | 할 일 |
 | :--- | :--- |
 | 상시(자동) | 업타임 감시·알림(정산 트리거 겸용), 일일 DB 백업 cron(+오프사이트 복사), LLM 일일 상한, OpenRouter 비용 알림 |
-| 주 1회 | 정산·포인트 원장 점검, `ai.usage` 비용 집계 + `ai.ratelimit blocked` 확인, 슬랙 발송 실패 확인(`docker logs`에서 `slack dispatch failed`·`slack postMessage failed`), 디스크·로그·Supabase 상태 확인 |
+| 주 1회 | 정산 확인 + **포인트 원장 불변식 2종 점검(2-6장)**, `ai.usage` 비용 집계 + `ai.ratelimit blocked` 확인, 슬랙 발송 실패 확인(`docker logs`에서 `slack dispatch failed`·`slack postMessage failed`), 디스크·로그·Supabase 상태 확인 |
 | 릴리스마다 | (기존 관례) QA 체크리스트 + README 변경 표, 배포 후 health 확인, 스키마 변경 유무(롤백 가능 여부) 기록 |
 | 분기 1회 | 복원 리허설, 키 로테이션, OS 패치 상태 점검 |
 
