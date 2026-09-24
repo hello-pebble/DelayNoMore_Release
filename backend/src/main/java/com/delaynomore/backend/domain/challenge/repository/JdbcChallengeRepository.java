@@ -2,6 +2,10 @@ package com.delaynomore.backend.domain.challenge.repository;
 
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
+import com.delaynomore.backend.domain.points.entity.PointAccounts;
+import com.delaynomore.backend.domain.points.entity.PointTransfer;
+import com.delaynomore.backend.domain.points.entity.PointTxKind;
+import com.delaynomore.backend.domain.points.repository.PointLedgerRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.springframework.context.annotation.Profile;
@@ -12,6 +16,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -54,11 +59,15 @@ public class JdbcChallengeRepository implements ChallengeRepository {
     static final int INITIAL_BALANCE = 1000;
 
     private final NamedParameterJdbcTemplate jdbc;
+    // 원장은 별도 저장소지만 기표는 이 클래스의 트랜잭션 안에서 일어난다 — 잔액 변경과 기표가
+    // 같은 원자 단위여야 "잔액만 바뀌고 원장이 빈" 상태가 안 생긴다(인터페이스 주석 참고).
+    private final PointLedgerRepository ledger;
     private final RowMapper<Challenge> challengeMapper = this::mapChallenge;
     private final RowMapper<ChallengeParticipant> participantMapper = this::mapParticipant;
 
-    public JdbcChallengeRepository(NamedParameterJdbcTemplate jdbc) {
+    public JdbcChallengeRepository(NamedParameterJdbcTemplate jdbc, PointLedgerRepository ledger) {
         this.jdbc = jdbc;
+        this.ledger = ledger;
     }
 
     @Override
@@ -158,6 +167,11 @@ public class JdbcChallengeRepository implements ChallengeRepository {
         if (debited == 0) {
             throw new BusinessException(ErrorCode.POINTS_INSUFFICIENT);
         }
+        // 차감과 같은 트랜잭션에서 기표한다. 자리 예약(아래 3단계)이 실패하면 차감과 함께
+        // 이 두 줄도 롤백된다 — 참가하지 못한 사람의 원장에 참가비가 남지 않는다.
+        ledger.post(new PointTransfer("join:" + challengeId + ":" + owner,
+                owner, PointAccounts.escrowOfChallenge(challengeId), current.entryFee(),
+                PointTxKind.CHALLENGE_ENTRY, "challenge", String.valueOf(challengeId), joinedAt));
 
         // 3) 자리 예약 — 이 한 문장이 이 기능의 핵심이다. 정원 검사에 더해
         //    - settled_at IS NULL: 미달인 채 환불 마감된 챌린지는 여전히 미달이라, 이 가드가
@@ -199,10 +213,19 @@ public class JdbcChallengeRepository implements ChallengeRepository {
 
     // 정산 지급 — claim을 딴 트랜잭션 안에서만 호출된다. 도중 실패하면 claim째 롤백(부분 지급 없음).
     @Override
-    public void recordPayout(long challengeId, String owner, int amount) {
+    public void recordPayout(long challengeId, String owner, int amount, PointTxKind kind) {
         ensureWallet(owner);
-        jdbc.update("UPDATE point_wallets SET balance = balance + :amount WHERE owner = :owner",
-                new MapSqlParameterSource().addValue("owner", owner).addValue("amount", amount));
+        if (amount > 0) {
+            jdbc.update("UPDATE point_wallets SET balance = balance + :amount WHERE owner = :owner",
+                    new MapSqlParameterSource().addValue("owner", owner).addValue("amount", amount));
+            // 예치 계정에서 나간다 — 참가비가 들어간 곳과 같은 계정이라, 정산 후 그 계정에 남는
+            // 잔액이 곧 정수 나눗셈으로 소멸한 나머지다.
+            ledger.post(new PointTransfer("payout:" + challengeId + ":" + owner,
+                    PointAccounts.escrowOfChallenge(challengeId), owner, amount,
+                    kind, "challenge", String.valueOf(challengeId), Instant.now().toString()));
+        }
+        // 미완주자(amount=0)도 "정산됐고 0을 받았다"는 사실은 남긴다 — 돈이 움직이지 않았을
+        // 뿐이라 원장에는 쓰지 않는다.
         jdbc.update("""
                 UPDATE challenge_participants SET payout = :amount
                  WHERE challenge_id = :challengeId AND owner = :owner
@@ -248,11 +271,19 @@ public class JdbcChallengeRepository implements ChallengeRepository {
                 """, params(challenge));
     }
 
+    // 지갑을 실제로 만든 호출만 지급을 기표한다 — ON CONFLICT DO NOTHING이 0행을 돌려주면
+    // 이미 있던 지갑이므로 발행도 없다. 목록 조회마다 불리는 경로라(balanceOf) 이 구분이 없으면
+    // 조회 횟수만큼 발행이 찍힌다.
     private void ensureWallet(String owner) {
-        jdbc.update("""
+        int created = jdbc.update("""
                 INSERT INTO point_wallets (owner, balance) VALUES (:owner, :initial)
                 ON CONFLICT (owner) DO NOTHING
                 """, new MapSqlParameterSource().addValue("owner", owner).addValue("initial", INITIAL_BALANCE));
+        if (created == 1) {
+            ledger.post(new PointTransfer("signup:" + owner, PointAccounts.ISSUANCE, owner,
+                    INITIAL_BALANCE, PointTxKind.SIGNUP_BONUS, null, null,
+                    Instant.now().toString()));
+        }
     }
 
     private Challenge mapChallenge(ResultSet rs, int rowNum) throws SQLException {

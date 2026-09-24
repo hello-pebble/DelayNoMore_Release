@@ -190,6 +190,13 @@ export const fetchChallengeParticipants = (id) => requestJson(`/challenges/${id}
 export const fetchChallenges = () => requestJson('/challenges', null, 'GET');
 export const joinChallenge = (id) => requestJson(`/challenges/${id}/join`, null);
 
+// 포인트 거래 내역(v0.31.0) — 잔액이 어떻게 만들어졌는지의 기록. 원장이 진실이고 잔액은 그
+// 파생값이라, 응답은 둘(balance·ledgerSum)을 함께 내려준다: 어긋나면 화면에서 바로 드러난다.
+// 사유 라벨(label)도 서버가 내려준다 — 프론트에 사유 사전을 두지 않는다.
+// 응답 data: { balance, ledgerSum, entries: [{ id, kind, label, amount, balanceAfter,
+//              refType, refId, createdAt }] } — entries는 최신순, 서버가 정한 최근 N건.
+export const fetchPointLedger = () => requestJson('/points/ledger', null, 'GET');
+
 // 주간 완료율 요약 — 계획을 startDate 기준 7일 버킷("N주차")으로 묶은 주별 완료율. 완료 개수 계산은
 // 서버 소유(plan.tasks 기준)라 프론트는 표시만 한다. 응답 data: { planId, startDate, endDate,
 // totalDone, totalTotal, weeks: [{ index, startDate, endDate, done, total, rate }] }

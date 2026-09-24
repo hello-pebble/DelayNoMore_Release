@@ -621,6 +621,44 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 
 ---
 
+## 포인트 (`/api/v1/points`) — v0.31.0, 읽기 전용
+
+포인트의 진실은 `point_wallets.balance`가 아니라 **복식부기 원장**(`point_ledger`)이다. 한 번의
+이동은 두 줄(나가는 계정 음수·들어오는 계정 양수)로 남고 합이 0이며, 잔액은 그 파생 캐시다
+(설계 근거는 [CONCURRENCY.md 10장](CONCURRENCY.md), 운영 점검은 [OPERATIONS.md 2-6장](OPERATIONS.md)).
+
+포인트를 **움직이는 엔드포인트는 없다.** 기표는 전부 잔액을 바꾸는 저장소의 원자 구간 안에서만
+일어난다(지갑 최초 생성·챌린지 참가·정산) — 그래야 "잔액은 줄었는데 원장에는 없는" 상태가
+생기지 않는다. 이 API는 그 결과를 읽기만 한다.
+
+### P-1. GET /points/ledger — 내 거래 내역 (잔액 + 최근 기록)
+
+조회 대상은 언제나 `@Owner`가 해석한 내 계정 하나다(계정을 인자로 받지 않는다 — 남의 원장도,
+시스템·예치 계정도 노출하지 않는다). `entries`는 최신순, 서버가 정한 최근 50건.
+
+```json
+// 응답 data
+{ "balance": 900,
+  "ledgerSum": 900,        // 원장 합계. 정상이면 balance와 같다 — 일부러 둘 다 내려준다
+  "entries": [
+    { "id": 7, "kind": "CHALLENGE_ENTRY", "label": "챌린지 참가비", "amount": -100,
+      "balanceAfter": 900, "refType": "challenge", "refId": "1",
+      "createdAt": "2026-09-24T07:08:55.175Z" },
+    { "id": 2, "kind": "SIGNUP_BONUS", "label": "신규 지급", "amount": 1000,
+      "balanceAfter": 1000, "refType": null, "refId": null,
+      "createdAt": "2026-09-24T07:08:32.506Z" }
+  ] }
+```
+
+- `kind` — `OPENING_BALANCE`(V12 기초잔액) / `SIGNUP_BONUS` / `CHALLENGE_ENTRY` /
+  `CHALLENGE_PAYOUT` / `CHALLENGE_REFUND`. `label`은 그 한국어 표기로, **표기의 소유권도 서버**에
+  있다(프론트에 사유 사전을 두지 않는다).
+- `balanceAfter` — 그 거래 직후의 잔액. 원장이 진실이므로 현재 잔액에서 최신 거래부터 거꾸로
+  되돌려 정확히 복원한 값이다(추정이 아니다).
+- `ledgerSum`이 `balance`와 다르면 그 자체가 사고 신호다 — 프론트는 숨기지 않고 표시한다.
+
+---
+
 ## 오늘 Dashboard (`/api/v1/dashboard`)
 
 ### GET /dashboard/today — 오늘 화면 읽기 모델 (v0.19.0)

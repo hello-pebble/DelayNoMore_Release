@@ -5,6 +5,7 @@ import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -31,7 +32,7 @@ class ChallengeServiceTest {
     private static final String HOST = "guest-host-0001";
     private static final String CONDITION = "자격증:14";
 
-    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository();
+    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(new InMemoryPointLedgerRepository());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
 

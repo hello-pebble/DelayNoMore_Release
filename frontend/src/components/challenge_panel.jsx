@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Users, Coins, ChevronDown, ChevronUp } from 'lucide-react';
-import { fetchChallenges, joinChallenge, fetchChallengeParticipants } from '../db_service';
+import { fetchChallenges, joinChallenge, fetchChallengeParticipants, fetchPointLedger } from '../db_service';
 
 // Goal Challenge 패널 — 정원이 한정된 목표 챌린지의 목록·참가(v0.21.0).
 // 개설 폼은 없다(v0.23.0): 챌린지는 사용자가 만드는 것이 아니라, 비슷한 조건(기간 + 목적)의
@@ -27,6 +27,12 @@ const STATUS_BADGE = {
   CLOSED: { label: '종료', color: 'var(--text-muted)' }
 };
 
+// 거래 내역의 사유 라벨은 서버가 내려준다(entry.label) — 여기에 사전을 두지 않는다.
+// 프론트가 하는 일은 부호에 따른 색과 정렬된 줄 그리기뿐이다.
+function amountText(amount) {
+  return `${amount > 0 ? '+' : ''}${amount.toLocaleString()}P`;
+}
+
 // 정산 결과 문구 — myPayout은 서버 정산의 결과값이다(null = 미정산).
 function payoutLabel(c) {
   if (c.myPayout == null) return null;
@@ -44,6 +50,21 @@ export default function ChallengePanel() {
   // 않기 위해 별도 엔드포인트), 접었다 펴면 다시 읽는다(완료율은 계속 변하는 값이라 캐시 무가치).
   const [boardId, setBoardId] = useState(null);
   const [board, setBoard] = useState([]);
+  // 거래 내역(v0.31.0) — 잔액 칩을 누르면 펼친다. 펼칠 때만 조회한다(목록 응답을 무겁게 하지
+  // 않으려는 리더보드와 같은 선택). null = 접힘.
+  const [ledger, setLedger] = useState(null);
+
+  const toggleLedger = async () => {
+    if (ledger) {
+      setLedger(null);
+      return;
+    }
+    try {
+      setLedger(await fetchPointLedger());
+    } catch (err) {
+      setNotice(err.message);
+    }
+  };
 
   const toggleBoard = async (id) => {
     if (boardId === id) {
@@ -101,13 +122,62 @@ export default function ChallengePanel() {
         padding: '14px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)'
       }}>
         <div style={{ fontSize: '16px', fontWeight: 700 }}>챌린지</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', fontWeight: 600 }}>
+        {/* 잔액 칩 = 거래 내역 입구. 잔액이 "왜 그 값인지"를 볼 수 있는 자리가 여기 말고 없다. */}
+        <button
+          type="button"
+          onClick={toggleLedger}
+          style={{
+            display: 'flex', alignItems: 'center', gap: '6px', fontSize: '14px', fontWeight: 600,
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'inherit'
+          }}
+        >
           <Coins size={16} />
           {balance == null ? '—' : `${balance.toLocaleString()}P`}
-        </div>
+          {ledger ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px 24px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {ledger && (
+          <div style={{
+            padding: '12px', background: 'var(--bg-card)', border: '1px solid var(--border)',
+            borderRadius: '10px', display: 'flex', flexDirection: 'column', gap: '8px'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <span style={{ fontSize: '13px', fontWeight: 600 }}>포인트 거래 내역</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                최근 {ledger.entries.length}건
+              </span>
+            </div>
+            {/* 잔액과 원장 합계가 어긋나면 숨기지 않고 드러낸다 — 그러라고 만든 원장이다. */}
+            {ledger.balance !== ledger.ledgerSum && (
+              <div style={{ fontSize: '12px', color: 'var(--danger)' }}>
+                잔액({ledger.balance.toLocaleString()}P)과 거래 내역 합계({ledger.ledgerSum.toLocaleString()}P)가
+                다릅니다. 관리자에게 알려주세요.
+              </div>
+            )}
+            {ledger.entries.length === 0 && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>아직 거래가 없어요.</div>
+            )}
+            {ledger.entries.map((entry) => (
+              <div key={entry.id} style={{
+                display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', fontSize: '13px'
+              }}>
+                <span style={{ color: 'var(--text-muted)', minWidth: '84px' }}>
+                  {entry.createdAt.slice(0, 10)}
+                </span>
+                <span style={{ flex: 1 }}>{entry.label}</span>
+                <span style={{ fontWeight: 600, color: entry.amount > 0 ? 'var(--success)' : 'var(--text-main)' }}>
+                  {amountText(entry.amount)}
+                </span>
+                <span style={{ color: 'var(--text-muted)', minWidth: '64px', textAlign: 'right' }}>
+                  {entry.balanceAfter.toLocaleString()}P
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {notice && (
           <div style={{
             padding: '10px 12px', fontSize: '13px', lineHeight: 1.5, borderRadius: '8px',

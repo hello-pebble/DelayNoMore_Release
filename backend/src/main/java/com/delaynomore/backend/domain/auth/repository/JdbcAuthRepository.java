@@ -103,5 +103,16 @@ public class JdbcAuthRepository implements AuthRepository {
                 ON CONFLICT (owner) DO UPDATE SET balance = point_wallets.balance + EXCLUDED.balance
                 """, params);
         jdbc.update("DELETE FROM point_wallets WHERE owner = :gid", params);
+
+        // 원장도 같은 트랜잭션에서 계정을 갈아끼운다(v0.31.0) — 이동으로 기표하지 않는 이유는
+        // 계획·참가 레코드와 똑같이 **소유가 옮겨간 것**이기 때문이다. 그래야 두 불변식이
+        // 그대로 성립한다: 사용자 계정의 원장 합계 = 합산된 잔액, 전체 합계 = 여전히 0.
+        // 부수 효과로 사용자는 게스트 시절의 거래 내역까지 이어서 본다.
+        //
+        // [병합 충돌로 버려진 참가비는 원장에 남는다] 위 DELETE로 포기된 게스트 참가의 참가비는
+        // 이미 escrow:challenge:<id>에 들어가 있고 참가 레코드가 없으므로 정산되지 않는다.
+        // v0.31.0 전에는 보이지 않던 사실이고, 이제는 그 예치 계정의 잔액으로 드러난다.
+        // 자동 환불을 넣지 않은 것은 기존 규칙("한쪽을 포기한다")을 그대로 둔 판단이다.
+        jdbc.update("UPDATE point_ledger SET account = :uid WHERE account = :gid", params);
     }
 }
