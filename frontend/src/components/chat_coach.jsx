@@ -24,7 +24,8 @@ import {
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
   updateTaskCompletion, fetchTodayDashboard, fetchAgentTools,
-  fetchKnowledgeDocs, createKnowledgeDoc, deleteKnowledgeDoc
+  fetchKnowledgeDocs, createKnowledgeDoc, deleteKnowledgeDoc,
+  fetchPlanDeposit, createPlanDeposit
 } from '../db_service';
 import { todayStr } from '../date_utils';
 import AgentTrace from './agent_trace';
@@ -146,6 +147,14 @@ const exportButtonStyle = {
 
 // agentEnabled: 서버 헬스체크가 알려준 에이전트(도구 호출) 경로 가용 여부. false면 대화가
 // 기존 자유 대화 경로로만 돈다 — 도구를 지원하지 않는 모델로 배포한 경우다.
+// 목표 예치 오류 문구(v0.32.0) — 서버가 내려준 code로만 분기한다(화면은 판정하지 않는다).
+const DEPOSIT_ERROR_LABEL = {
+  DEPOSIT_NOT_ALLOWED: '고정한 계획에만 예치를 걸 수 있어요.',
+  DEPOSIT_ALREADY_EXISTS: '이 계획에는 이미 예치가 걸려 있어요.',
+  DEPOSIT_AMOUNT_INVALID: '예치 금액은 10~500P 사이여야 해요.',
+  POINTS_INSUFFICIENT: '포인트가 부족해요.'
+};
+
 export default function ChatCoach({ agentEnabled = false }) {
   // 지연 초기화 함수 하나로 최초 상태(저장된 계획 복원 또는 첫 질문)를 한 번만 계산한다.
   const [initial] = useState(buildInitialState);
@@ -280,6 +289,42 @@ export default function ChatCoach({ agentEnabled = false }) {
       });
     return () => { cancelled = true; };
   }, [activePlanId]);
+
+  // 목표 예치(v0.32.0) — 고정한 계획에만 걸 수 있고, 종결되면 달성률만큼 돌아온다.
+  // 화면은 판정하지 않는다: 금액 범위·고정 여부·중복은 서버가 판정하고 여기는 err.code로 받는다.
+  // 예치가 없으면 서버가 404(DEPOSIT_NOT_FOUND)를 주므로 그것을 "아직 안 걸었다"로 읽는다.
+  const [deposit, setDeposit] = useState(null);
+  const [depositAmount, setDepositAmount] = useState('100');
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositError, setDepositError] = useState(null);
+
+  useEffect(() => {
+    // 계획이 없을 때의 초기화도 프라미스 경로로 돌린다 — effect 본문에서 동기 setState를 하면
+    // 연쇄 렌더가 생긴다(저장소의 기존 규칙, slack_link.jsx와 같은 형태).
+    let cancelled = false;
+    const load = activePlanId == null ? Promise.resolve(null) : fetchPlanDeposit(activePlanId);
+    load
+      .then((found) => {
+        if (!cancelled) setDeposit(found);
+      })
+      .catch(() => {
+        if (!cancelled) setDeposit(null); // 404 = 아직 예치 없음
+      });
+    return () => { cancelled = true; };
+  }, [activePlanId, activeStatus]);
+
+  const handleCreateDeposit = async () => {
+    if (activePlanId == null) return;
+    setDepositBusy(true);
+    setDepositError(null);
+    try {
+      setDeposit(await createPlanDeposit(activePlanId, Number(depositAmount)));
+    } catch (err) {
+      setDepositError(DEPOSIT_ERROR_LABEL[err.code] || err.message);
+    } finally {
+      setDepositBusy(false);
+    }
+  };
 
   const handleAddKnowledge = async () => {
     if (activePlanId == null || !knowledgeTitle.trim() || !knowledgeContent.trim()) return;
@@ -2520,6 +2565,54 @@ export default function ChatCoach({ agentEnabled = false }) {
           >
             <span>다시 만들기</span>
           </button>
+        </div>
+      )}
+
+      {/* 목표 예치(v0.32.0) — 고정한 계획에 포인트를 걸면, 종결 시 달성률만큼 돌아온다.
+          무르는 버튼은 없다(그러면 약속이 아니다). 돌려받는 길은 종결뿐이다. */}
+      {draftChecklist && activePlanId != null && (deposit || activeStatus === 'CONFIRMED') && (
+        <div style={{ padding: '0 12px 10px', borderBottom: '1px solid var(--border)' }}>
+          {deposit ? (
+            <div style={{ fontSize: '12px', lineHeight: 1.7, color: 'var(--text-muted)' }}>
+              <span style={{ color: 'var(--text-main)', fontWeight: 600 }}>
+                목표 예치 {deposit.amount.toLocaleString()}P
+              </span>
+              {deposit.settledAt
+                ? ` · 정산 완료 — ${deposit.refunded.toLocaleString()}P 환급`
+                : ` · 현재 달성률 ${deposit.donePercent}% → 지금 종결하면 ${deposit.projectedRefund.toLocaleString()}P 환급`}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                이 계획에 포인트를 걸어 두면, 완료·중단할 때 <b>달성률만큼</b> 돌려받아요(나머지는 소멸).
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="number"
+                  value={depositAmount}
+                  onChange={(e) => setDepositAmount(e.target.value)}
+                  min="10"
+                  max="500"
+                  aria-label="예치 금액"
+                  style={{
+                    width: '90px', padding: '6px 8px', fontSize: '13px', borderRadius: '6px',
+                    border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-main)'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleCreateDeposit}
+                  disabled={depositBusy}
+                  style={{ ...exportButtonStyle, flex: 1, justifyContent: 'center' }}
+                >
+                  {depositBusy ? '거는 중…' : '목표 예치 걸기'}
+                </button>
+              </div>
+            </div>
+          )}
+          {depositError && (
+            <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--danger)' }}>{depositError}</div>
+          )}
         </div>
       )}
 

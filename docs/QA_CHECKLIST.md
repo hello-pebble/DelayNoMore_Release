@@ -1118,6 +1118,83 @@
 - [ ] **게스트 흡수 후 내역이 이어진다** — 게스트로 거래한 뒤 Google 로그인하면, 로그인 후
       거래 내역에 **게스트 시절 줄까지** 그대로 보이고 잔액과 합계가 여전히 같다
 
+## F-42. 계획 완주 보상 + 목표 예치 (v0.32.0)
+
+> 포인트 경제에 **버는 경로**(완주 보상 — 발행)와 **잃는 경로**(목표 예치 미달성 — 소각)가 생겼다.
+> 점검의 핵심은 두 가지다: 규칙이 맞게 적용되는가, 그리고 **원장 불변식 2종이 여전히 성립하는가**
+> (F-41과 같은 쿼리). 사전 조건: (postgres 프로필) V13 마이그레이션 적용. 키 없이 확인 가능하다.
+
+### 완주 보상
+
+- [ ] **완주하면 보상이 들어온다** — 계획을 만들고 고정 → 모든 할 일 체크 → [완료]로 종결하면
+      거래 내역(챌린지 탭 잔액 칩)에 "계획 완주 보상 +N P"가 뜬다
+- [ ] **하나라도 남으면 보상이 없다** — 미완료 항목이 있는 채로 종결하면 보상 줄이 생기지 않는다
+- [ ] **금액 규칙** — 기간 × 10P, 하한 50P·상한 200P:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-reward-0001
+  curl -s $API/points/ledger -H "X-Guest-Id: $G" | python3 -m json.tool
+  # 기대: kind "PLAN_COMPLETION_REWARD", 기간 14일 계획이면 amount 140
+  ```
+
+- [ ] **같은 계획은 한 번만** — (postgres) 원장에 `earn:plan:<id>` 키가 하나뿐인지:
+
+  ```sql
+  SELECT tx_key, count(*) FROM point_ledger WHERE kind = 'PLAN_COMPLETION_REWARD' GROUP BY tx_key;
+  -- 기대: 각 키마다 2행(복식부기 두 줄) — 4행이면 이중 발행이다
+  ```
+
+### 목표 예치
+
+- [ ] **초안에는 예치 블록이 없다** — 계획을 고정해야 체크리스트 패널에 "목표 예치 걸기"가 뜬다
+- [ ] **걸면 잔액이 줄고 현황이 보인다** — 200P를 걸면 잔액이 200P 줄고, 블록이
+      "목표 예치 200P · 현재 달성률 N% → 지금 종결하면 M P 환급"으로 바뀐다
+- [ ] **진행하면 환급 예상액이 오른다** — 할 일을 체크할수록 달성률과 환급 예상액이 함께 오른다
+- [ ] **완주 종결 → 전액 환급** — 전부 체크하고 [완료]하면 예치금이 그대로 돌아온다(내림이
+      손해를 만들지 않는다). 같은 자리에서 완주 보상도 함께 들어온다
+- [ ] **부분 달성 종결 → 비례 환급 + 소각** — 4개 중 3개만 하고 [완료]하면 예치금의 75%만 돌아온다
+- [ ] **중단해도 정산된다** — [중단]으로 종결해도 달성률만큼 돌려받는다(포인트가 잠기지 않는다)
+- [ ] **계획을 지워도 정산된다** — 예치가 걸린 계획을 삭제한 뒤 거래 내역에 환급/소각 줄이 남는다
+      (JDBC는 FK CASCADE가 예치 행을 지우므로 **정산이 삭제보다 먼저** 일어나야 한다)
+- [ ] 서버 확인(curl) — 판정은 전부 서버다:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-deposit-0001
+  # 초안에 예치 → 409 DEPOSIT_NOT_ALLOWED
+  curl -s -X POST $API/plans/<DRAFT_ID>/deposit -H "X-Guest-Id: $G" \
+    -H 'Content-Type: application/json' -d '{"amount":200}'
+  # 범위 밖(9 / 501) → 400 DEPOSIT_AMOUNT_INVALID
+  # 같은 계획에 두 번 → 409 DEPOSIT_ALREADY_EXISTS (두 번째는 차감되지 않는다 — 잔액 확인)
+  # 남의 계획 → 404 PLAN_NOT_FOUND (존재 자체를 숨긴다)
+  # 잔액보다 큰 금액 → 400 POINTS_INSUFFICIENT, 그리고 예치는 걸리지 않아야 한다:
+  curl -s $API/plans/<ID>/deposit -H "X-Guest-Id: $G"   # 기대: 404 DEPOSIT_NOT_FOUND
+  ```
+
+### 원장 불변식 (모든 새 경로 뒤)
+
+- [ ] **(postgres 프로필)** 보상·예치·정산을 몇 번 돌린 뒤에도 F-41의 두 쿼리가 통과한다:
+
+  ```sql
+  SELECT sum(amount) AS must_be_zero FROM point_ledger;                -- 0
+  SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
+    FROM point_wallets w
+    LEFT JOIN (SELECT account, sum(amount) FROM point_ledger GROUP BY account) l ON l.account = w.owner
+   WHERE w.balance <> COALESCE(l.sum, 0);                              -- 0행
+  ```
+
+- [ ] **(postgres 프로필) 예치 계정이 0으로 닫힌다** — 정산이 끝난 계획의 예치 계정에 잔액이
+      남으면 버그다(챌린지 예치 계정과 달리 나머지가 없다):
+
+  ```sql
+  SELECT l.account, sum(l.amount) AS residue
+    FROM point_ledger l JOIN plan_deposits d ON l.account = 'escrow:plan:' || d.plan_id
+   WHERE d.settled_at IS NOT NULL
+   GROUP BY l.account HAVING sum(l.amount) <> 0;   -- 기대: 0행
+  ```
+
+- [ ] **(postgres 프로필) 소각 계정이 쌓인다** — `system:burn` 잔액 = 지금까지 소멸한 총량
+      (발행량 `system:issuance`의 절댓값과 함께 보면 경제의 순환이 한눈에 읽힌다)
+
 ---
 
 ## 참고

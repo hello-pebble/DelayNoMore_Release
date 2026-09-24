@@ -1,6 +1,6 @@
 # 운영 가이드 (Operations)
 
-이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.31.0.
+이 서비스를 실제로 운영할 때 필요한 것들을 정리한다. 기준 시점: v0.32.0.
 배포 절차 자체는 [DEPLOY.md](DEPLOY.md) · [DEPLOY_OCI.md](DEPLOY_OCI.md)가 소유하고,
 이 문서는 **배포 이후의 운영** — 감시·백업·비용·복구·루틴 — 을 다룬다.
 
@@ -10,7 +10,7 @@
 | :--- | :--- | :--- |
 | **배포** | GitHub Actions → ghcr.io 이미지 빌드(`image.yml`, `latest`·sha·semver 태그), VM은 `deploy/oci-pull.sh`로 pull만, `--restart unless-stopped` | 스테이징 환경, 롤백 절차 문서화(→ 4장) |
 | **인프라** | OCI Always Free Ampere VM + Caddy(Let's Encrypt 자동 발급·갱신, `caddy_data` 볼륨 보존) + DuckDNS 도메인 | VM 1대 = 단일 장애점, VM 유실 시 재구축 런북(→ 4장), DuckDNS 갱신 관리 |
-| **포인트 무결성** | 복식부기 원장(`point_ledger`, v0.31.0) — 이동마다 두 줄·합 0, 멱등 키 UNIQUE. 잔액은 파생 캐시이고 불변식 2종으로 검증(2-6장) | 원장 검증 자동화(현재 수동 쿼리), 소멸분(나머지·병합 충돌 참가비) 회수 규칙 |
+| **포인트 무결성** | 복식부기 원장(`point_ledger`, v0.31.0) — 이동마다 두 줄·합 0, 멱등 키 UNIQUE. 잔액은 파생 캐시이고 불변식 2종으로 검증(2-6장). 잔액 변경의 멱등 단위는 "잔액 + 기표" 한 쌍(v0.32.0) | 원장 검증 자동화(현재 수동 쿼리), 챌린지 소멸분(나머지·병합 충돌 참가비) 회수 시점 결정 |
 | **데이터** | Supabase PostgreSQL(`postgres` 프로필, Flyway 스키마) + `deploy/db-backup.sh`·`db-restore.sh`(pg_dump), 일일 백업 cron(`setup-backup-cron.sh`, 14일 보존), 오프사이트 복사 훅(`BACKUP_UPLOAD_CMD`) | 오프사이트 대상 선택·설정은 운영자 몫(훅만 제공), 복원 리허설(분기 1회 수동) |
 | **관측** | `ai.usage` 토큰 사용량 로그([AGENT.md 6장](AGENT.md#6-관측--토큰-사용량-로그-v0152)), `ai.ratelimit` 차단 로그, `/api/v1/ai/health`(키·상한 소진 사유 포함) | 외부 업타임 감시·알림, 에러 알림, 로그 보존·로테이션 (Spring Actuator 미포함) |
 | **비용 방어** | 계획 생성 게스트당 하루 5회 제한(v0.20.0), LLM 일일 상한 2층(소유자별·서버 전역, v0.30.0) | 상한 소진 시 알림 없음(로그 `ai.ratelimit blocked`·`/ai/health` 사유로만 확인), 상한값 튜닝은 실사용 관측 후 |
@@ -142,11 +142,19 @@ SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
 | :--- | :--- |
 | `system:issuance` | 음수. 절댓값 = 지금까지 신규 지급한 포인트 총 발행량 |
 | `system:opening` | 음수. V12 마이그레이션 시점의 기초잔액 합계(원장 이전 세계의 몫) |
+| `system:burn` | 양수. 지금까지 소멸한 총량(v0.32.0 — 목표 예치 미달성분). `system:issuance`의 절댓값과 나란히 보면 경제의 순환이 읽힌다 |
+| `escrow:plan:<id>` | 진행 중이면 걸어 둔 예치금, **정산 후에는 0이어야 한다**(환급·소각이 모두 빠져나간다 — 0이 아니면 버그) |
 | `escrow:challenge:<id>` | 진행 중이면 예치된 참가비, **정산 후 남은 값은 소멸분**(정수 나눗셈 나머지 + 게스트 병합 충돌로 버려진 참가비) |
 | 그 외 | 사용자·게스트 계정 — 지갑 잔액과 같아야 한다 |
 
 ```sql
--- 정산이 끝났는데도 예치 계정에 남아 있는 포인트(소멸분) 상위 목록
+-- 계획 예치는 정산 후 0으로 닫혀야 한다(v0.32.0) — 0행이 아니면 버그
+SELECT l.account, sum(l.amount) AS residue
+  FROM point_ledger l JOIN plan_deposits d ON l.account = 'escrow:plan:' || d.plan_id
+ WHERE d.settled_at IS NOT NULL
+ GROUP BY l.account HAVING sum(l.amount) <> 0;
+
+-- 챌린지 정산이 끝났는데도 예치 계정에 남아 있는 포인트(소멸분) 상위 목록
 SELECT l.account, sum(l.amount) AS residue
   FROM point_ledger l
   JOIN challenges c ON l.account = 'escrow:challenge:' || c.id

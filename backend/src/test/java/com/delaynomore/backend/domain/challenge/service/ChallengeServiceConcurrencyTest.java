@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.challenge.service;
 
 import com.delaynomore.backend.domain.challenge.dto.ChallengeResponse;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
@@ -30,13 +31,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 // ChallengeJoinConcurrencyIT에 있다.
 class ChallengeServiceConcurrencyTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final int CAPACITY = 5;
     private static final int ENTRY_FEE = 100;
     private static final int INITIAL_BALANCE = 1000;
     private static final String HOST = "guest-host-0001";
     private static final String CONDITION = "자격증:14";
 
-    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(new InMemoryPointLedgerRepository());
+    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(points.wallets());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
 

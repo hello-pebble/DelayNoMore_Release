@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.dto.PlanSaveRequest;
@@ -29,6 +30,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 인메모리라 Mock 없이 실제 저장소를 주입한다.
 class PlanServiceConcurrencyTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final String OWNER = "guest-a";
     private static final String HIJACKER = "guest-b";
 
@@ -37,7 +40,8 @@ class PlanServiceConcurrencyTest {
             new InMemoryReflectionRepository(),
             new com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository(),
             new AuditEventService(new InMemoryAuditEventRepository()),
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

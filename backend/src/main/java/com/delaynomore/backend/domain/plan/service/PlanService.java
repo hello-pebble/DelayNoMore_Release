@@ -9,6 +9,8 @@ import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.knowledge.repository.KnowledgeRepository;
+import com.delaynomore.backend.domain.points.service.PlanDepositService;
+import com.delaynomore.backend.domain.points.service.PlanRewardService;
 import com.delaynomore.backend.domain.plan.repository.ReflectionRepository;
 import com.delaynomore.backend.domain.plan.support.PlanDates;
 import com.delaynomore.backend.global.error.BusinessException;
@@ -45,6 +47,10 @@ public class PlanService {
     private final AuditEventService auditEventService;
     // 고정된 계획을 챌린지 자동 생성의 씨앗으로 넘기기 위한 단방향 의존 — 챌린지는 계획을 모른다.
     private final ChallengeService challengeService;
+    // 포인트 쪽도 같은 방향이다(계획 → 포인트) — 완주 보상과 목표 예치 정산은 계획의 종결이
+    // 트리거지만, 포인트 도메인은 계획을 먼저 부르지 않는다(v0.32.0).
+    private final PlanRewardService planRewardService;
+    private final PlanDepositService planDepositService;
 
     // synchronized: 두 한도 검사(count·countByOwner)와 저장(save)을 원자적으로 묶는다. 동시에
     // 생성하면 각자 검사를 통과한 뒤 저장해 상한을 넘길 수 있는데(TOCTOU), 생성 경로를 직렬화해
@@ -266,14 +272,24 @@ public class PlanService {
         return PlanResponse.from(confirmed);
     }
 
+    // 완주는 포인트가 새로 발행되는 유일한 사건이다(신규 지급 외) — 규칙(100% 완료 여부·금액)은
+    // PlanRewardService가 소유하고, 여기서는 종결된 계획을 넘길 뿐이다. 목표 예치가 걸려 있으면
+    // 같은 자리에서 정산된다(달성률 비례 환급 — 완주면 전액).
     @Transactional
     public PlanResponse complete(long id, String owner, String sessionId) {
-        return PlanResponse.from(transition(id, owner, PlanStatus.COMPLETED, sessionId));
+        Plan completed = transition(id, owner, PlanStatus.COMPLETED, sessionId);
+        planRewardService.rewardIfCompleted(completed);
+        planDepositService.settleOnTerminal(completed);
+        return PlanResponse.from(completed);
     }
 
+    // 중단에는 보상이 없지만 예치 정산은 있다 — 걸어 둔 포인트가 중단 때문에 영영 잠기면 안 된다.
+    // 달성률만큼 돌려받으므로 "중단해서 회수"가 이득이 되지도 않는다(그대로 두면 더 받는다).
     @Transactional
     public PlanResponse cancel(long id, String owner, String sessionId) {
-        return PlanResponse.from(transition(id, owner, PlanStatus.CANCELLED, sessionId));
+        Plan cancelled = transition(id, owner, PlanStatus.CANCELLED, sessionId);
+        planDepositService.settleOnTerminal(cancelled);
+        return PlanResponse.from(cancelled);
     }
 
     // 공통 전이 실행기 — 가드·판정·교체가 저장소의 키 단위 원자 구간(mutate) 안에서 실행돼
@@ -358,6 +374,14 @@ public class PlanService {
 
     @Transactional
     public void delete(long id, String owner, String sessionId) {
+        // [순서가 규칙이다] 예치 정산이 계획 삭제보다 **먼저**다. JDBC에서는 plans 삭제가
+        // plan_deposits를 FK CASCADE로 함께 지우므로, 지운 뒤에는 정산할 근거가 사라지고 그
+        // 포인트는 escrow:plan:<id>에 영영 남는다(인메모리에는 FK가 없어 이 순서 문제가 드러나지
+        // 않는다 — 실제 PostgreSQL 기동으로 찾은 함정이다).
+        // 소유자가 아니면 정산하지 않는다: 아래 deleteById의 가드가 같은 기준으로 404를 던진다.
+        planRepository.findById(id)
+                .filter(plan -> owner.equals(plan.owner()))
+                .ifPresent(planDepositService::onPlanDeleted);
         // 소유자 가드는 저장소의 키 단위 원자 구간 안에서 실행된다 — 검사와 제거 사이에 끼어들 수 없다.
         Plan deleted = planRepository.deleteById(id,
                 c -> {

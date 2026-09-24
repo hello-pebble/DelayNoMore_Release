@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.controller;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
@@ -33,6 +34,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // 유효 헤더는 통과하는지를 컨트롤러 계층(standalone MockMvc + GlobalExceptionHandler)에서 확인한다.
 class PlanControllerTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     private static final String VALID_GUEST_ID = "550e8400-e29b-41d4-a716-446655440000";
 
     private MockMvc mvc;
@@ -42,7 +45,8 @@ class PlanControllerTest {
         PlanRepository planRepository = new InMemoryPlanRepository();
         AuditEventService auditEventService = new AuditEventService(new InMemoryAuditEventRepository());
         PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(), new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
         // 이 테스트는 X-Guest-Id 헤더 계약만 검증하며 추천 엔드포인트를 호출하지 않으므로 추천 서비스는 null.
         mvc = MockMvcBuilders.standaloneSetup(new PlanController(planService, null))
                 .setCustomArgumentResolvers(new OwnerArgumentResolver(new InMemoryAuthRepository()))

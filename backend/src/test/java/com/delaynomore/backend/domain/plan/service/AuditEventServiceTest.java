@@ -1,6 +1,7 @@
 package com.delaynomore.backend.domain.plan.service;
 
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository;
@@ -28,6 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 // 통과한 변경이 어떤 이벤트로 기록되는지(diff 분류 포함)를 함께 검증한다.
 class AuditEventServiceTest {
 
+    private final PointsFixture points = new PointsFixture();
+
     // 소유자(닉네임) 스코프 — 이력 조회는 계획 소유자 확인을 거치므로 테스트 기본 소유자를 고정한다.
     private static final String OWNER = "guest-a";
     private static final String OTHER_OWNER = "guest-b";
@@ -38,7 +41,8 @@ class AuditEventServiceTest {
     private final AuditEventService auditEventService =
             new AuditEventService(auditEventRepository);
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(new InMemoryPointLedgerRepository()), new InMemoryPlanRepository()));
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
+            points.rewardService(), points.depositService());
     private final ReflectionService reflectionService =
             new ReflectionService(planRepository, reflectionRepository, auditEventService);
 

@@ -56,6 +56,10 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `AI_UPSTREAM_ERROR` | 502 | OpenRouter 호출 실패 |
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
 | `AI_TOOL_LOOP_EXCEEDED` | 502 | 에이전트 루프가 도구 호출 상한(4턴)까지 가고도 최종 답을 못 냄 — 프론트는 자유 대화로 폴백 (v0.15.0) |
+| `DEPOSIT_ALREADY_EXISTS` | 409 | 계획당 목표 예치는 1건 (v0.32.0) — 판정 주체는 `plan_deposits`의 PK |
+| `DEPOSIT_NOT_ALLOWED` | 409 | 고정(CONFIRMED)이 아닌 계획에 예치 시도 |
+| `DEPOSIT_AMOUNT_INVALID` | 400 | 예치 금액이 10~500P 범위 밖 |
+| `DEPOSIT_NOT_FOUND` | 404 | 그 계획에 걸린 예치 없음(조회) |
 | `AI_DAILY_LIMIT_EXCEEDED` | 429 | LLM 일일 상한 소진 (v0.30.0) — 소유자별(요청 수)·서버 전역(업스트림 호출 수) 2층. SSE 경로에서는 HTTP가 아니라 `error` 이벤트로 전달되고, `/ai/health`가 사유와 함께 `connected:false`를 내려 프론트는 mock으로 폴백 |
 | `CHALLENGE_NOT_FOUND` | 404 | 없는 챌린지 id (v0.21.0) |
 | `CHALLENGE_FULL` | 409 | 챌린지 참가 시 정원 마감 — 판정은 조건부 UPDATE(`WHERE participant_count < capacity`) 단독 |
@@ -627,9 +631,38 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 이동은 두 줄(나가는 계정 음수·들어오는 계정 양수)로 남고 합이 0이며, 잔액은 그 파생 캐시다
 (설계 근거는 [CONCURRENCY.md 10장](CONCURRENCY.md), 운영 점검은 [OPERATIONS.md 2-6장](OPERATIONS.md)).
 
-포인트를 **움직이는 엔드포인트는 없다.** 기표는 전부 잔액을 바꾸는 저장소의 원자 구간 안에서만
-일어난다(지갑 최초 생성·챌린지 참가·정산) — 그래야 "잔액은 줄었는데 원장에는 없는" 상태가
-생기지 않는다. 이 API는 그 결과를 읽기만 한다.
+포인트를 움직이는 경로는 도메인 액션뿐이다(지갑 최초 생성·챌린지 참가·정산·계획 완주 보상·
+목표 예치와 그 정산). 기표는 전부 잔액을 바꾸는 저장소의 원자 구간 안에서 일어나고 — 그래야
+"잔액은 줄었는데 원장에는 없는" 상태가 생기지 않는다 — **잔액을 직접 조작하는 API는 없다.**
+
+### P-0. 목표 예치 (`/api/v1/plans/{planId}/deposit`) — v0.32.0
+
+고정(CONFIRMED)한 계획에 자기 포인트를 걸어 두고, 계획이 **종결되는 순간 달성률만큼 돌려받는다**
+(나머지는 `system:burn`으로 소각). 챌린지가 여럿이 걸고 완주자끼리 나누는 판이라면 이쪽은 혼자
+자기 자신과 하는 약속이다.
+
+**해제(회수) 엔드포인트는 없다** — 무를 수 있으면 약속이 아니기 때문이다. 돌려받는 유일한 길은
+계획을 종결시키는 것이고(완료·중단 둘 다 종결), 그래서 포인트가 잠기는 상황은 생기지 않는다.
+계획을 삭제해도 **삭제 전에** 같은 규칙으로 정산된다.
+
+```json
+// POST /plans/{planId}/deposit  요청
+{ "amount": 200 }
+// 응답 data (GET도 같은 모양)
+{ "planId": 7, "amount": 200,
+  "donePercent": 75,          // 정산 시점 기준 달성률(서버가 tasks에서 재계산)
+  "projectedRefund": 150,     // 지금 종결하면 받을 금액. 정산 후에는 실제 환급액과 같다
+  "refunded": null,           // 정산 완료 시에만 값이 있다
+  "settledAt": null, "createdAt": "2026-09-24T07:45:21.407Z",
+  "balance": 800 }            // 차감 후 내 잔액
+```
+
+- 금액 범위는 **10~500P**, 계획당 **1건**. 판정은 전부 서버다(범위·고정 여부·중복·잔액).
+- 환급은 **내림**이라 예치금을 넘지 않는다. 100% 완주면 정확히 전액이 돌아온다.
+- 할 일이 하나도 없는 계획은 달성률을 정의할 수 없어 전액 환급으로 본다.
+- 오류: 409 `DEPOSIT_NOT_ALLOWED`(고정 아님) / `DEPOSIT_ALREADY_EXISTS`,
+  400 `DEPOSIT_AMOUNT_INVALID` / `POINTS_INSUFFICIENT`, 404 `PLAN_NOT_FOUND`(남의 계획 포함) /
+  `DEPOSIT_NOT_FOUND`(조회 시 예치 없음)
 
 ### P-1. GET /points/ledger — 내 거래 내역 (잔액 + 최근 기록)
 

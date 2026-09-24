@@ -69,6 +69,13 @@ public enum PlanStatus {
         return this != DRAFT;
     }
 
+    // 목표 예치(v0.32.0)는 고정(CONFIRMED)에서만 걸 수 있다 — 예치는 "이 계획을 지키겠다"는
+    // 약속이라 내용이 확정된 뒤여야 의미가 있고(초안은 아직 협상 중), 종결된 계획은 이미 결과가
+    // 나와 걸 대상이 없다. 정산(환급·소각)은 종결 전이가 트리거이므로 이 플래그와 무관하다.
+    public boolean allowsDeposit() {
+        return this == CONFIRMED;
+    }
+
     // 저장값 → 상태 파싱. null/blank는 DRAFT로 본다(PlanSaveRequest의 status 기본값 규칙과 동일).
     // 알 수 없는 값은 IllegalArgumentException — DB CHECK 제약이 있어 정상 경로에선 나올 수 없다.
     public static PlanStatus fromStored(String raw) {

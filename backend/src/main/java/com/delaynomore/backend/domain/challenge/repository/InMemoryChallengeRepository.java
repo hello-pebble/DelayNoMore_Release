@@ -5,7 +5,7 @@ import com.delaynomore.backend.domain.challenge.entity.ChallengeParticipant;
 import com.delaynomore.backend.domain.points.entity.PointAccounts;
 import com.delaynomore.backend.domain.points.entity.PointTransfer;
 import com.delaynomore.backend.domain.points.entity.PointTxKind;
-import com.delaynomore.backend.domain.points.repository.PointLedgerRepository;
+import com.delaynomore.backend.domain.points.repository.PointWalletRepository;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.springframework.context.annotation.Profile;
@@ -30,23 +30,22 @@ import java.util.concurrent.atomic.AtomicLong;
 @Profile("!postgres")
 public class InMemoryChallengeRepository implements ChallengeRepository {
 
-    // 데모 초기 잔액 — JDBC 구현과 같은 값이어야 한다(프로필이 바뀌어도 화면 숫자가 같도록).
-    static final int INITIAL_BALANCE = 1000;
-
-    // 원장 — 잔액을 바꾸는 모든 지점에서 같은 원자 구간 안에 기표한다(JDBC 구현과 같은 계약).
-    private final PointLedgerRepository ledger;
+    // 지갑 — v0.32.0에서 별도 저장소로 나갔다. 호출은 여전히 challenges 맵의 키 단위 원자 구간
+    // **안에서** 일어나므로 참가의 원자성 계약은 그대로다(다른 맵을 만지는 것은 재진입 문제가
+    // 없다 — 원장이 v0.31.0부터 같은 방식으로 동작해 온 그대로다). 기표는 지갑 저장소가
+    // 시그니처로 강제한다.
+    private final PointWalletRepository wallets;
 
     private final ConcurrentHashMap<Long, Challenge> challenges = new ConcurrentHashMap<>();
     // 챌린지 id → (소유자 → 참가 레코드). 정산 결과(payout)까지 담아야 해서 Set이 아니라 맵이다.
     private final ConcurrentHashMap<Long, ConcurrentHashMap<String, ChallengeParticipant>> participants =
             new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Integer> wallets = new ConcurrentHashMap<>();
     // 조건 키 → 그 조건의 계획을 고정한 소유자 집합. JDBC의 challenge_seeds 테이블에 대응한다.
     private final ConcurrentHashMap<String, Set<String>> seeds = new ConcurrentHashMap<>();
     private final AtomicLong idSequence = new AtomicLong(0);
 
-    public InMemoryChallengeRepository(PointLedgerRepository ledger) {
-        this.ledger = ledger;
+    public InMemoryChallengeRepository(PointWalletRepository wallets) {
+        this.wallets = wallets;
     }
 
     @Override
@@ -88,18 +87,7 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
 
     @Override
     public int balanceOf(String owner) {
-        return ensureWallet(owner);
-    }
-
-    // 지갑 지연 생성 — 실제로 만든 호출만 발행을 기표한다. computeIfAbsent의 키 단위 원자 구간
-    // 안에서 기표하므로 "지갑은 생겼는데 원장에 없는" 상태가 생기지 않는다.
-    // (원장 쪽 멱등 키도 signup:<owner> 하나라, 만에 하나 두 번 불려도 두 번 발행되지 않는다.)
-    private int ensureWallet(String owner) {
-        return wallets.computeIfAbsent(owner, key -> {
-            ledger.post(new PointTransfer("signup:" + key, PointAccounts.ISSUANCE, key,
-                    INITIAL_BALANCE, PointTxKind.SIGNUP_BONUS, null, null, Instant.now().toString()));
-            return INITIAL_BALANCE;
-        });
+        return wallets.balanceOf(owner);
     }
 
     // 참가 — 키 단위 원자 구간에서 검사와 변경을 함께 수행한다.
@@ -120,15 +108,16 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
             if (joined.containsKey(owner)) {
                 throw new BusinessException(ErrorCode.CHALLENGE_ALREADY_JOINED);
             }
-            int balance = ensureWallet(owner);
+            int balance = wallets.balanceOf(owner);
             if (balance < current.entryFee()) {
                 throw new BusinessException(ErrorCode.POINTS_INSUFFICIENT);
             }
             if (current.full()) {
                 throw new BusinessException(ErrorCode.CHALLENGE_FULL);
             }
-            wallets.put(owner, balance - current.entryFee());
-            ledger.post(new PointTransfer("join:" + id + ":" + owner,
+            // 검사가 모두 끝난 뒤라 이 차감은 실패할 수 없다(잔액은 위에서 확인했고, 이 구간에
+            // 다른 참가 요청이 끼어들 수 없다). 기표는 차감과 같은 호출에서 함께 일어난다.
+            wallets.debit(owner, current.entryFee(), new PointTransfer("join:" + id + ":" + owner,
                     owner, PointAccounts.escrowOfChallenge(id), current.entryFee(),
                     PointTxKind.CHALLENGE_ENTRY, "challenge", String.valueOf(id), joinedAt));
             joined.put(owner, new ChallengeParticipant(owner, planId, null));
@@ -163,14 +152,12 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
     // 없는 연산만으로 구성한다(merge/compute — "검사를 변경 앞에" 규칙의 정산판).
     @Override
     public void recordPayout(long challengeId, String owner, int amount, PointTxKind kind) {
-        // 지연 생성 잔액을 먼저 실체화한 뒤 더한다 — merge만 쓰면 지갑이 없던 참가자의 초기 잔액
-        // 1000이 사라지고 amount만 남는다(발행 기표도 그때 함께 일어난다).
-        ensureWallet(owner);
         if (amount > 0) {
-            wallets.compute(owner, (key, balance) -> balance + amount);
-            ledger.post(new PointTransfer("payout:" + challengeId + ":" + owner,
+            wallets.credit(owner, amount, new PointTransfer("payout:" + challengeId + ":" + owner,
                     PointAccounts.escrowOfChallenge(challengeId), owner, amount,
                     kind, "challenge", String.valueOf(challengeId), Instant.now().toString()));
+        } else {
+            wallets.balanceOf(owner); // 지갑이 없던 참가자도 지연 생성해 둔다(기존 동작 보존)
         }
         participants.getOrDefault(challengeId, new ConcurrentHashMap<>())
                 .computeIfPresent(owner, (key, participant) -> participant.withPayout(amount));

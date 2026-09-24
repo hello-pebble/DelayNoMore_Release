@@ -11,6 +11,7 @@ import com.delaynomore.backend.domain.points.entity.PointAccounts;
 import com.delaynomore.backend.domain.points.entity.PointTxKind;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.points.service.PointLedgerService;
+import com.delaynomore.backend.support.PointsFixture;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -34,8 +35,9 @@ class ChallengeLedgerInvariantTest {
     private static final int INITIAL = 1000;
     private static final String CONDITION = "자격증:14";
 
-    private final InMemoryPointLedgerRepository ledger = new InMemoryPointLedgerRepository();
-    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(ledger);
+    private final PointsFixture points = new PointsFixture();
+    private final InMemoryPointLedgerRepository ledger = points.ledger();
+    private final ChallengeRepository challengeRepository = new InMemoryChallengeRepository(points.wallets());
     private final InMemoryPlanRepository planRepository = new InMemoryPlanRepository();
     private final ChallengeService challengeService = new ChallengeService(challengeRepository, planRepository);
     private final PointLedgerService ledgerService = new PointLedgerService(ledger, challengeRepository);
