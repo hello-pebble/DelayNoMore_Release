@@ -65,6 +65,7 @@ docker build -t delaynomore . && docker run -p 8080:8080 -e OPENROUTER_API_KEY=<
 
 | 문서 | 내용 |
 | :--- | :--- |
+| [코드 워크스루](docs/CODE_WALKTHROUGH.md) | 필수 함수 20개와 워크플로 · 스트리밍(SSE) · 프론트/백엔드 상태 관리 (입문자용) |
 | [기능 상세](docs/FEATURES.md) | 화면 구성과 17가지 기능의 상세 동작 |
 | [에이전트](docs/AGENT.md) | 도구 카탈로그 · 상태 기반 권한 모델 · 루프와 폴백 체인 · 토큰 사용량 계측 |
 | [평가 하네스](docs/EVAL.md) | 실제 모델로 도구 선택 정확도 측정 · 채점 기준 · 정확도와 비용을 한 표에 |
