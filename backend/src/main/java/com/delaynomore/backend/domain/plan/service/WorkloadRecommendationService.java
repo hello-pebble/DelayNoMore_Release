@@ -134,11 +134,6 @@ public class WorkloadRecommendationService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.PLAN_NOT_FOUND));
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> asMap(Object value) {
-        return value instanceof Map ? (Map<String, Object>) value : new LinkedHashMap<>();
-    }
-
     // AI 초안의 {날짜:[문자열]}을 계획 저장 형식 {날짜:[{id,content,completed}]}로 승격한다
     // (ChatPatchMerger.liftItems와 같은 흡수 규칙 — 문자열/‌{content} 객체 모두 content만 취한다).
     private static Map<String, Object> toTaskObjects(Map<String, Object> byDate) {

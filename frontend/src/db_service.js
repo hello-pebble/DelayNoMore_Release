@@ -239,7 +239,6 @@ export const fetchPlanStatuses = () => requestJson('/meta/plan-statuses', null, 
 // 계획 변경 이력(최신순) — 이벤트는 서버가 변경 서비스 안에서 직접 발행하므로 읽기만 있다.
 // 삭제된 계획 id도 404가 아니라 과거 이력(또는 빈 목록)으로 응답한다.
 export const fetchAuditEvents = (planId) => requestJson(`/plans/${planId}/audit-events`, null, 'GET');
-export const fetchReflection = (planId, date) => requestJson(`/plans/${planId}/reflections/${date}`, null, 'GET');
 export const fetchReflections = (planId) => requestJson(`/plans/${planId}/reflections`, null, 'GET');
 
 // 인증 — Google 로그인(v0.22.0). 흐름: GIS 팝업이 준 credential(ID 토큰)을 서버로 보내면

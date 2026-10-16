@@ -44,9 +44,4 @@ public final class PointAccounts {
     public static String escrowOfPlan(long planId) {
         return ESCROW_PLAN_PREFIX + planId;
     }
-
-    /** 시스템·예치 계정 여부 — 거래 내역은 소유자 계정만 보여준다. */
-    public static boolean isSystem(String account) {
-        return account != null && account.contains(":");
-    }
 }
