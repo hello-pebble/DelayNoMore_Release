@@ -6,6 +6,7 @@ import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.domain.plan.repository.jdbc.AbstractPostgresIntegrationTest;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
+import com.delaynomore.backend.support.PlanFixture;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -65,10 +66,7 @@ class ChallengeJoinConcurrencyIT extends AbstractPostgresIntegrationTest {
     // 참가 자격(v0.25.0) — 참가자마다 같은 조건("자격증:14")의 CONFIRMED 계획을 미리 만든다.
     // 계획 생성은 경합 대상이 아니므로 레이스 전에 끝낸다.
     private void plan(String owner) {
-        String now = java.time.Instant.now().toString();
-        planRepository.save(new com.delaynomore.backend.domain.plan.entity.Plan(
-                null, owner, "정보처리기사 실기", 14, 2, "초급", java.util.Map.of(), "CONFIRMED",
-                now, null, "2026-09-01", "2026-09-14", now, System.currentTimeMillis(), "자격증"));
+        planRepository.save(PlanFixture.confirmed(owner, "자격증"));
     }
 
     // 정원 CAPACITY, 이미 CAPACITY-1명이 참가해 남은 자리가 정확히 1개인 챌린지를 만든다.

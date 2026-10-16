@@ -80,7 +80,8 @@ compileOnly 'org.projectlombok:lombok'
 
 tasks.named('test') {
 	// 'eval' 태그는 실제 모델을 부르고 토큰을 쓴다 — CI가 무심코 돌리지 않도록 여기서 제외하고,
-	// 아래 evalAgent 태스크로만 명시적으로 실행한다.
+	// 아래 evalAgent 태스크로만 명시적으로 실행한다. (제외는 스킵이 아니다 — 아래 스킵 집계에
+	// 잡히지 않는다.)
 	useJUnitPlatform {
 		excludeTags 'eval'
 	}
@@ -90,6 +91,48 @@ tasks.named('test') {
 		exceptionFormat = 'full'
 		showStackTraces = true
 		showCauses = true
+	}
+
+	// [스킵은 통과가 아니다] Gradle은 성공한 실행에서 집계를 찍지 않으므로, 스킵된 테스트는
+	// "BUILD SUCCESSFUL" 뒤에 조용히 숨는다. 실제로 그렇게 숨었다: PostgreSQL IT 2건이
+	// v0.25.0부터 8개 릴리스 동안 CI에서 실패하는 동안, Docker 없는 로컬에서는 같은 클래스들이
+	// 스킵되어 "실패 0"으로 초록이었다(docs/QA_RESULT_v0.26.0-v0.32.0.md 3-1장).
+	// 그래서 집계는 언제나 찍고, 강제는 선택으로 둔다.
+	def skippedByClass = new java.util.concurrent.ConcurrentHashMap<String, Integer>()
+	afterTest { desc, result ->
+		if (result.resultType.name() == 'SKIPPED') {
+			skippedByClass.merge(desc.className, 1, { a, b -> a + b })
+		}
+	}
+
+	// -PrequireIntegrationTests → *IT 클래스가 하나라도 스킵되면 빌드를 깨뜨린다.
+	// CI는 이 플래그를 켠다(.github/workflows/ci.yml): GitHub 호스티드 러너에는 Docker가 있어
+	// IT가 돌아야 정상이고, 안 돌면 그건 통과가 아니라 게이트가 꺼진 것이다. 로컬(Docker 없음)은
+	// 플래그를 켜지 않으므로 종전처럼 스킵하고 통과한다 — 설정 시점에 읽어 둔다(doLast에서
+	// project를 만지지 않게).
+	def requireIntegrationTests = project.hasProperty('requireIntegrationTests')
+
+	doLast {
+		int total = skippedByClass.values().sum() ?: 0
+		if (total == 0) {
+			logger.lifecycle('[테스트] 스킵 0건 — 모든 테스트가 실제로 실행됐습니다.')
+			return
+		}
+		logger.lifecycle("[테스트] 스킵 ${total}건 — 스킵은 통과가 아닙니다:")
+		skippedByClass.sort().each { fqn, count ->
+			logger.lifecycle("          ${fqn.tokenize('.').last()} (${count}건)")
+		}
+		def skippedIT = skippedByClass.keySet()
+				.collect { it.tokenize('.').last() }
+				.findAll { it.endsWith('IT') }
+				.sort()
+		if (skippedIT) {
+			logger.lifecycle('          └ *IT 은 PostgreSQL(Testcontainers)이 필요합니다 — Docker 데몬이 없으면 스킵됩니다.')
+			if (requireIntegrationTests) {
+				throw new GradleException("통합 테스트 ${skippedIT.size()}개 클래스가 스킵됐습니다 "
+						+ '(-PrequireIntegrationTests). Docker 데몬이 필요합니다: ' + skippedIT.join(', '))
+			}
+		}
 	}
 }
 
