@@ -2,19 +2,18 @@ package com.delaynomore.backend.domain.points.repository;
 
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
-import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.jdbc.AbstractPostgresIntegrationTest;
 import com.delaynomore.backend.domain.points.entity.PointAccounts;
 import com.delaynomore.backend.domain.points.entity.PointTransfer;
 import com.delaynomore.backend.domain.points.entity.PointTxKind;
+import com.delaynomore.backend.support.PlanFixture;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 import java.time.Instant;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,10 +42,7 @@ class JdbcPointLedgerIT extends AbstractPostgresIntegrationTest {
     // challenge_participants.plan_id는 plans를 참조하는 FK다 — 참가 레코드를 만들려면 실제
     // 계획 행이 있어야 한다. id를 하드코딩하면 FK 위반으로 깨지므로 저장이 돌려준 id를 쓴다.
     private long planId(String owner) {
-        String now = Instant.now().toString();
-        return planRepository.save(new Plan(null, owner, "정보처리기사 실기", 14, 2, "초급", Map.of(),
-                "CONFIRMED", now, null, "2026-09-01", "2026-09-14", now,
-                System.currentTimeMillis(), "자격증")).id();
+        return planRepository.save(PlanFixture.confirmed(owner, "자격증")).id();
     }
 
     private static PointTransfer entryFee(long challengeId, String owner, int amount) {

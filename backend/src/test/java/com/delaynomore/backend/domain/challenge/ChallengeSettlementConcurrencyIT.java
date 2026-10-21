@@ -3,9 +3,9 @@ package com.delaynomore.backend.domain.challenge;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
-import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.jdbc.AbstractPostgresIntegrationTest;
+import com.delaynomore.backend.support.PlanFixture;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -49,11 +49,10 @@ class ChallengeSettlementConcurrencyIT extends AbstractPostgresIntegrationTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    // 미완료 할 일이 하나 있는 계획 — 완주 판정이 "패배"로 수렴해야 정산 결과가 전원 환불이 된다.
     private void plan(String owner) {
-        String now = Instant.now().toString();
-        planRepository.save(new Plan(null, owner, "정보처리기사 실기", 14, 2, "초급",
-                Map.of("2026-09-01", List.of(Map.of("id", "t1", "content", "공부", "completed", false))),
-                "CONFIRMED", now, null, "2026-09-01", "2026-09-14", now, System.currentTimeMillis(), "자격증"));
+        planRepository.save(PlanFixture.confirmed(owner, "자격증",
+                Map.of("2026-09-01", List.of(Map.of("id", "t1", "content", "공부", "completed", false)))));
     }
 
     // durationDays=0 → 정원이 차는 순간 만기. 미완주 계획뿐이라 정산 결과는 전원 환불이다.

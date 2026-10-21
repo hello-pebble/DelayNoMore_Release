@@ -37,4 +37,8 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: gradle
-      - run: ./gradlew build --no-daemon
+      # -PrequireIntegrationTests: *IT(PostgreSQL·Testcontainers)이 하나라도 스킵되면 빌드를
+      # 깨뜨린다. 호스티드 러너에는 Docker가 있어 IT가 도는 것이 정상이고, 안 돌면 그건 통과가
+      # 아니라 게이트가 꺼진 것이다 — 그 상태로 8개 릴리스가 지나간 적이 있다
+      # (docs/QA_RESULT_v0.26.0-v0.32.0.md 3-1장).
+      - run: ./gradlew build --no-daemon -PrequireIntegrationTests

@@ -1,14 +1,12 @@
 package com.delaynomore.backend.domain.challenge;
 
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
-import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.PlanRepository;
 import com.delaynomore.backend.domain.plan.repository.jdbc.AbstractPostgresIntegrationTest;
+import com.delaynomore.backend.support.PlanFixture;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
-import java.time.Instant;
-import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,10 +37,7 @@ class ChallengeAutoGenerationIT extends AbstractPostgresIntegrationTest {
     // 자동 생성의 씨앗(onPlanConfirmed)은 조건 키를 직접 받으므로 계획이 필요 없지만, join은
     // 그 계획을 서버가 찾아 참가 레코드에 연결하므로 픽스처가 미리 만들어 둬야 한다.
     private void plan(String owner) {
-        String now = Instant.now().toString();
-        planRepository.save(new Plan(null, owner, "토익 단어 암기", 14, 2, "초급", Map.of(),
-                "CONFIRMED", now, null, "2026-09-01", "2026-09-14", now,
-                System.currentTimeMillis(), "어학"));
+        planRepository.save(PlanFixture.confirmed(owner, "어학"));
     }
 
     @Test
