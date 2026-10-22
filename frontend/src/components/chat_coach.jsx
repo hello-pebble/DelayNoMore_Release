@@ -155,7 +155,7 @@ const DEPOSIT_ERROR_LABEL = {
   POINTS_INSUFFICIENT: '포인트가 부족해요.'
 };
 
-export default function ChatCoach({ agentEnabled = false }) {
+export default function ChatCoach({ agentEnabled = false, isLoggedIn = false }) {
   // 지연 초기화 함수 하나로 최초 상태(저장된 계획 복원 또는 첫 질문)를 한 번만 계산한다.
   const [initial] = useState(buildInitialState);
   const [slots, setSlots] = useState(initial.slots);
@@ -290,7 +290,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     return () => { cancelled = true; };
   }, [activePlanId]);
 
-  // 목표 예치(v0.32.0) — 고정한 계획에만 걸 수 있고, 종결되면 달성률만큼 돌아온다.
+  // 목표 예치는 로그인 회원 전용 — 고정한 계획에 걸고, 종결되면 달성률만큼 돌아온다.
   // 화면은 판정하지 않는다: 금액 범위·고정 여부·중복은 서버가 판정하고 여기는 err.code로 받는다.
   // 예치가 없으면 서버가 404(DEPOSIT_NOT_FOUND)를 주므로 그것을 "아직 안 걸었다"로 읽는다.
   const [deposit, setDeposit] = useState(null);
@@ -302,7 +302,7 @@ export default function ChatCoach({ agentEnabled = false }) {
     // 계획이 없을 때의 초기화도 프라미스 경로로 돌린다 — effect 본문에서 동기 setState를 하면
     // 연쇄 렌더가 생긴다(저장소의 기존 규칙, slack_link.jsx와 같은 형태).
     let cancelled = false;
-    const load = activePlanId == null ? Promise.resolve(null) : fetchPlanDeposit(activePlanId);
+    const load = !isLoggedIn || activePlanId == null ? Promise.resolve(null) : fetchPlanDeposit(activePlanId);
     load
       .then((found) => {
         if (!cancelled) setDeposit(found);
@@ -311,10 +311,10 @@ export default function ChatCoach({ agentEnabled = false }) {
         if (!cancelled) setDeposit(null); // 404 = 아직 예치 없음
       });
     return () => { cancelled = true; };
-  }, [activePlanId, activeStatus]);
+  }, [activePlanId, activeStatus, isLoggedIn]);
 
   const handleCreateDeposit = async () => {
-    if (activePlanId == null) return;
+    if (!isLoggedIn || activePlanId == null) return;
     setDepositBusy(true);
     setDepositError(null);
     try {
@@ -2570,7 +2570,7 @@ export default function ChatCoach({ agentEnabled = false }) {
 
       {/* 목표 예치(v0.32.0) — 고정한 계획에 포인트를 걸면, 종결 시 달성률만큼 돌아온다.
           무르는 버튼은 없다(그러면 약속이 아니다). 돌려받는 길은 종결뿐이다. */}
-      {draftChecklist && activePlanId != null && (deposit || activeStatus === 'CONFIRMED') && (
+      {isLoggedIn && draftChecklist && activePlanId != null && (deposit || activeStatus === 'CONFIRMED') && (
         <div style={{ padding: '0 12px 10px', borderBottom: '1px solid var(--border)' }}>
           {deposit ? (
             <div style={{ fontSize: '12px', lineHeight: 1.7, color: 'var(--text-muted)' }}>

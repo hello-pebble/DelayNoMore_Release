@@ -34,17 +34,18 @@ public class PlanDepositController {
 
     private final PlanDepositService planDepositService;
 
-    @Operation(summary = "목표 예치 걸기 (고정된 계획, 계획당 1건)")
+    @Operation(summary = "목표 예치 걸기 (로그인 회원의 고정된 계획, 계획당 1건)")
     @PostMapping
     public ApiResponse<PlanDepositResponse> deposit(@PathVariable long planId,
                                                     @Valid @RequestBody PlanDepositRequest request,
-                                                    @Owner String owner) {
+                                                    @Owner(loginRequired = true) String owner) {
         return ApiResponse.ok(planDepositService.deposit(planId, owner, request.amount()));
     }
 
     @Operation(summary = "내 목표 예치 조회 (현재 달성률 · 지금 종결 시 환급액)")
     @GetMapping
-    public ApiResponse<PlanDepositResponse> get(@PathVariable long planId, @Owner String owner) {
+    public ApiResponse<PlanDepositResponse> get(@PathVariable long planId,
+                                               @Owner(loginRequired = true) String owner) {
         return ApiResponse.ok(planDepositService.get(planId, owner));
     }
 }

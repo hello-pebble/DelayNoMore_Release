@@ -61,6 +61,7 @@ public enum ErrorCode {
     // 복귀한다. 게스트로 조용히 폴백하지 않는 이유: 만료를 숨기면 이후 쓰기가 게스트 보관함에
     // 잘못 귀속되고, 사용자는 로그인돼 있다고 믿은 채 데이터가 갈라진다.
     AUTH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인이 만료되었습니다. 다시 로그인해주세요."),
+    AUTH_LOGIN_REQUIRED(HttpStatus.FORBIDDEN, "로그인 후 이용할 수 있습니다."),
     // Google ID 토큰 검증 실패(서명·aud 불일치·만료) — 사용자가 재로그인으로 해소하므로 401.
     AUTH_GOOGLE_INVALID(HttpStatus.UNAUTHORIZED, "Google 인증에 실패했습니다. 다시 시도해주세요."),
     // 로그인 기능이 꺼져 있음(클라이언트 ID 미설정 또는 스위치 오프) — 사용자 잘못이 아니라 503.

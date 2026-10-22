@@ -311,7 +311,7 @@ export default function App() {
       )}
 
       {/* 데이터 스코프는 게스트 ID(안정)라 닉네임이 바뀌어도 ChatCoach를 리마운트하지 않는다. */}
-      <ChatCoach agentEnabled={agentEnabled} />
+      <ChatCoach agentEnabled={agentEnabled} isLoggedIn={!!auth?.token} />
 
       {/* 마이페이지 — 헤더 닉네임으로 연다. 오버레이라 ChatCoach가 마운트된 채 위에 얹혀
           대화·계획 상태가 유지된다(닉네임 변경 오버레이와 같은 이유). */}

@@ -1146,6 +1146,21 @@
 
 ### 목표 예치
 
+- [ ] **게스트는 예치 불가** — 게스트로 계획을 만들고 고정해도 예치 입력·현황이 보이지 않고,
+      예치 조회 요청도 발생하지 않는다. 로그아웃 직후에도 예치 블록이 숨겨진다.
+- [ ] **로그인 후 사용** — Google 로그인 후 내 고정된 계획을 열면 예치 블록이 나타난다.
+- [ ] **서버에서도 게스트 차단** — 유효한 게스트 ID만으로 GET·POST하면 둘 다
+      403 `AUTH_LOGIN_REQUIRED`. 차감·예치 등록이 일어나지 않는다:
+
+  ```bash
+  API=http://localhost:8080/api/v1; G=qa-deposit-guest
+  curl -s -i "$API/plans/<ID>/deposit" -H "X-Guest-Id: $G"
+  curl -s -i -X POST "$API/plans/<ID>/deposit" -H "X-Guest-Id: $G" \
+    -H 'Content-Type: application/json' -d '{"amount":200}'
+  # Basic 등 가짜 Authorization 헤더로도 우회 불가: 403 AUTH_LOGIN_REQUIRED
+  # Bearer invalid를 보내면: 401 AUTH_TOKEN_INVALID
+  ```
+
 - [ ] **초안에는 예치 블록이 없다** — 계획을 고정해야 체크리스트 패널에 "목표 예치 걸기"가 뜬다
 - [ ] **걸면 잔액이 줄고 현황이 보인다** — 200P를 걸면 잔액이 200P 줄고, 블록이
       "목표 예치 200P · 현재 달성률 N% → 지금 종결하면 M P 환급"으로 바뀐다
@@ -1159,15 +1174,16 @@
 - [ ] 서버 확인(curl) — 판정은 전부 서버다:
 
   ```bash
-  API=http://localhost:8080/api/v1; G=qa-deposit-0001
+  API=http://localhost:8080/api/v1
+  # MEMBER_TOKEN에는 로그인 응답의 세션 토큰을 로컬 환경변수로 설정한다(문서·커밋에 기록 금지).
   # 초안에 예치 → 409 DEPOSIT_NOT_ALLOWED
-  curl -s -X POST $API/plans/<DRAFT_ID>/deposit -H "X-Guest-Id: $G" \
+  curl -s -X POST "$API/plans/<DRAFT_ID>/deposit" -H "Authorization: Bearer $MEMBER_TOKEN" \
     -H 'Content-Type: application/json' -d '{"amount":200}'
   # 범위 밖(9 / 501) → 400 DEPOSIT_AMOUNT_INVALID
   # 같은 계획에 두 번 → 409 DEPOSIT_ALREADY_EXISTS (두 번째는 차감되지 않는다 — 잔액 확인)
   # 남의 계획 → 404 PLAN_NOT_FOUND (존재 자체를 숨긴다)
   # 잔액보다 큰 금액 → 400 POINTS_INSUFFICIENT, 그리고 예치는 걸리지 않아야 한다:
-  curl -s $API/plans/<ID>/deposit -H "X-Guest-Id: $G"   # 기대: 404 DEPOSIT_NOT_FOUND
+  curl -s "$API/plans/<ID>/deposit" -H "Authorization: Bearer $MEMBER_TOKEN"   # 기대: 404 DEPOSIT_NOT_FOUND
   ```
 
 ### 원장 불변식 (모든 새 경로 뒤)
