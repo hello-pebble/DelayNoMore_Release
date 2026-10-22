@@ -61,7 +61,6 @@ public enum ErrorCode {
     // 복귀한다. 게스트로 조용히 폴백하지 않는 이유: 만료를 숨기면 이후 쓰기가 게스트 보관함에
     // 잘못 귀속되고, 사용자는 로그인돼 있다고 믿은 채 데이터가 갈라진다.
     AUTH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인이 만료되었습니다. 다시 로그인해주세요."),
-    AUTH_LOGIN_REQUIRED(HttpStatus.FORBIDDEN, "로그인 후 이용할 수 있습니다."),
     // Google ID 토큰 검증 실패(서명·aud 불일치·만료) — 사용자가 재로그인으로 해소하므로 401.
     AUTH_GOOGLE_INVALID(HttpStatus.UNAUTHORIZED, "Google 인증에 실패했습니다. 다시 시도해주세요."),
     // 로그인 기능이 꺼져 있음(클라이언트 ID 미설정 또는 스위치 오프) — 사용자 잘못이 아니라 503.
@@ -72,14 +71,6 @@ public enum ErrorCode {
     // 개수 한도 — 사용자가 기존 자료를 지워 해소할 수 있으므로 400 + 액션 가능한 메시지.
     KNOWLEDGE_LIMIT_EXCEEDED(HttpStatus.BAD_REQUEST, "이 계획의 참고 자료가 가득 찼습니다(최대 10개). 기존 자료를 삭제한 뒤 다시 추가해주세요."),
     KNOWLEDGE_DOC_TOO_LARGE(HttpStatus.BAD_REQUEST, "자료가 너무 깁니다(최대 20,000자). 나눠서 추가해주세요."),
-    // 목표 예치(v0.32.0) — 계획당 한 건이라는 제약과 충돌하므로 409(리소스 현재 상태와의 충돌).
-    // 판정 주체는 이 검사가 아니라 plan_deposits의 PK다(0행을 이 코드로 옮길 뿐).
-    DEPOSIT_ALREADY_EXISTS(HttpStatus.CONFLICT, "이 계획에는 이미 목표 예치가 걸려 있습니다."),
-    // 고정(CONFIRMED)이 아닌 계획에 예치 시도 — 상태와의 충돌이므로 409(PLAN_LOCKED 계열).
-    DEPOSIT_NOT_ALLOWED(HttpStatus.CONFLICT, "고정(CONFIRMED)한 계획에만 목표 예치를 걸 수 있습니다."),
-    // 금액 범위 위반 — 사용자가 값을 고쳐 해소할 수 있으므로 400.
-    DEPOSIT_AMOUNT_INVALID(HttpStatus.BAD_REQUEST, "예치 금액은 10~500 포인트 사이여야 합니다."),
-    DEPOSIT_NOT_FOUND(HttpStatus.NOT_FOUND, "이 계획에 걸린 목표 예치가 없습니다."),
     // 슬랙 연결은 로그인(회원) 전용 — 게스트 ID는 브라우저를 잃으면 재연결할 수 없어, 슬랙이라는
     // 외부 채널을 휘발성 신원에 묶으면 전송이 유령 계정으로 이어진다. 로그인으로 해소 가능하니 403.
     SLACK_LOGIN_REQUIRED(HttpStatus.FORBIDDEN, "슬랙 연결은 로그인 후 이용할 수 있습니다."),

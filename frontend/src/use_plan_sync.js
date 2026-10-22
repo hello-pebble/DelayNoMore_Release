@@ -19,7 +19,7 @@ const SYNC_DEBOUNCE_MILLIS = 600;
  */
 export function usePlanSync({
   draftChecklist, activePlanId,
-  setSlots, setDraftChecklist, setActivePlanId, setTodayDashboard,
+  setSlots, setDraftChecklist, setActivePlanId,
   notify, onRestore
 }) {
   const [savedPlans, setSavedPlans] = useState([]); // GET /plans 결과 (최근 저장순)
@@ -80,7 +80,6 @@ export function usePlanSync({
   // 차단한다(restorePlan의 "방금 서버에서 읽은 상태" 처리와 같은 패턴). 활성 계획이 아니면
   // 목록 스냅샷만 갱신한다.
   const applyServerPlan = (plan) => {
-    setTodayDashboard(null);
     if (plan.id === activePlanId) {
       const { slots: nextSlots, draftChecklist: nextDraft } = fromPlanResponse(plan);
       lastSyncedRef.current = JSON.stringify(toPlanPayload(nextDraft));

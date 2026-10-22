@@ -12,9 +12,13 @@ export function formatLocalDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-// 오늘(+offsetDays)을 로컬 기준 'YYYY-MM-DD'로 반환한다.
+// 오늘(+offsetDays)을 서비스 기준 시간대(Asia/Seoul)의 'YYYY-MM-DD'로 반환한다. 서버의 "오늘"
+// (KstDates.today — 지난 날짜 잠금·이월·오늘 대시보드)과 같은 기준이어야 브라우저 시간대가
+// 달라도 화면의 오늘과 서버의 오늘이 어긋나지 않는다. en-CA 로캘이 YYYY-MM-DD로 포맷한다.
 export function todayStr(offsetDays = 0) {
-  const d = new Date();
+  const kst = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date());
+  if (!offsetDays) return kst;
+  const d = parseLocalDate(kst);
   d.setDate(d.getDate() + offsetDays);
   return formatLocalDate(d);
 }

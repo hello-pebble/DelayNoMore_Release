@@ -419,6 +419,10 @@ CREATE UNIQUE INDEX uq_point_ledger_tx_account ON point_ledger (tx_key, account)
 
 ## 11. 같은 문제의 여섯 번째 판본 — 예치는 한 번 걸고 한 번 정산한다 (v0.32.0)
 
+> **기록용 (v0.33.0에서 목표 예치·완주 보상 제거).** 아래 코드와 테스트 이름은 당시 것이라 더 이상 저장소에
+> 없다. 정산권 경쟁(조건부 UPDATE)과 "검사를 모든 변경 앞에"·"정산을 삭제보다 먼저" 같은 교훈은 챌린지
+> 정산에도 그대로 적용된다.
+
 목표 예치(1인 에스크로)가 지키는 불변식 둘:
 
 1. **한 계획에 예치는 최대 하나** — 판정은 `plan_deposits.plan_id` PK(인메모리는 `putIfAbsent`).
