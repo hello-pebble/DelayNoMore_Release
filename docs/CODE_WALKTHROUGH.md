@@ -18,7 +18,7 @@
 | [2](#2-ai-에이전트-루프--ai가-도구를-쓰는-방법) | AI 에이전트 루프 |
 | [3](#3-포인트-원장--복식부기가-뭔가요) | 포인트 원장 — 복식부기 |
 | [4](#4-동시성--판정을-쓰기-안으로) | 동시성 — 판정을 쓰기 안으로 |
-| [5](#5-보상과-예치--포인트-경제가-닫히는-곳) | 보상과 예치 |
+| [5](#5-포인트-경제--챌린지로만-움직인다) | 포인트 경제 |
 | [6](#6-자료-검색--임베딩-없이-한국어를-찾는-법) | 자료 검색 |
 | [7](#7-비용-방어--두-층으로-막는다) | 비용 방어 |
 | [8](#8-스트리밍sse-깊이-파기) | **스트리밍(SSE) 깊이 파기** |
@@ -75,7 +75,6 @@
 public boolean allowsStructuralEdit()  { return this == DRAFT; }      // 내용 수정 가능?
 public boolean allowsCompletionToggle(){ return !isTerminal(); }      // 체크 가능?
 public boolean allowsDomainResearch()  { return this != DRAFT; }      // 자료 검색 가능?
-public boolean allowsDeposit()         { return this == CONFIRMED; }  // 포인트 걸기 가능?
 ```
 
 게임 캐릭터가 레벨에 따라 쓸 수 있는 스킬이 다른 것과 같다. **"지금 이거 해도 돼?"라는 질문의
@@ -100,8 +99,8 @@ public TaskCounts countAllTasks() {        // → {완료 개수, 전체 개수}
 }
 ```
 
-진행률 표시 · 챌린지 승패 판정 · 완주 보상 · 예치 환급률 — **네 가지가 전부 이 함수 하나를
-쓴다.** 각자 세면 "화면엔 100%인데 보상은 안 나오는" 사고가 난다.
+진행률 표시 · 챌린지 승패 판정 — **둘 다 이 함수 하나를 쓴다.** 각자 세면 "화면엔 100%인데
+챌린지에서는 미완주"인 사고가 난다.
 
 ---
 
@@ -224,7 +223,7 @@ return inserted == 2;
 | 1행 | 한쪽만 들어감 → 합계가 0이 아님 | **예외를 던져 전부 되돌림** |
 
 **`tx_key`(멱등 키)가 핵심이다.** 인터넷이 끊겨 사용자가 버튼을 두 번 눌러도, 만들어지는 영수증
-번호가 `deposit:42`로 **똑같기** 때문에 두 번째는 DB가 튕겨낸다. "이미 처리했나?" 하고 미리
+번호가 `join:7:minsu`로 **똑같기** 때문에 두 번째는 DB가 튕겨낸다. "이미 처리했나?" 하고 미리
 조회할 필요가 없다.
 
 | 사건 | 멱등 키 모양 |
@@ -232,9 +231,6 @@ return inserted == 2;
 | 가입 지급 | `signup:<owner>` |
 | 챌린지 참가 | `join:<challengeId>:<owner>` |
 | 챌린지 정산 | `payout:<challengeId>:<owner>` |
-| 완주 보상 | `earn:plan:<planId>` |
-| 목표 예치 | `deposit:<planId>` |
-| 예치 환급 / 소각 | `deposit-refund:<planId>` / `deposit-forfeit:<planId>` |
 
 ### 필수 함수 ⑦ — `debit()` : 순서가 곧 규칙
 
@@ -320,89 +316,30 @@ if (reserved == 0) throw CHALLENGE_FULL;   // ← 여기서 던지면 1·2단계
 
 ---
 
-## 5. 보상과 예치 — 포인트 경제가 닫히는 곳
+## 5. 포인트 경제 — 챌린지로만 움직인다
 
 ```
-   system:issuance (발행)                           system:burn (소각)
-        │                                                ▲
-        │ 가입 1000P                                      │ 못 지킨 만큼
-        │ 완주 보상 50~200P                                │
-        ▼                                                │
-   ┌──────────┐    걸기 10~500P     ┌──────────────────┐ │
-   │  내 지갑  │ ─────────────────▶ │ escrow:plan:42   │─┘
-   │          │ ◀───────────────── │  (예치 금고)      │
-   └──────────┘   달성률만큼 환급    └──────────────────┘
-                                      정산 후 반드시 0
+   system:issuance (발행)
+        │ 가입 1000P (한 번)
+        ▼
+   ┌──────────┐   참가비    ┌────────────────────────┐
+   │  내 지갑  │ ─────────▶ │ escrow:challenge:7     │
+   │          │ ◀───────── │  (챌린지 예치 금고)      │
+   └──────────┘  완주 배당   └────────────────────────┘
+                 / 환불
 ```
 
-### 필수 함수 ⑨ — `PlanRewardService.rewardFor()` : 완주 보상 계산
+v0.33.0부터 **일반 목표(계획)는 할 일·완료율만 다루고 포인트와 무관하다.** 계획을 완료·중단·삭제해도
+포인트는 움직이지 않는다. 포인트는 가입 지급과 챌린지 참가비 예치·정산(참가자끼리 재분배 = 제로섬)
+으로만 움직인다. 챌린지 정산의 완주 판정은 `Plan.countAllTasks()`(필수 함수 ③)를 쓰고, 정산권 경쟁은
+조건부 UPDATE가 단독으로 판정한다.
 
-```java
-public static int rewardFor(Plan plan) {
-    TaskCounts counts = plan.countAllTasks();
-    if (counts.total() == 0 || counts.completed() != counts.total()) return 0;  // 100% 아니면 0
-    int duration = plan.duration() == null ? 1 : plan.duration();
-    return Math.clamp((long) duration * PER_DAY, MIN_REWARD, MAX_REWARD);       // 10P/일, 50~200
-}
-```
-
-| 계획 | 완료율 | 계산 | 보상 |
-| :--- | :---: | :--- | ---: |
-| 3일 계획 | 100% | 3×10=30 → 하한 50 | **50P** |
-| 14일 계획 | 100% | 14×10=140 | **140P** |
-| 30일 계획 | 100% | 30×10=300 → 상한 200 | **200P** |
-| 14일 계획 | 93% | 100%가 아님 | **0P** |
-
-### 필수 함수 ⑩ — `PlanDeposit.refundFor()` : 달성률 비례 환급
-
-```java
-public static int refundFor(int amount, int completed, int total) {
-    if (total <= 0) return amount;                      // 할 일이 없었으면 전액 환급
-    int done = Math.min(Math.max(completed, 0), total);
-    return (int) ((long) amount * done / total);        // 내림 나눗셈
-}
-```
-
-100P를 걸었을 때:
-
-| 달성률 | 환급 | 소각 | 설명 |
-| :---: | ---: | ---: | :--- |
-| 10/10 (100%) | 100P | 0P | 전액 회수 |
-| 7/10 (70%) | 70P | 30P | 못 지킨 만큼만 잃음 |
-| 0/10 (0%) | 0P | 100P | 전액 소각 |
-
-> **내림 나눗셈인 이유:** 환급액이 예치금을 절대 넘지 못하게 하려고. 100%일 때는
-> `amount × total / total`이라 정확히 전액이 돌아온다 — 내림이 손해를 만들지 않는다.
-
-### 필수 함수 ⑪ — `settleOnTerminal()` : 정산의 단일 입구
-
-```java
-public void settleOnTerminal(Plan plan) {
-    PlanDeposit deposit = ...;
-    if (deposit == null || deposit.settled()) return;
-
-    int refund = PlanDeposit.refundFor(deposit.amount(), counts.completed(), counts.total());
-
-    if (!depositRepository.claimSettlement(plan.id(), now, refund)) return;  // ★ 정산권 경쟁
-    if (refund > 0)    wallets.credit(...);   // 돌려주고
-    if (forfeited > 0) ledger.post(...);      // 나머지는 소각 계정으로
-}
-```
-
-`claimSettlement`도 **조건부 UPDATE**다 — `WHERE settled_at IS NULL`. 동시에 "완료 버튼"과
-"삭제 버튼"이 눌려도 **정확히 한 명만** 정산권을 얻고 나머지는 조용히 물러난다. 이중 환급이
-원천 차단된다.
-
-| 계획이 이렇게 끝나면 | 호출되는 곳 | 보상 | 예치 정산 |
-| :--- | :--- | :---: | :---: |
-| 완료 (COMPLETED) | `PlanService.complete()` | ✅ | ✅ |
-| 중단 (CANCELLED) | `PlanService.cancel()` | ❌ | ✅ |
-| 삭제 | `PlanService.delete()` | ❌ | ✅ (**삭제 전에** 실행) |
-
-> **삭제 순서는 실제 버그였다.** DB에서 계획을 지우면 예치 행이 연쇄 삭제(CASCADE)돼 버려서,
-> 나중에 정산하려 하면 근거가 이미 사라진 뒤였다. 포인트가 `escrow:plan:4`에 영원히 갇혔다.
-> 그래서 **"정산 → 삭제"** 순서가 규칙이다. 이 함정은 실제 PostgreSQL에 붙여 돌렸을 때만
-> 드러났다(인메모리에는 CASCADE가 없다) — [CONCURRENCY.md 11장](CONCURRENCY.md).
+> **지운 것과 남긴 것.** v0.32.0의 개인 목표 예치·완주 보상은 v0.33.0에서 제거됐다. 약속의 상대가
+> 자기 자신뿐이라 압박이 약한 데 비해 소각 계정·정산 경쟁·삭제 순서 같은 복잡도가 컸기 때문이다.
+> 운영 DB의 미정산 예치는 마이그레이션 `V14`가 전액 환급했다. 과거 원장 행은 이력이라 남아 있고,
+> 그래서 `PointTxKind`의 `PLAN_*` 값은 "읽기 위해서만" 둔다(지우면 거래 내역 조회가 깨진다).
+> 당시 겪은 함정(삭제 시 CASCADE가 정산 근거를 지움 · 인메모리와 JDBC의 롤백 차이)은
+> [CONCURRENCY.md 11장](CONCURRENCY.md)에 기록으로 남아 있다.
 
 ---
 
@@ -791,7 +728,7 @@ done.await();   // ★ 여기서 멈춰 서서 기다린다
 | 그래서 지켜야 할 규칙 | **검사를 모든 변경 앞에** | 순서 자유(롤백이 받쳐줌) |
 | 속도 | 매우 빠름 | 네트워크 왕복 |
 
-**이 차이가 실제 버그를 만들었다.** 목표 예치에서 "예치 행 등록 → 잔액 차감" 순서로 짰더니,
+**이 차이가 실제 버그를 만들었다.** (v0.32.0의 목표 예치 — 지금은 제거됨) "예치 행 등록 → 잔액 차감" 순서로 짰더니,
 JDBC는 차감 실패 시 등록도 롤백됐지만 **인메모리는 "돈은 안 냈는데 예치는 걸린" 행이 남았다.**
 그 행은 나중에 정산되면서 **낸 적 없는 돈을 돌려준다.** 그래서 잔액 검사를 등록보다 앞으로
 옮겼다.
@@ -835,9 +772,6 @@ if (bearer != null) {
     return authRepository.findUserIdByToken(hash(bearer))
             .orElseThrow(() -> new BusinessException(AUTH_TOKEN_INVALID));  // 401
 }
-if (parameter.getParameterAnnotation(Owner.class).loginRequired()) {
-    throw new BusinessException(AUTH_LOGIN_REQUIRED);                       // 403 — 게스트 폴백 ❌
-}
 return OwnerGuestId.resolve(webRequest.getHeader("X-Guest-Id"));
 ```
 
@@ -854,11 +788,6 @@ return OwnerGuestId.resolve(webRequest.getHeader("X-Guest-Id"));
 **만료된 세션을 게스트로 조용히 강등하지 않는 이유:** 사용자는 로그인 상태라고 믿는데 데이터는
 게스트 보관함에 쌓인다. 어느 쪽에도 온전한 기록이 남지 않는 최악의 결과다. 401을 던지면 프론트가
 저장된 auth를 지우고 명시적으로 게스트로 복귀한다.
-
-**회원 전용 API는 파라미터 한 줄로 표시한다.** 목표 예치 컨트롤러는 `@Owner(loginRequired = true)`
-라서 Bearer 없이 게스트 ID만 보내면 403 `AUTH_LOGIN_REQUIRED`로 거부된다(게스트 경제는 참가비
-소멸·한도 우회가 얽혀 있어 예치는 로그인 회원에게만 연다). 판정이 이 한 지점이라 컨트롤러마다
-if문을 두지 않는다.
 
 ### 9-5. 파생 상태는 저장하지 않는다
 
@@ -933,7 +862,7 @@ React 초보가 가장 많이 헷갈리는 지점이고, 이 코드베이스는 
 | 에이전트 추적 | `activeSteps`, `expandedTrace` | 도구 호출 과정 패널 |
 | 서버 스냅샷 | `savedPlans`, `todayDashboard` | 서버에서 읽어온 목록 |
 | 회고 | `reflections`, `reflectionDrafts` | 저장된 회고 / 입력 중인 회고 |
-| 부가 기능 | `knowledgeDocs`, `deposit` | 자료·예치 패널 |
+| 부가 기능 | `knowledgeDocs` | 자료 패널 |
 
 **핵심 구분 하나:** `reflections`(서버에 저장된 것)와 `reflectionDrafts`(입력 중인 것)를 나눈다.
 합치면 타이핑 도중에 서버 응답이 도착해 **사용자가 쓰던 글을 덮어쓴다.**
@@ -1131,9 +1060,7 @@ const applyServerPlan = (plan) => {
 | ⑥ | `PointLedgerRepository.post()` | `points/repository/` | 두 줄 동시 기록, 중복은 DB가 튕김 |
 | ⑦ | `PointWalletRepository.debit()` | 〃 | 기표 먼저 → 잔액 나중 (순서가 규칙) |
 | ⑧ | `ChallengeRepository.join()` | `challenge/repository/` | 3단 원자 작업 — 정원 초과 원천 차단 |
-| ⑨ | `PlanRewardService.rewardFor()` | `points/service/` | 완주 보상 = 기간×10 (50~200) |
-| ⑩ | `PlanDeposit.refundFor()` | `points/entity/` | 환급 = 예치금 × 달성률 (내림) |
-| ⑪ | `PlanDepositService.settleOnTerminal()` | `points/service/` | 정산의 단일 입구, 정산권 경쟁 |
+| ⑨~⑪ | (v0.33.0에서 제거) | — | 완주 보상·목표 예치 정산 — 번호는 유지 |
 | ⑫ | `BigramLexicalSearcher.dice()` | `knowledge/search/` | 글자 2개 겹침으로 한국어 검색 |
 | ⑬ | `KnowledgeChunker.split()` | `knowledge/service/` | 자료를 500자씩(100자 겹침) 조각내기 |
 | ⑭ | `AiRateLimiter.tryAcquire()` | `ai/usage/` | 올려보고 넘치면 되돌리기 |

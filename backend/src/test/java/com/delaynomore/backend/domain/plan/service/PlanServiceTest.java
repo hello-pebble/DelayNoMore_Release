@@ -47,8 +47,7 @@ class PlanServiceTest {
     private final InMemoryKnowledgeRepository knowledgeRepository = new InMemoryKnowledgeRepository();
     private final PlanService planService = new PlanService(planRepository, new InMemoryReflectionRepository(),
             knowledgeRepository, auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
-            points.rewardService(), points.depositService());
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

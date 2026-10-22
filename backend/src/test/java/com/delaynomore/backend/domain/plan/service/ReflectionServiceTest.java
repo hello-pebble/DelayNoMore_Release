@@ -45,8 +45,7 @@ class ReflectionServiceTest {
     private final AuditEventService auditEventService =
             new AuditEventService(new InMemoryAuditEventRepository());
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
-            points.rewardService(), points.depositService());
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()));
     private final ReflectionService reflectionService = new ReflectionService(planRepository, reflectionRepository, auditEventService);
 
     // 오늘 5개 중 3개 완료된 계획을 보관한다(status 지정 가능 — CONFIRMED 회고 허용 검증용).

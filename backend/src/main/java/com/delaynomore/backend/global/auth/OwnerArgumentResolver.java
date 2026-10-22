@@ -22,8 +22,8 @@ import org.springframework.web.method.support.ModelAndViewContainer;
  *       세션이 없거나 만료면 <b>게스트로 조용히 폴백하지 않고 401을 던진다</b> — 만료를 숨기면
  *       이후 쓰기가 게스트 보관함에 잘못 귀속되고 사용자는 로그인 상태라고 믿은 채 데이터가
  *       갈라진다. 프론트는 401을 받으면 저장된 auth를 지우고 게스트로 복귀한다(db_service.js).</li>
- *   <li>Bearer가 없으면 loginRequired 엔드포인트는 403으로 거부하고, 나머지는 기존
- *       X-Guest-Id 해석(OwnerGuestId)으로 폴백한다.</li>
+ *   <li>Authorization이 없으면 기존 X-Guest-Id 해석(OwnerGuestId)으로 폴백한다 — 로그인 도입
+ *       이전의 모든 게스트 요청이 그대로 동작한다.</li>
  * </ul>
  */
 // ponytail: Bearer 요청마다 세션 SELECT 1회 — 저트래픽 전제, 병목이 되면 짧은 TTL 캐시.
@@ -48,9 +48,6 @@ public class OwnerArgumentResolver implements HandlerMethodArgumentResolver {
         if (bearer != null) {
             return authRepository.findUserIdByToken(SessionToken.hash(bearer))
                     .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_TOKEN_INVALID));
-        }
-        if (parameter.getParameterAnnotation(Owner.class).loginRequired()) {
-            throw new BusinessException(ErrorCode.AUTH_LOGIN_REQUIRED);
         }
         return OwnerGuestId.resolve(webRequest.getHeader("X-Guest-Id"));
     }

@@ -40,8 +40,7 @@ class PlanServiceConcurrencyTest {
             new InMemoryReflectionRepository(),
             new com.delaynomore.backend.domain.knowledge.repository.InMemoryKnowledgeRepository(),
             new AuditEventService(new InMemoryAuditEventRepository()),
-                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
-            points.rewardService(), points.depositService());
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()));
 
     private PlanSaveRequest request(String goalName) {
         Map<String, Object> tasks = Map.of(

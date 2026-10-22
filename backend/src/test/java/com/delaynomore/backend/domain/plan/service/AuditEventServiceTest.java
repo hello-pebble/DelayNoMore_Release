@@ -41,8 +41,7 @@ class AuditEventServiceTest {
     private final AuditEventService auditEventService =
             new AuditEventService(auditEventRepository);
     private final PlanService planService = new PlanService(planRepository, reflectionRepository, new InMemoryKnowledgeRepository(), auditEventService,
-                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()),
-            points.rewardService(), points.depositService());
+                new ChallengeService(new InMemoryChallengeRepository(points.wallets()), new InMemoryPlanRepository()));
     private final ReflectionService reflectionService =
             new ReflectionService(planRepository, reflectionRepository, auditEventService);
 

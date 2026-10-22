@@ -142,17 +142,16 @@ SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
 | :--- | :--- |
 | `system:issuance` | 음수. 절댓값 = 지금까지 신규 지급한 포인트 총 발행량 |
 | `system:opening` | 음수. V12 마이그레이션 시점의 기초잔액 합계(원장 이전 세계의 몫) |
-| `system:burn` | 양수. 지금까지 소멸한 총량(v0.32.0 — 목표 예치 미달성분). `system:issuance`의 절댓값과 나란히 보면 경제의 순환이 읽힌다 |
-| `escrow:plan:<id>` | 진행 중이면 걸어 둔 예치금, **정산 후에는 0이어야 한다**(환급·소각이 모두 빠져나간다 — 0이 아니면 버그) |
+| `system:burn` | 양수. **과거 기록** — v0.32.0 목표 예치의 미달성분 소각 총량. v0.33.0에서 소각 경로가 제거돼 더 늘지 않는다 |
+| `escrow:plan:<id>` | **과거 기록** — v0.32.0 목표 예치 계정. V14가 미정산분을 환급했으므로 **전부 0이어야 한다**(0이 아니면 환급 누락) |
 | `escrow:challenge:<id>` | 진행 중이면 예치된 참가비, **정산 후 남은 값은 소멸분**(정수 나눗셈 나머지 + 게스트 병합 충돌로 버려진 참가비) |
 | 그 외 | 사용자·게스트 계정 — 지갑 잔액과 같아야 한다 |
 
 ```sql
--- 계획 예치는 정산 후 0으로 닫혀야 한다(v0.32.0) — 0행이 아니면 버그
-SELECT l.account, sum(l.amount) AS residue
-  FROM point_ledger l JOIN plan_deposits d ON l.account = 'escrow:plan:' || d.plan_id
- WHERE d.settled_at IS NOT NULL
- GROUP BY l.account HAVING sum(l.amount) <> 0;
+-- 목표 예치는 v0.33.0(V14)에서 제거됐다 — 과거 계획 예치 계정은 전부 0이어야 한다. 0행이 아니면 버그
+SELECT account, sum(amount) AS residue
+  FROM point_ledger WHERE account LIKE 'escrow:plan:%'
+ GROUP BY account HAVING sum(amount) <> 0;
 
 -- 챌린지 정산이 끝났는데도 예치 계정에 남아 있는 포인트(소멸분) 상위 목록
 SELECT l.account, sum(l.amount) AS residue
