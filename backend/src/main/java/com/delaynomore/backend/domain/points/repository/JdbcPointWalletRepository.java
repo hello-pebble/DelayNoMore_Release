@@ -66,6 +66,11 @@ public class JdbcPointWalletRepository implements PointWalletRepository {
     }
 
     @Override
+    public void postSystemTransfer(PointTransfer transfer) {
+        ledger.post(transfer);
+    }
+
+    @Override
     public void credit(String owner, int amount, PointTransfer transfer) {
         ensureWallet(owner);
         if (!ledger.post(transfer)) {

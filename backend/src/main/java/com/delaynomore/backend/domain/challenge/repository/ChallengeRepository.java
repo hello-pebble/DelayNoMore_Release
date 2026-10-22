@@ -7,6 +7,7 @@ import com.delaynomore.backend.domain.points.entity.PointTxKind;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 // 챌린지 저장소 계약 — 구현은 프로필로 선택된다(PlanRepository와 같은 관례):
 //   기본(!postgres) = InMemoryChallengeRepository(휘발성, 단위/동시성 테스트용)
@@ -67,6 +68,31 @@ public interface ChallengeRepository {
     // 환불 경로의 "시작 전" 조건이 원자 구간 안에 있어야 하는 이유: 읽을 땐 미달이었는데 그 사이
     // 마지막 참가로 시작된 챌린지를 환불로 마감하면 "시작됐는데 환불"이 된다(TOCTOU).
     boolean claimSettlement(long challengeId, String settledAt, boolean requireStarted);
+
+    // === 기간 내 완주 기록 (v0.34.0) ===
+    // 정산은 "정산 순간의 완료율"이 아니라 마감 전까지 서버가 기록한 completed_at만 본다. 기록 규칙:
+    // 미정산이고 (미시작이거나 지금이 endsAt 이전)인 참가만 갱신하므로 마감·정산 이후의 변경은
+    // 무시된다 — 마감 시각의 상태가 동결된다.
+    //
+    // [잠금 규약] 호출자는 이미 그 목표(plan) 행의 잠금 안에 있다(PlanService의 mutate/update/delete
+    // 람다). 구현은 이 목표가 걸린 챌린지 행을 id 오름차순으로 잠가(정산의 claim과 같은 행) **잠금을 얻은
+    // 뒤** 시각을 확정하고 판정한다. 잠금 순서는 목표 → 챌린지 → 참가 행 → 지갑 행이다(docs/CONCURRENCY.md).
+
+    // 이 목표를 쓰는 모든 참가의 완주 기록을 갱신한다(allDone이면 completed_at을 채우고, 아니면 비운다).
+    void markCompletion(long planId, boolean allDone);
+
+    // 참가 직후 **그 참가 레코드 한 건만** 초기화한다. 같은 목표의 다른 챌린지까지 건드리면 지갑 잠금을
+    // 쥔 뒤 다른 챌린지를 잠그게 되어 정산과 교착할 수 있다(참가 경로는 챌린지 1개만 잡는다).
+    void seedCompletion(long challengeId, String owner, boolean allDone);
+
+    // 정산 보류 중인 챌린지(v0.34.0 이전에 이미 마감이 지났는데 정산되지 않은 건) — 완주 기록을 소급해
+    // 증명할 수 없어 자동 정산하지 않는다. 화면이 "정산 확인 중"으로 보여주는 근거다.
+    Set<Long> findHeldChallengeIds();
+
+    // 소멸 기표 — 정산에서 아무에게도 가지 않은 몫을 예치 계정에서 소각 계정으로 옮긴다. claim을 딴 정산
+    // 트랜잭션 안에서만 호출한다. 0 이하의 금액이면 아무것도 하지 않는다(PointTransfer가 0원 이동을
+    // 거부하므로, 나누어떨어지는 정산은 여기서 걸러진다).
+    void recordForfeit(long challengeId, int amount);
 
     // 정산 지급 — 지갑 잔액 증가 + 참가 행에 payout 기록 + 원장 기표. claimSettlement가 true를
     // 돌려준 정산 트랜잭션 안에서만 호출한다(JDBC는 중간 실패 시 claim째 롤백, 인메모리는 실패할

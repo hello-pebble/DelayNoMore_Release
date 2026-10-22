@@ -82,7 +82,9 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
 
     @Override
     public List<ChallengeParticipant> findParticipants(long challengeId) {
-        return List.copyOf(participants.getOrDefault(challengeId, new ConcurrentHashMap<>()).values());
+        return participants.getOrDefault(challengeId, new ConcurrentHashMap<>()).values().stream()
+                .sorted(Comparator.comparing(ChallengeParticipant::owner)) // 정산 지급 순서 고정(owner 오름차순)
+                .toList();
     }
 
     @Override
@@ -120,7 +122,7 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
             wallets.debit(owner, current.entryFee(), new PointTransfer("join:" + id + ":" + owner,
                     owner, PointAccounts.escrowOfChallenge(id), current.entryFee(),
                     PointTxKind.CHALLENGE_ENTRY, "challenge", String.valueOf(id), joinedAt));
-            joined.put(owner, new ChallengeParticipant(owner, planId, null));
+            joined.put(owner, new ChallengeParticipant(owner, planId, null, null));
             Challenge next = current.withParticipantCount(current.participantCount() + 1);
             // 마지막 자리를 채운 참가가 시작 시각을 기록한다 — "정원이 찬 순간 = 시작"의 판정이
             // 이 원자 구간 안에 있어, 환불 정산(claimSettlement의 시작 전 조건)과 어긋나지 않는다.
@@ -146,6 +148,70 @@ public class InMemoryChallengeRepository implements ChallengeRepository {
             return current.withSettledAt(settledAt);
         });
         return claimed.get();
+    }
+
+    // 완주 기록 — 챌린지 키별 원자 구간(정산 claim·참가와 같은 구간) 안에서 판정·갱신한다. 시각은 구간에
+    // 들어온 뒤 확정하므로 구간 밖 대기가 마감 전/후 판정을 오염시키지 않는다. 구간이 곧 JDBC의
+    // "챌린지 행 FOR UPDATE"에 대응한다. 챌린지 id 오름차순으로 순회해 잠금 순서를 JDBC와 맞춘다.
+    @Override
+    public void markCompletion(long planId, boolean allDone) {
+        participants.entrySet().stream()
+                .filter(e -> e.getValue().values().stream().anyMatch(p -> Long.valueOf(planId).equals(p.planId())))
+                .map(Map.Entry::getKey)
+                .sorted()
+                .forEach(challengeId -> challenges.computeIfPresent(challengeId, (id, current) -> {
+                    if (isOpenForRecording(current)) {
+                        participants.getOrDefault(id, new ConcurrentHashMap<>()).replaceAll((owner, p) ->
+                                Long.valueOf(planId).equals(p.planId())
+                                        ? p.withCompletedAt(completedAtFor(p, allDone)) : p);
+                    }
+                    return current;
+                }));
+    }
+
+    @Override
+    public void seedCompletion(long challengeId, String owner, boolean allDone) {
+        challenges.computeIfPresent(challengeId, (id, current) -> {
+            // 참가 직후의 시드는 마감 시각을 다시 보지 않는다 — 참가 시각은 정의상 마감(참가 시각 + 기간)
+            // 이전이다. 미정산이기만 하면 된다(JDBC 구현도 같다).
+            if (!current.settled()) {
+                participants.getOrDefault(id, new ConcurrentHashMap<>())
+                        .computeIfPresent(owner, (key, p) -> p.withCompletedAt(completedAtFor(p, allDone)));
+            }
+            return current;
+        });
+    }
+
+    // 기록 가능 = 미정산 + (미시작 또는 지금 < endsAt). 마감 이후·정산 이후의 변경은 무시된다.
+    private static boolean isOpenForRecording(Challenge challenge) {
+        if (challenge.settled()) {
+            return false;
+        }
+        return !challenge.started() || Instant.now().isBefore(Instant.parse(challenge.endsAt()));
+    }
+
+    // 이미 완주 기록이 있으면 유지(처음 도달한 시각), 없으면 지금. 해제되면 비운다.
+    private static String completedAtFor(ChallengeParticipant participant, boolean allDone) {
+        if (!allDone) {
+            return null;
+        }
+        return participant.completedAt() != null ? participant.completedAt() : Instant.now().toString();
+    }
+
+    // 인메모리에는 v0.34.0 이전 데이터가 없으므로 보류 건이 없다.
+    @Override
+    public Set<Long> findHeldChallengeIds() {
+        return Set.of();
+    }
+
+    @Override
+    public void recordForfeit(long challengeId, int amount) {
+        if (amount <= 0) {
+            return;
+        }
+        wallets.postSystemTransfer(new PointTransfer("forfeit:" + challengeId,
+                PointAccounts.escrowOfChallenge(challengeId), PointAccounts.BURN, amount,
+                PointTxKind.CHALLENGE_FORFEIT, "challenge", String.valueOf(challengeId), Instant.now().toString()));
     }
 
     // 정산 지급 — claim을 딴 호출자만 부른다. 인메모리에는 롤백이 없으므로 이 메서드는 실패할 수

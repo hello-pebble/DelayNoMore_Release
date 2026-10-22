@@ -570,22 +570,33 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 사람이 3명 모이면 서버가 자동으로 연다 — 생성 시점은 `POST /plans/{id}/confirm`이고, 구형
 클라이언트의 개설 POST는 405 `METHOD_NOT_ALLOWED`.
 
-### C-1. GET /challenges — 목록 + 내 포인트 잔액 (만기 챌린지 lazy 정산 포함)
+### C-1. GET /challenges — 목록 + 내 포인트 잔액 (만기 챌린지 정산 포함)
 
-**목록 진입이 정산의 트리거다**(v0.25.0 — 스케줄러 없이 lazy): 만기 챌린지는 누군가 목록을 보는
-순간 정산된다("최대 한 번"의 판정 주체는 조건부 UPDATE `WHERE settled_at IS NULL`). `balance`는
-요청 소유자의 지갑 잔액 — 화면이 항상 둘을 함께 그리므로 별도 지갑 엔드포인트가 없다.
+**정산은 두 경로가 함께 트리거한다**(v0.34.0): 서버 스케줄러가 5분 간격으로 만기 챌린지를 정산하고(접속자가 없어도),
+목록 진입도 즉시 반영용으로 같은 정산을 부른다("최대 한 번"의 판정 주체는 조건부 UPDATE `WHERE settled_at IS NULL`이라
+겹쳐도 안전하다). 챌린지 한 건이 한 트랜잭션이고 한 건의 실패는 다른 건을 막지 않는다. `balance`는 요청 소유자의 지갑
+잔액 — 화면이 항상 둘을 함께 그리므로 별도 지갑 엔드포인트가 없다.
+
+**정산 규칙(v0.34.0):** 풀 = 참가비 × 참가 인원. **마감 전까지 100% 완료 상태였던**(서버 기록 `completed_at`)
+참가자끼리 풀을 1/n 균등 분배하고, 나머지와 완주자가 없을 때의 풀 전액은 소멸(`system:burn`)한다.
+완주 = 할 일이 1개 이상이고 전부 완료. 마감·정산 이후의 체크·해제는 기록에 반영되지 않는다.
+모집 미달(시작 전 수명 초과)은 전원 환불한다.
 
 ```json
-// 응답 data — status는 서버 파생: RECRUITING(모집중) / ACTIVE(진행중) / CLOSED(정산 종료).
-// endsAt은 시작 전 null — 정원이 찬 순간(started_at)부터 기간을 센다(v0.25.0).
+// 응답 data — status는 서버 파생: RECRUITING(모집중) / ACTIVE(진행중) / CLOSED(정산 종료) /
+//   REVIEWING(기간은 끝났지만 정산을 보류하고 확인 중 — v0.34.0 이전에 이미 마감이 지난 미정산 건, 화면 문구
+//   "기간 종료 · 정산 확인 중"). endsAt은 시작 전 null — 정원이 찬 순간(started_at)부터 기간을 센다(v0.25.0).
 // myPayout: null = 미참가 또는 미정산, 0 = 미완주, 양수 = 배당/환불액.
+// myPlan(v0.34.0): 미참가면 null. 참가에 쓴 목표 — deleted(삭제로 연결 끊김), completed(기록상 현재 완주 상태).
+//   completed는 마감 전에는 체크를 해제하면 바뀔 수 있어 "완주 확정"이 아니다(확정은 status가 CLOSED가 된 뒤).
 { "balance": 900,
   "challenges": [
     { "id": 3, "title": "자격증 목표 14일 챌린지", "durationDays": 14, "capacity": 3,
       "entryFee": 100, "participantCount": 3, "remainingSeats": 0, "full": true, "joined": true,
       "createdAt": "2026-08-01T09:00:00Z", "status": "ACTIVE",
-      "endsAt": "2026-08-16T02:11:05Z", "myPayout": null } ] }
+      "endsAt": "2026-08-16T02:11:05Z", "myPayout": null,
+      "myPlan": { "goalName": "정보처리기사 실기", "status": "CONFIRMED", "ratePercent": 40,
+                  "deleted": false, "completed": false } } ] }
 ```
 
 ### C-2. GET /challenges/{id}/participants — 참가자 현황(리더보드) [v0.25.0]
@@ -606,12 +617,15 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 
 **본문 없는 POST** — 클라이언트가 정원·잔액을 실어 보내지 않고, 판정 규칙은 전부 서버(저장소의
 원자 구간)가 소유한다. 참가 시점에 **같은 조건의 고정된 계획을 서버가 자동으로 찾아 연결**한다
-(완주 판정의 근거, 여러 개면 최신 — v0.25.0). 응답은 갱신된 챌린지와 차감 후 잔액.
+(완주 판정의 근거, 여러 개면 최신 — v0.25.0). 참가는 그 **목표 행을 잠근 채** 최신 완료 상태로 완주 기록을 시드한다
+(v0.34.0 — 낡은 상태가 기록되지 않는다). 응답은 갱신된 챌린지와 차감 후 잔액.
 
 ```json
 // 응답 data
 { "challenge": { "id": 3, "participantCount": 3, "remainingSeats": 0, "full": true,
-                 "joined": true, "status": "ACTIVE", "endsAt": "2026-08-16T02:11:05Z", "myPayout": null },
+                 "joined": true, "status": "ACTIVE", "endsAt": "2026-08-16T02:11:05Z", "myPayout": null,
+                 "myPlan": { "goalName": "정보처리기사 실기", "status": "CONFIRMED", "ratePercent": 0,
+                             "deleted": false, "completed": false } },
   "balance": 800 }
 ```
 
