@@ -18,9 +18,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 // 챌린지 JDBC 구현 — PostgreSQL에 영속한다. postgres 프로필에서만 활성화된다.
 //
@@ -38,14 +40,18 @@ import java.util.Optional;
 //     UPDATE challenges SET settled_at = :now WHERE id = :id AND settled_at IS NULL
 // 이 단독으로 한다. 동시 정산자는 행 락에 블로킹 후 WHERE 재평가로 0행 → 물러난다.
 //
-// [FOR UPDATE를 쓰지 않은 이유] JdbcPlanRepository는 "행 전체를 읽어 자바에서 가공"해야 해서
-// SELECT ... FOR UPDATE로 원자 구간을 연다. 여기서 필요한 건 카운터·시각 컬럼에 대한
-// 비교-후-갱신뿐이라 조건부 UPDATE 한 문장이면 충분하고, 왕복도 락 보유 시간도 짧다.
+// [챌린지 행 잠금 (v0.34.0)] 정원·정산 판정 자체는 계속 조건부 UPDATE가 하지만, "기간 내 완주 기록"
+// (participants.completed_at)은 정산과 같은 챌린지 행을 두고 직렬화돼야 한다. 일반 SELECT는 다른
+// 트랜잭션의 미커밋 변경을 못 보므로, 마감 직전의 기록 변경이 아직 커밋되지 않은 채 정산이 이전
+// 기록을 읽어 미완주로 판정하는 틈이 생긴다. 그래서 완주 기록(markCompletion)과 참가(join)는
+// 챌린지 행을 SELECT ... FOR UPDATE로 먼저 잠그고, 정산의 claim UPDATE는 그 잠금이 풀릴 때(커밋)
+// 까지 기다린 뒤 최신 기록을 읽는다. 마감 판정 시각도 잠금을 얻은 뒤에 확정한다.
 //
-// [잠금 순서] 참가자 INSERT(자기 행) → 지갑 UPDATE(자기 행) → 챌린지 UPDATE(경합 행) 순으로
-// 모든 스레드가 동일하게 진행하므로 교착이 생기지 않는다. 경합하는 챌린지 행 락은 마지막에,
-// 가장 짧게 잡는다. 정산은 반대로 챌린지 행(claim)을 먼저 잡지만, 참가 경로와 겹치는 자원이
-// 챌린지 행 하나뿐이라(정산은 지갑을 증가만, 참가는 자기 지갑만) 순환 대기가 생기지 않는다.
+// [잠금 순서 — 모든 경로 동일] 목표(plan) 행 → 챌린지 행(여럿이면 id 오름차순) → 참가 행 → 지갑 행.
+//   - 목표 변경·삭제(PlanService 람다): 목표 → 챌린지들 → 참가 행 (지갑을 잡지 않는다)
+//   - 참가(join): 목표 → 챌린지 1개 → 참가 INSERT → 지갑 차감 → 챌린지 UPDATE
+//   - 정산: 챌린지 1개 → 참가 행 → 지갑 행(owner 오름차순), 챌린지별 독립 트랜잭션
+// 지갑을 쥔 뒤 챌린지·목표를 다시 잡는 경로가 없으므로 순환 대기가 생기지 않는다.
 //
 // [실패 시 원상복구] 이 메서드들은 호출한 @Transactional 서비스 메서드가 연 트랜잭션 안에서
 // 실행돼야 한다(propagation REQUIRED). CHALLENGE_FULL로 던지면 앞서 성공한 참가자 INSERT와
@@ -110,7 +116,7 @@ public class JdbcChallengeRepository implements ChallengeRepository {
     @Override
     public Map<Long, ChallengeParticipant> findMyParticipations(String owner) {
         Map<Long, ChallengeParticipant> mine = new HashMap<>();
-        jdbc.query("SELECT challenge_id, owner, plan_id, payout FROM challenge_participants WHERE owner = :owner",
+        jdbc.query("SELECT challenge_id, owner, plan_id, payout, completed_at FROM challenge_participants WHERE owner = :owner",
                 new MapSqlParameterSource("owner", owner),
                 rs -> {
                     mine.put(rs.getLong("challenge_id"), mapParticipantRow(rs));
@@ -120,7 +126,9 @@ public class JdbcChallengeRepository implements ChallengeRepository {
 
     @Override
     public List<ChallengeParticipant> findParticipants(long challengeId) {
-        return jdbc.query("SELECT owner, plan_id, payout FROM challenge_participants WHERE challenge_id = :id",
+        // owner 오름차순 — 정산이 지갑을 잡는 순서를 고정해 서로 다른 챌린지의 동시 정산이 교착하지 않게 한다.
+        return jdbc.query("SELECT owner, plan_id, payout, completed_at FROM challenge_participants "
+                        + "WHERE challenge_id = :id ORDER BY owner",
                 new MapSqlParameterSource("id", challengeId), participantMapper);
     }
 
@@ -131,9 +139,10 @@ public class JdbcChallengeRepository implements ChallengeRepository {
 
     @Override
     public Challenge join(long challengeId, String owner, String joinedAt, long planId) {
-        // 존재 확인 전용 조회 — 여기서 읽은 participant_count로는 아무 판정도 하지 않는다.
-        // 정원 판정은 아래 조건부 UPDATE가 단독으로 한다(읽은 값은 이미 낡았을 수 있으므로).
-        Challenge current = findById(challengeId)
+        // 챌린지 행을 먼저 잠근다(v0.34.0) — 완주 기록·정산과 같은 행을 두고 직렬화한다. 여기서 읽은
+        // participant_count로는 아무 판정도 하지 않는다: 정원 판정은 아래 조건부 UPDATE가 단독으로 한다.
+        Challenge current = jdbc.query("SELECT * FROM challenges WHERE id = :id FOR UPDATE",
+                        new MapSqlParameterSource("id", challengeId), challengeMapper).stream().findFirst()
                 .orElseThrow(() -> new BusinessException(ErrorCode.CHALLENGE_NOT_FOUND));
 
         // 1) 중복 참가 — 복합 PK가 판정한다. 충돌이면 0행이므로 애플리케이션의 사전 조회가 필요 없다.
@@ -186,13 +195,80 @@ public class JdbcChallengeRepository implements ChallengeRepository {
     @Override
     public boolean claimSettlement(long challengeId, String settledAt, boolean requireStarted) {
         String startedCondition = requireStarted ? "started_at IS NOT NULL" : "started_at IS NULL";
+        // settlement_hold: v0.34.0 이전에 이미 마감이 지난 미정산 건은 완주 기록을 소급해 증명할 수 없어
+        // 자동 정산하지 않는다(V15). 풀려난 뒤에만 이 UPDATE가 1행을 돌려준다.
         int claimed = jdbc.update("""
                 UPDATE challenges SET settled_at = :settledAt
-                 WHERE id = :id AND settled_at IS NULL AND %s
+                 WHERE id = :id AND settled_at IS NULL AND settlement_hold = FALSE AND %s
                 """.formatted(startedCondition), new MapSqlParameterSource()
                 .addValue("id", challengeId)
                 .addValue("settledAt", settledAt));
         return claimed == 1;
+    }
+
+    // 완주 기록 — 이 목표가 걸린 챌린지 행을 id 오름차순으로 잠근 뒤(정산 claim과 같은 행) 시각을 확정하고
+    // 판정한다. 호출자는 이미 목표 행 잠금 안에 있다. 정산이 먼저 claim했다면 settled_at을 보고 무시된다.
+    @Override
+    public void markCompletion(long planId, boolean allDone) {
+        List<Challenge> locked = jdbc.query("""
+                SELECT c.* FROM challenges c
+                 WHERE c.id IN (SELECT challenge_id FROM challenge_participants WHERE plan_id = :planId)
+                 ORDER BY c.id
+                   FOR UPDATE OF c
+                """, new MapSqlParameterSource("planId", planId), challengeMapper);
+        Instant now = Instant.now(); // 잠금을 얻은 뒤에 확정한다 — 대기 시간이 마감 판정을 오염시키지 않게
+        for (Challenge challenge : locked) {
+            if (!isOpenForRecording(challenge, now)) {
+                continue;
+            }
+            jdbc.update("""
+                    UPDATE challenge_participants
+                       SET completed_at = CASE WHEN :allDone THEN COALESCE(completed_at, :now) ELSE NULL END
+                     WHERE challenge_id = :challengeId AND plan_id = :planId
+                    """, new MapSqlParameterSource()
+                    .addValue("allDone", allDone)
+                    .addValue("now", now.toString())
+                    .addValue("challengeId", challenge.id())
+                    .addValue("planId", planId));
+        }
+    }
+
+    // 참가 직후 그 참가 한 건만 — join이 이미 챌린지 행을 잠근 트랜잭션 안이다(다른 챌린지를 더 잠그지 않는다).
+    @Override
+    public void seedCompletion(long challengeId, String owner, boolean allDone) {
+        jdbc.update("""
+                UPDATE challenge_participants
+                   SET completed_at = CASE WHEN :allDone THEN :now ELSE NULL END
+                 WHERE challenge_id = :challengeId AND owner = :owner
+                """, new MapSqlParameterSource()
+                .addValue("allDone", allDone)
+                .addValue("now", Instant.now().toString())
+                .addValue("challengeId", challengeId)
+                .addValue("owner", owner));
+    }
+
+    private static boolean isOpenForRecording(Challenge challenge, Instant now) {
+        if (challenge.settled()) {
+            return false;
+        }
+        return !challenge.started() || now.isBefore(Instant.parse(challenge.endsAt()));
+    }
+
+    @Override
+    public Set<Long> findHeldChallengeIds() {
+        return new HashSet<>(jdbc.queryForList(
+                "SELECT id FROM challenges WHERE settlement_hold = TRUE AND settled_at IS NULL",
+                new MapSqlParameterSource(), Long.class));
+    }
+
+    @Override
+    public void recordForfeit(long challengeId, int amount) {
+        if (amount <= 0) {
+            return; // 나누어떨어지는 정산 — PointTransfer는 0원 이동을 거부한다
+        }
+        wallets.postSystemTransfer(new PointTransfer("forfeit:" + challengeId,
+                PointAccounts.escrowOfChallenge(challengeId), PointAccounts.BURN, amount,
+                PointTxKind.CHALLENGE_FORFEIT, "challenge", String.valueOf(challengeId), Instant.now().toString()));
     }
 
     // 정산 지급 — claim을 딴 트랜잭션 안에서만 호출된다. 도중 실패하면 claim째 롤백(부분 지급 없음).
@@ -278,6 +354,6 @@ public class JdbcChallengeRepository implements ChallengeRepository {
         Long planIdOrNull = rs.wasNull() ? null : planId;
         int payout = rs.getInt("payout");
         Integer payoutOrNull = rs.wasNull() ? null : payout;
-        return new ChallengeParticipant(rs.getString("owner"), planIdOrNull, payoutOrNull);
+        return new ChallengeParticipant(rs.getString("owner"), planIdOrNull, payoutOrNull, rs.getString("completed_at"));
     }
 }

@@ -5,6 +5,7 @@ import com.delaynomore.backend.support.PointsFixture;
 import com.delaynomore.backend.domain.challenge.entity.Challenge;
 import com.delaynomore.backend.domain.challenge.repository.ChallengeRepository;
 import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepository;
+import com.delaynomore.backend.domain.points.entity.PointAccounts;
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
@@ -223,8 +224,8 @@ class ChallengeServiceConcurrencyTest {
 
     @Test
     void settleDue_동시10회_지급은_정확히_1회분이다() throws Exception {
-        // durationDays=0 → 정원이 차는 순간 만기. 미완주 계획뿐이라 정산 결과는 전원 환불이고,
-        // 열 조회가 동시에 정산해도 환불이 겹치면 잔액이 초기값을 넘는다 — claim 원자 구간의 검증.
+        // durationDays=0 → 정원이 차는 순간 만기. 미완주 계획뿐이라 완주자가 없고 풀 전액이 소멸한다.
+        // 열 조회가 동시에 정산해도 소멸이 겹치면 소각 계정이 풀의 두 배가 된다 — claim 원자 구간의 검증.
         long challengeId = open("정산 경합", 2, 0);
         plan("guest-s1");
         plan("guest-s2");
@@ -251,9 +252,11 @@ class ChallengeServiceConcurrencyTest {
         pool.shutdown();
         assertThat(pool.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
 
-        // 환불이 두 번 겹쳤다면 1100이 된다 — 정확히 원금이어야 한다.
-        assertThat(challengeRepository.balanceOf("guest-s1")).isEqualTo(INITIAL_BALANCE);
-        assertThat(challengeRepository.balanceOf("guest-s2")).isEqualTo(INITIAL_BALANCE);
+        // 지급이 겹쳤다면 잔액이 달라진다 — 완주자가 없으니 참가비만 빠진 채 그대로여야 하고,
+        // 소멸은 정확히 한 번(풀 200)만 기표된다.
+        assertThat(challengeRepository.balanceOf("guest-s1")).isEqualTo(INITIAL_BALANCE - ENTRY_FEE);
+        assertThat(challengeRepository.balanceOf("guest-s2")).isEqualTo(INITIAL_BALANCE - ENTRY_FEE);
+        assertThat(points.ledger().sumOf(PointAccounts.BURN)).isEqualTo(2 * ENTRY_FEE);
         assertThat(challengeRepository.findById(challengeId).orElseThrow().settled()).isTrue();
     }
 
@@ -302,9 +305,11 @@ class ChallengeServiceConcurrencyTest {
 
         Challenge settled = challengeRepository.findById(challengeId).orElseThrow();
         assertThat(settled.settled()).isTrue();
-        // "시작됐는데 미달 환불로 마감"이 없었는지 — 시작됐다면 참가자가 있고, 그 잔액은 환불로
-        // 원금 복귀(미완주 전원 환불 경로). 참가가 거절됐다면 애초에 차감이 없다. 어느 쪽이든 1000.
-        assertThat(challengeRepository.balanceOf(late)).isEqualTo(INITIAL_BALANCE);
+        // "시작됐는데 미달 환불로 마감"이 없었는지 — 참가가 이겼다면 완주 정산 경로로 가서(미완주 계획이라
+        // 풀이 소멸) 참가비를 잃고, 환불 정산이 먼저 마감했다면 참가가 거절돼 차감이 없다. 어느 쪽이든
+        // 돈이 새지는 않는다: 원금이거나 원금에서 참가비만큼 빠진 값이다.
+        assertThat(challengeRepository.balanceOf(late))
+                .isIn(INITIAL_BALANCE, INITIAL_BALANCE - ENTRY_FEE);
     }
 
     @Test

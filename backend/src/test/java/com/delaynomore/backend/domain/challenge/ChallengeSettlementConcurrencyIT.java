@@ -55,7 +55,7 @@ class ChallengeSettlementConcurrencyIT extends AbstractPostgresIntegrationTest {
                 Map.of("2026-09-01", List.of(Map.of("id", "t1", "content", "공부", "completed", false)))));
     }
 
-    // durationDays=0 → 정원이 차는 순간 만기. 미완주 계획뿐이라 정산 결과는 전원 환불이다.
+    // durationDays=0 → 정원이 차는 순간 만기. 미완주 계획뿐이라 완주자가 없고 풀 전액이 소멸한다(v0.34.0).
     private long dueChallenge(String suffix) {
         long id = challengeRepository.save(new Challenge(null, "system", "정산 경합 " + suffix, 0, 2,
                 ENTRY_FEE, 0, Instant.now().toString(), "자격증:14", null, null)).id();
@@ -140,13 +140,17 @@ class ChallengeSettlementConcurrencyIT extends AbstractPostgresIntegrationTest {
         pool.shutdown();
         assertThat(pool.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
 
-        // 완주자 0명 → 전원 환불이 정확히 1회 — 잔액이 원금과 같고, payout도 한 번만 기록됐다.
-        assertThat(balanceOf("guest-settle-a-safe")).isEqualTo(INITIAL_BALANCE);
-        assertThat(balanceOf("guest-settle-b-safe")).isEqualTo(INITIAL_BALANCE);
+        // 완주자 0명 → 풀 전액 소멸이 정확히 1회(v0.34.0) — 참가비만 빠진 잔액 그대로이고, payout 0이 한 번씩,
+        // 소각 계정에는 풀 200이 한 번만 쌓인다(소멸이 겹쳤다면 400).
+        assertThat(balanceOf("guest-settle-a-safe")).isEqualTo(INITIAL_BALANCE - ENTRY_FEE);
+        assertThat(balanceOf("guest-settle-b-safe")).isEqualTo(INITIAL_BALANCE - ENTRY_FEE);
         assertThat(challengeRepository.findById(challengeId).orElseThrow().settled()).isTrue();
-        Integer refunded = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id = ? AND payout = ?",
-                Integer.class, challengeId, ENTRY_FEE);
-        assertThat(refunded).isEqualTo(2);
+        Integer losers = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM challenge_participants WHERE challenge_id = ? AND payout = 0",
+                Integer.class, challengeId);
+        assertThat(losers).isEqualTo(2);
+        Integer burned = jdbc.queryForObject(
+                "SELECT COALESCE(SUM(amount), 0) FROM point_ledger WHERE account = 'system:burn'", Integer.class);
+        assertThat(burned).isEqualTo(2 * ENTRY_FEE);
     }
 }

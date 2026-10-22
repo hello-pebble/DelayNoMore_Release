@@ -129,6 +129,9 @@ public class PlanService {
                         throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
                     }
                     assertUnlockedOrToggleOnly(c, updated, today);
+                    // 이 목표가 걸린 챌린지의 완주 기록을 **목표 행 잠금 안에서** 새 상태로 맞춘다(v0.34.0).
+                    // 정산·참가와 같은 잠금 규약 — 순서 역전 없이 마감 전까지의 상태만 기록된다.
+                    challengeService.onPlanProgress(id, updated.allTasksDone());
                 });
         if (previous == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -162,10 +165,13 @@ public class PlanService {
             }
             TaskMutation mutation = updateTask(current.tasks(), taskId, completed, status, today);
             previous[0] = current;
-            return new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
+            Plan next = new Plan(current.id(), current.owner(), current.goalName(), current.duration(),
                     current.dailyHours(), current.currentLevel(), mutation.tasks(), current.status(),
                     current.confirmedAt(), current.completedAt(), current.startDate(), current.endDate(),
                     current.createdAt(), System.currentTimeMillis(), current.category());
+            // 목표 행 잠금 안에서 챌린지 완주 기록을 갱신한다(v0.34.0) — 마감 이후의 체크는 저장소가 무시한다.
+            challengeService.onPlanProgress(id, next.allTasksDone());
+            return next;
         });
         if (updated == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -342,12 +348,15 @@ public class PlanService {
             boolean extendsRange = current.endDate() != null && current.endDate().compareTo(toDate) < 0;
             String newEndDate = extendsRange ? toDate : current.endDate();
             int newDuration = PlanDates.spanDays(current.startDate(), newEndDate);
-            return new Plan(current.id(), current.owner(), current.goalName(),
+            Plan next = new Plan(current.id(), current.owner(), current.goalName(),
                     newDuration,
                     current.dailyHours(), current.currentLevel(), result.tasks(), current.status(),
                     current.confirmedAt(), current.completedAt(), current.startDate(),
                     newEndDate, current.createdAt(),
                     System.currentTimeMillis(), current.category());
+            // 이월은 미완료 항목을 옮기므로 완료율이 달라질 수 있다 — 완주 기록도 목표 행 잠금 안에서 맞춘다(v0.34.0).
+            challengeService.onPlanProgress(id, next.allTasksDone());
+            return next;
         });
         if (updated == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
@@ -366,6 +375,10 @@ public class PlanService {
                     if (!owner.equals(c.owner())) {
                         throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);
                     }
+                    // 소유자 확인 후, 실제 삭제 전(목표 행 잠금 안)에 완주 기록을 비운다(v0.34.0). 삭제하면 DB가
+                    // 참가의 plan_id를 NULL로 만들어 목표를 찾을 수 없으므로 순서가 규칙이다. 마감·정산 이후라면
+                    // 저장소가 변경을 무시해 동결된 기록이 보존된다(마감 전 삭제 = 증거 소실, 이후 = 유지).
+                    challengeService.onPlanProgress(id, false);
                 });
         if (deleted == null) {
             throw new BusinessException(ErrorCode.PLAN_NOT_FOUND);

@@ -142,9 +142,9 @@ SELECT w.owner, w.balance, COALESCE(l.sum, 0) AS ledger_sum
 | :--- | :--- |
 | `system:issuance` | 음수. 절댓값 = 지금까지 신규 지급한 포인트 총 발행량 |
 | `system:opening` | 음수. V12 마이그레이션 시점의 기초잔액 합계(원장 이전 세계의 몫) |
-| `system:burn` | 양수. **과거 기록** — v0.32.0 목표 예치의 미달성분 소각 총량. v0.33.0에서 소각 경로가 제거돼 더 늘지 않는다 |
+| `system:burn` | 양수. 소멸한 총량 — v0.32.0 목표 예치의 미달성분(과거 기록, 더 늘지 않음) + **v0.34.0부터 챌린지 정산의 소멸분**(균등 분배 나머지, 완주자가 없을 때의 풀 전액) |
 | `escrow:plan:<id>` | **과거 기록** — v0.32.0 목표 예치 계정. V14가 미정산분을 환급했으므로 **전부 0이어야 한다**(0이 아니면 환급 누락) |
-| `escrow:challenge:<id>` | 진행 중이면 예치된 참가비, **정산 후 남은 값은 소멸분**(정수 나눗셈 나머지 + 게스트 병합 충돌로 버려진 참가비) |
+| `escrow:challenge:<id>` | 진행 중이면 예치된 참가비. **v0.34.0 이후 정산분은 정산 후 0**(나머지·미완주 풀은 `system:burn`으로 이동). **v0.34.0 이전 정산분의 잔여(나눗셈 나머지·게스트 병합 충돌 고아 참가비)는 예상된 값**이며 이번에 정리하지 않았다 — 게스트 병합 충돌 고아 참가비는 v0.34.0 이후에도 풀에 넣지 않아 남을 수 있다 |
 | 그 외 | 사용자·게스트 계정 — 지갑 잔액과 같아야 한다 |
 
 ```sql
@@ -153,12 +153,51 @@ SELECT account, sum(amount) AS residue
   FROM point_ledger WHERE account LIKE 'escrow:plan:%'
  GROUP BY account HAVING sum(amount) <> 0;
 
--- 챌린지 정산이 끝났는데도 예치 계정에 남아 있는 포인트(소멸분) 상위 목록
+-- v0.34.0 이후에 정산된 챌린지의 예치 계정은 0이어야 한다(<배포 시각>은 ISO 문자열, 예: '2026-10-23T00:00:00Z').
+-- 0이 아닌 행은 병합 충돌 고아 참가비이거나 버그다 — 고아 여부는 참가 레코드 수와 참가비 합계를 대조해 구분한다.
 SELECT l.account, sum(l.amount) AS residue
   FROM point_ledger l
   JOIN challenges c ON l.account = 'escrow:challenge:' || c.id
- WHERE c.settled_at IS NOT NULL
+ WHERE c.settled_at >= '<배포 시각>'
  GROUP BY l.account HAVING sum(l.amount) <> 0 ORDER BY residue DESC LIMIT 20;
+
+-- v0.34.0 이전에 정산된 챌린지의 잔여 목록(예상된 값 — 정리 대상이 아니다. 나머지와 고아를 구분한 별도 작업으로 다룬다)
+SELECT l.account, sum(l.amount) AS residue
+  FROM point_ledger l
+  JOIN challenges c ON l.account = 'escrow:challenge:' || c.id
+ WHERE c.settled_at < '<배포 시각>'
+ GROUP BY l.account HAVING sum(l.amount) <> 0 ORDER BY residue DESC LIMIT 20;
+```
+
+### 정산 보류 건 (v0.34.0, V15)
+
+V15는 **이미 마감이 지났는데 정산되지 않은** 챌린지를 `settlement_hold = TRUE`로 표시한다 — 마감 시점의 완주 상태를 현재 데이터만으로
+증명할 수 없기 때문이다(지금 100%여도 마감 뒤에 채웠을 수 있다). 보류 건은 스케줄러·목록 조회 어느 쪽도 정산하지 않고, 화면에는
+"기간 종료 · 정산 확인 중"(`REVIEWING`)으로 보인다.
+
+```sql
+-- 보류 목록과 참가자(완주 기록 completed_at, 참가에 쓴 목표)
+SELECT c.id, c.title, c.started_at, c.duration_days, c.entry_fee, c.participant_count
+  FROM challenges c WHERE c.settlement_hold AND c.settled_at IS NULL ORDER BY c.id;
+SELECT p.challenge_id, p.owner, p.plan_id, p.completed_at, pl.goal_name
+  FROM challenge_participants p LEFT JOIN plans pl ON pl.id = p.plan_id
+ WHERE p.challenge_id IN (SELECT id FROM challenges WHERE settlement_hold AND settled_at IS NULL)
+ ORDER BY p.challenge_id, p.owner;
+```
+
+**`settlement_hold = FALSE`만 켜면 안 된다.** 완주 기록(`completed_at`)이 없는 상태에서 보류만 풀면 다음 자동 정산이 풀 전액을 소멸시킨다.
+결과별로 절차가 다르다:
+
+1. **완주 인정:** 인정할 참가자의 `completed_at`을 채우고(근거를 운영 메모로 남긴다) → `settlement_hold = FALSE` → 다음 정산 주기(최대 5분)에
+   정상 정산된다.
+2. **예외 환불:** 실제 환불 지급과 정산 종료 처리(`settled_at`·`payout`)를 **원장과 함께** 완료한 뒤에만 종료한다. 현재 이를 한 번에 해 주는
+   도구는 없다 — 도구 없이 수작업으로 하지 않는다.
+3. **예외 환불 절차가 준비되지 않았다면 → 보류를 유지한다.** 화면은 계속 "정산 확인 중"으로 보인다. 이번 릴리스의 기본 방침이다.
+
+```sql
+-- (선택) 1번 절차의 예: 인정할 참가자 한 명의 완주 근거 기록 후 보류 해제
+-- UPDATE challenge_participants SET completed_at = '<근거 시각 ISO>' WHERE challenge_id = <ID> AND owner = '<OWNER>';
+-- UPDATE challenges SET settlement_hold = FALSE WHERE id = <ID>;
 ```
 
 > 잔액과 원장이 어긋나는 행이 나오면 **원장이 옳다고 보고** 잔액을 맞추는 것이 규칙이다

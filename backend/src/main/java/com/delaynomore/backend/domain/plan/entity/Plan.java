@@ -69,6 +69,13 @@ public record Plan(
         return new TaskCounts(completed, total);
     }
 
+    // 완주 = 할 일이 하나 이상이고 전부 완료. 챌린지 완주 기록(completed_at)과 V15 백필의 판정 기준이
+    // 이것 하나여야 한다 — 빈 계획의 0 == 0은 완주가 아니다(할 일 없는 계획이 공짜로 이기지 못하게).
+    public boolean allTasksDone() {
+        TaskCounts counts = countAllTasks();
+        return counts.total() > 0 && counts.completed() == counts.total();
+    }
+
     // 특정 날짜의 완료/전체 개수 — 회고 저장 시 클라이언트 수치를 믿지 않고 서버가 재계산한다.
     public TaskCounts countTasksOn(String date) {
         return countList(tasks == null ? null : tasks.get(date));

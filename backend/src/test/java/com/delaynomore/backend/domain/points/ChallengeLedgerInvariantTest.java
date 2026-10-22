@@ -128,8 +128,8 @@ class ChallengeLedgerInvariantTest {
     }
 
     @Test
-    void 완주_정산_후_예치_계정에_남는_잔액이_소멸한_나머지다() {
-        // 참가비 100 × 4명 = 400을 완주자 3명이 나누면 133씩, 나머지 1이 남는다.
+    void 완주_정산_후_나머지는_소각_계정으로_옮겨져_예치_계정이_0으로_닫힌다() {
+        // 참가비 100 × 4명 = 400을 완주자 3명이 나누면 133씩, 나머지 1은 소각 계정으로 간다.
         long id = open(4, 100, 0);
         joinAs("guest-w1-001", id, true);
         joinAs("guest-w2-001", id, true);
@@ -140,22 +140,24 @@ class ChallengeLedgerInvariantTest {
 
         assertThat(challengeRepository.balanceOf("guest-w1-001")).isEqualTo(INITIAL - 100 + 133);
         assertThat(challengeRepository.balanceOf("guest-l1-001")).isEqualTo(INITIAL - 100);
-        // 소멸분이 추측이 아니라 관측된다 — 400 - 133×3 = 1.
-        assertThat(ledger.sumOf(PointAccounts.escrowOfChallenge(id))).isEqualTo(1);
+        // 소멸분은 소각 계정으로 옮겨가 예치 계정이 정확히 0으로 닫힌다 — 400 - 133×3 = 1.
+        assertThat(ledger.sumOf(PointAccounts.escrowOfChallenge(id))).isZero();
+        assertThat(ledger.sumOf(PointAccounts.BURN)).isEqualTo(1);
         assertInvariants("guest-w1-001", "guest-w2-001", "guest-w3-001", "guest-l1-001");
     }
 
     @Test
-    void 전원_환불이면_예치_계정이_정확히_비워진다() {
-        // 완주자가 없는 경우 — 풀을 삼키지 않고 전원에게 참가비를 돌려준다.
+    void 완주자가_없으면_풀_전액이_소각_계정으로_가고_예치_계정은_0이다() {
+        // 기간 내 완주자가 없는 경우 — 환불하지 않고 풀 전액이 소멸한다(소각 계정으로 이동).
         long id = open(2, 100, 0);
         joinAs("guest-a-0001", id, false);
         joinAs("guest-b-0001", id, false);
 
         challengeService.settleDue();
 
-        assertThat(challengeRepository.balanceOf("guest-a-0001")).isEqualTo(INITIAL);
+        assertThat(challengeRepository.balanceOf("guest-a-0001")).isEqualTo(INITIAL - 100);
         assertThat(ledger.sumOf(PointAccounts.escrowOfChallenge(id))).isZero();
+        assertThat(ledger.sumOf(PointAccounts.BURN)).isEqualTo(200);
         assertInvariants("guest-a-0001", "guest-b-0001");
     }
 

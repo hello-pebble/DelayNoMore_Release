@@ -14,8 +14,16 @@ public final class PointAccounts {
     public static final String ISSUANCE = "system:issuance";
     /** 기초잔액의 상대 계정 — V12 백필 전용(원장 이전 세계의 몫). */
     public static final String OPENING = "system:opening";
-    // [과거 계정] system:burn · escrow:plan:<id>는 v0.32.0 목표 예치의 계정이었다. 기능은 v0.33.0에서
-    // 제거됐고 미정산 예치는 V14가 환급했으므로 새로 기표되지 않는다 — 원장에는 이력으로만 남는다.
+    /**
+     * 소각 계정 — 챌린지 정산에서 아무에게도 가지 않은 몫(완주자가 없을 때의 풀 전액, 균등 분배의
+     * 나머지)이 여기로 온다(v0.34.0). 소멸도 사라지는 게 아니라 계정이 바뀌는 이동이라 원장 합계 0이
+     * 유지되고, 정산이 끝난 챌린지 예치 계정은 0으로 닫힌다. {@link #ISSUANCE}로 되돌리지 않는 이유:
+     * 그 잔액은 "지금까지 발행한 총량"이라는 한 가지 뜻이어야 한다.
+     */
+    public static final String BURN = "system:burn";
+
+    // [과거 계정] escrow:plan:<id>는 v0.32.0 목표 예치의 계정이었다(v0.33.0에서 제거, 미정산분은 V14가
+    // 환급). system:burn은 그때 만들어졌다가 v0.34.0부터 챌린지 소멸에 쓰인다.
 
     private static final String ESCROW_CHALLENGE_PREFIX = "escrow:challenge:";
 

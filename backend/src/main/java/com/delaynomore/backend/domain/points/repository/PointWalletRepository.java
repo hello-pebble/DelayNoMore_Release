@@ -41,4 +41,11 @@ public interface PointWalletRepository {
 
     /** 증가 — 상한이 없어 실패하지 않는다. 멱등 규칙은 {@link #debit}과 같다. */
     void credit(String owner, int amount, PointTransfer transfer);
+
+    /**
+     * 시스템 계정끼리의 이동(예: 챌린지 예치 계정 → 소각 계정) — 지갑 행이 없는 계정이라 원장에만
+     * 남긴다. 잔액을 바꾸는 메서드가 아니므로 불변식 2(계정별 원장 합계 = 잔액)의 대상이 아니다.
+     * 같은 txKey의 재시도는 원장이 흡수한다.
+     */
+    void postSystemTransfer(PointTransfer transfer);
 }

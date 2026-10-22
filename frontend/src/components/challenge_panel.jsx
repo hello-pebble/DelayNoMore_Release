@@ -24,8 +24,22 @@ const JOIN_ERROR_LABEL = {
 const STATUS_BADGE = {
   RECRUITING: { label: '모집중', color: 'var(--primary)' },
   ACTIVE: { label: '진행중', color: 'var(--success)' },
-  CLOSED: { label: '종료', color: 'var(--text-muted)' }
+  CLOSED: { label: '종료', color: 'var(--text-muted)' },
+  // 기간은 끝났지만 서버가 정산을 보류하고 확인 중인 건 — 조용히 멈춘 것처럼 보이지 않게 이유를 보여준다.
+  REVIEWING: { label: '기간 종료 · 정산 확인 중', color: 'var(--warning)' }
 };
+
+// 참가에 쓴 목표 한 줄 — 판정은 서버(myPlan)가 하고 여기는 문구만 고른다. 삭제된 목표는 정산 전/후를
+// 구분한다: 마감 전에는 완주 증거가 사라져 인정되지 않지만, 마감 후·정산 후 삭제는 이미 확정된(동결된)
+// 기록이라 "인정 안 됨"이라고 쓰면 확정된 결과와 충돌한다. completed는 마감 전에는 바뀔 수 있어 쓰지 않는다.
+function planLine(c) {
+  const plan = c.myPlan;
+  if (!plan) return null;
+  if (!plan.deleted) return `참가 목표: ${plan.goalName} · ${plan.ratePercent}%`;
+  const ended = c.status === 'CLOSED' || c.status === 'REVIEWING'
+    || (c.endsAt != null && Date.now() >= Date.parse(c.endsAt));
+  return ended ? '참가 목표가 삭제되었어요.' : '참가 목표가 삭제되어 완주로 인정되지 않아요.';
+}
 
 // 거래 내역의 사유 라벨은 서버가 내려준다(entry.label) — 여기에 사전을 두지 않는다.
 // 프론트가 하는 일은 부호에 따른 색과 정렬된 줄 그리기뿐이다.
@@ -37,7 +51,7 @@ function amountText(amount) {
 function payoutLabel(c) {
   if (c.myPayout == null) return null;
   if (c.myPayout > 0) return `정산 완료 — +${c.myPayout}P 지급`;
-  return '정산 완료 — 미완주 (참가비는 완주자에게 배당)';
+  return '정산 완료 — 미완주 (참가비는 완주자에게 배당되고, 완주자가 없으면 소멸해요)';
 }
 
 export default function ChallengePanel() {
@@ -222,6 +236,14 @@ export default function ChallengePanel() {
                 <span>~{c.endsAt.slice(0, 10)}</span>
               )}
             </div>
+            {planLine(c) && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>{planLine(c)}</div>
+            )}
+            {c.status === 'REVIEWING' && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                기간이 끝났어요. 정산 결과를 확인하는 중이라 지급이 잠시 보류돼 있어요.
+              </div>
+            )}
             {payoutLabel(c) && (
               <div style={{ fontSize: '13px', color: c.myPayout > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
                 {payoutLabel(c)}
@@ -249,7 +271,7 @@ export default function ChallengePanel() {
             )}
             {c.status === 'ACTIVE' && c.joined && (
               <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                진행 중 — 기간이 끝나면 완주한 참가자끼리 참가비를 나눠 가져요.
+                진행 중 — 기간이 끝날 때 목표를 100% 완료한 참가자끼리 참가비를 나눠 가져요. 완주자가 없으면 참가비는 소멸해요.
               </div>
             )}
             {/* 참가자 현황(리더보드) — 서버가 완료율 내림차순으로 내려준 순서가 곧 순위다.

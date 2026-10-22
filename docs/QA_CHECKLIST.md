@@ -1270,6 +1270,62 @@
    GROUP BY w.owner, w.balance HAVING w.balance <> coalesce(sum(l.amount),0);
   ```
 
+## F-44. 챌린지 정산 마무리 (v0.34.0)
+
+> 기간 내 완주(마감 시점 기록)만 인정하고, 남는 몫은 소멸하며, 접속자가 없어도 만기에 정산한다.
+> 서버 전용 조건은 SQL/curl로 확인한다. 사전 조건: (postgres 프로필) V15 마이그레이션 적용.
+
+### 배포 직후 — 보류 건 확인
+
+- [ ] **정산 보류 목록을 확인했다** — 배포 전에 마감이 지났는데 정산되지 않던 챌린지는 자동 정산되지 않는다:
+
+  ```sql
+  SELECT id, title, started_at, duration_days, entry_fee, participant_count
+    FROM challenges WHERE settlement_hold AND settled_at IS NULL ORDER BY id;
+  -- 배포 전에 건수를 미리 알려면(V15가 보류로 표시할 대상):
+  SELECT count(*) FROM challenges WHERE settled_at IS NULL AND started_at IS NOT NULL
+     AND (started_at::timestamptz + duration_days * interval '24 hours') <= now();
+  ```
+
+- [ ] 보류 챌린지의 카드에 **"기간 종료 · 정산 확인 중"** 배지와 안내가 보이고 참가 버튼이 없다
+- [ ] **보류 해제는 `settlement_hold`만 풀지 않았다** — OPERATIONS.md의 3가지(완주 인정 / 예외 환불 / 보류 유지) 중 하나로 처리했다
+
+### 정산 규칙
+
+- [ ] **접속자가 없어도 만기 정산된다** — 만기가 지난 진행 중 챌린지를 두고 아무도 접속하지 않은 채 **5~6분 기다린 뒤**:
+
+  ```sql
+  SELECT id, settled_at FROM challenges WHERE id = <ID>;  -- 기대: settled_at 채워짐
+  ```
+
+  (앱 로그에 `challenge settlement failed`가 없어야 한다)
+- [ ] **마감 후 체크는 인정되지 않는다** — 마감 시각 이후에 마지막 할 일을 체크해도 `completed_at`이 NULL이고 정산에서 미완주(payout 0)다
+- [ ] **마감 전 체크는 인정된다** — 마감 전에 100%를 만들면 `completed_at`이 채워지고, 마감 전에 체크를 해제하면 다시 NULL이 된다
+- [ ] **빈 목표는 완주가 아니다** — 할 일이 없는 고정 계획으로 참가해도 완주자로 인정되지 않는다
+- [ ] **1/n 균등 분배 + 나머지 소멸** — 참가비 100 × 4명, 완주 3명 → 각 133P, 나머지 1P는 소각 계정으로:
+
+  ```sql
+  SELECT sum(amount) FROM point_ledger WHERE account = 'escrow:challenge:<ID>';  -- 기대: 0 (정산 후 예치 계정이 닫힘)
+  SELECT kind, amount FROM point_ledger WHERE tx_key = 'forfeit:<ID>';           -- 기대: CHALLENGE_FORFEIT ±1 (나누어떨어지면 행 없음)
+  ```
+
+- [ ] **완주자가 없으면 환불이 아니라 풀 전액 소멸** — 참가자 전원의 잔액이 (원금 − 참가비)로 남고, `system:burn`에 풀 전액이 쌓인다
+- [ ] **모집 미달은 기존대로 전원 환불** — 정원을 못 채우고 수명(기간의 2배)이 지난 챌린지는 참가비가 돌아온다
+- [ ] **이중 정산이 없다** — 같은 챌린지에 대해 `payout:<ID>:<owner>`·`forfeit:<ID>` 키가 각각 한 번만 기표돼 있다(재기동·스케줄러·목록 조회가 겹쳐도)
+- [ ] **원장 불변식** — F-41의 두 쿼리(전체 합계 0, 소유자 원장 합계 = 잔액)가 그대로 0행이다
+
+### 참가 목표 표시 · 삭제
+
+- [ ] 참가한 챌린지 카드에 **"참가 목표: {목표명} · {완료율}%"** 가 보인다 (curl: `curl -s $API/challenges -H "X-Guest-Id: $G"` → `myPlan.goalName`)
+- [ ] **마감 전에 목표를 삭제**하면 "참가 목표가 삭제되어 완주로 인정되지 않아요."가 보이고 `completed_at`이 NULL이 된다
+- [ ] **마감 후(또는 정산 후)에 목표를 삭제**하면 "참가 목표가 삭제되었어요."만 보이고, **정산 결과(+N P)는 그대로**다. 마감 후 삭제는 동결된 완주 기록이 보존된다(**기존과 달라진 규칙** — 예전에는 삭제 = 패배)
+- [ ] 마감 전 화면에서 "완주 확정"이라는 표현이 쓰이지 않는다(체크를 해제하면 바뀔 수 있다)
+
+### 동시성 · 기동
+
+- [ ] **postgres 프로필 기동 로그**에 `SettlementTransactionGuard` 관련 오류가 없다(누락 시 기동 단계에서 실패한다)
+- [ ] 챌린지 참가 직후 다른 탭에서 체크를 해제해도 낡은 100%로 완주가 기록되지 않는다(참가 → 즉시 목록의 `myPlan.completed` 확인)
+
 ## 참고
 - **키 없이 배포**한 상태면 E·F 결과는 **템플릿 mock**이라 내용이 정형화되어 있다. 실제 AI 문장을 보려면 키를 넣고 재배포
   (`OPENROUTER_API_KEY=... ./deploy/oci-setup.sh`) 후 헤더가 "AI 연결됨"인지 확인하고 E·F를 다시 테스트한다.

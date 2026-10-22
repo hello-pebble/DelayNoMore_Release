@@ -57,6 +57,11 @@ public class InMemoryPointWalletRepository implements PointWalletRepository {
     }
 
     @Override
+    public void postSystemTransfer(PointTransfer transfer) {
+        ledger.post(transfer);
+    }
+
+    @Override
     public void credit(String owner, int amount, PointTransfer transfer) {
         balanceOf(owner);
         if (!ledger.post(transfer)) {

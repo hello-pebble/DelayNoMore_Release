@@ -9,6 +9,7 @@ import com.delaynomore.backend.domain.challenge.repository.InMemoryChallengeRepo
 import com.delaynomore.backend.domain.points.repository.InMemoryPointLedgerRepository;
 import com.delaynomore.backend.domain.plan.entity.Plan;
 import com.delaynomore.backend.domain.plan.repository.InMemoryPlanRepository;
+import com.delaynomore.backend.domain.points.entity.PointAccounts;
 import com.delaynomore.backend.global.error.BusinessException;
 import com.delaynomore.backend.global.error.ErrorCode;
 import org.junit.jupiter.api.Test;
@@ -57,6 +58,32 @@ class ChallengeServiceTest {
         String now = Instant.now().toString();
         return planRepository.save(new Plan(null, owner, "정보처리기사 실기", 14, 2, "초급", tasks,
                 "CONFIRMED", now, null, "2026-09-01", "2026-09-14", now, System.currentTimeMillis(), "자격증")).id();
+    }
+
+    // 할 일이 하나도 없는 고정 계획 — 완주 조건은 "1개 이상 + 전부 완료"라 0 == 0은 완주가 아니다.
+    private long emptyPlan(String owner) {
+        String now = Instant.now().toString();
+        return planRepository.save(new Plan(null, owner, "빈 계획", 14, 2, "초급", Map.of(),
+                "CONFIRMED", now, null, "2026-09-01", "2026-09-14", now, System.currentTimeMillis(), "자격증")).id();
+    }
+
+    // 이미 마감이 지난 진행 중 챌린지(1일짜리, 이틀 전 시작) — 시계를 주입하지 않고 "마감 이후"를 만든다.
+    // 인메모리 join은 시작 여부를 보지 않으므로 참가자를 채울 수 있다.
+    private long openEnded(int entryFee) {
+        String twoDaysAgo = Instant.now().minusSeconds(2 * 86_400L).toString();
+        return challengeRepository.save(new Challenge(null, HOST, "마감 지난 챌린지", 1, 5,
+                entryFee, 0, twoDaysAgo, CONDITION, twoDaysAgo, null)).id();
+    }
+
+    private void finishAllTasks(long planId) {
+        planRepository.mutate(planId, plan -> {
+            Map<String, Object> done = Map.of(
+                    "2026-09-01", List.of(Map.of("id", "t1", "content", "기출 풀기", "completed", true)),
+                    "2026-09-02", List.of(Map.of("id", "t2", "content", "오답 정리", "completed", true)));
+            return new Plan(plan.id(), plan.owner(), plan.goalName(), plan.duration(), plan.dailyHours(),
+                    plan.currentLevel(), done, plan.status(), plan.confirmedAt(), plan.completedAt(),
+                    plan.startDate(), plan.endDate(), plan.createdAt(), System.currentTimeMillis(), plan.category());
+        });
     }
 
     private JoinResponse joinAs(String owner, long challengeId, boolean allDone) {
@@ -214,32 +241,118 @@ class ChallengeServiceTest {
     }
 
     @Test
-    void 정산_완주자가_없으면_전원_환불한다() {
+    void 정산_완주자가_없으면_풀_전액이_소멸하고_예치_계정은_0이_된다() {
         long id = openInstant(2, 100);
         joinAs("guest-a-0001", id, false);
         joinAs("guest-b-0001", id, false);
 
         challengeService.settleDue();
 
-        assertThat(challengeRepository.balanceOf("guest-a-0001")).isEqualTo(INITIAL_BALANCE);
-        assertThat(challengeRepository.balanceOf("guest-b-0001")).isEqualTo(INITIAL_BALANCE);
-        assertThat(participantOf(id, "guest-a-0001").payout()).isEqualTo(100);
+        // 기간 내 완주자가 없으면 참가비는 돌려받지 못한다(환불 아님) — 풀 200이 소각 계정으로 옮겨진다.
+        assertThat(challengeRepository.balanceOf("guest-a-0001")).isEqualTo(INITIAL_BALANCE - 100);
+        assertThat(challengeRepository.balanceOf("guest-b-0001")).isEqualTo(INITIAL_BALANCE - 100);
+        assertThat(participantOf(id, "guest-a-0001").payout()).isZero();
+        assertThat(points.ledger().sumOf(PointAccounts.escrowOfChallenge(id))).isZero();
+        assertThat(points.ledger().sumOf(PointAccounts.BURN)).isEqualTo(200);
+        assertThat(points.ledger().totalSum()).isZero();
     }
 
     @Test
-    void 정산_연결계획을_삭제한_완주자는_패배로_처리된다() {
+    void 정산_나누어떨어지면_소멸_기표가_없다() {
         long id = openInstant(2, 100);
         joinAs("guest-a-0001", id, true);
         joinAs("guest-b-0001", id, true);
-        // a의 계획 삭제 — 완주 증명 소실.
-        long planId = participantOf(id, "guest-a-0001").planId();
-        planRepository.deleteById(planId, plan -> { });
 
         challengeService.settleDue();
 
-        // 완주자는 b 혼자 — 풀 200을 독식, a는 0.
-        assertThat(challengeRepository.balanceOf("guest-b-0001")).isEqualTo(INITIAL_BALANCE - 100 + 200);
+        // 풀 200을 완주자 2명이 100씩 — 남는 몫이 없으니 0원 이동을 기표하지 않는다(PointTransfer는 0원을 거부한다).
+        assertThat(points.ledger().sumOf(PointAccounts.BURN)).isZero();
+        assertThat(points.ledger().sumOf(PointAccounts.escrowOfChallenge(id))).isZero();
+        assertThat(points.ledger().findByAccount(PointAccounts.BURN, 10)).isEmpty();
+    }
+
+    @Test
+    void 완주_조건은_할일이_1개_이상이고_전부_완료다_빈_목표는_완주가_아니다() {
+        long id = open(5, 100);
+        emptyPlan("guest-empty-01");
+
+        challengeService.join(id, "guest-empty-01");
+
+        assertThat(participantOf(id, "guest-empty-01").completedAt()).isNull();
+    }
+
+    @Test
+    void 마감_전_목표를_삭제하면_완주_기록이_사라진다() {
+        long id = open(2, 100); // 14일 — 마감이 미래
+        joinAs("guest-a-0001", id, true);
+        joinAs("guest-b-0001", id, true);
+        assertThat(participantOf(id, "guest-a-0001").completedAt()).isNotNull();
+
+        // PlanService.delete가 삭제 직전 목표 행 잠금 안에서 부르는 훅
+        challengeService.onPlanProgress(participantOf(id, "guest-a-0001").planId(), false);
+
+        assertThat(participantOf(id, "guest-a-0001").completedAt()).isNull();
+        assertThat(participantOf(id, "guest-b-0001").completedAt()).isNotNull();
+    }
+
+    @Test
+    void 마감_후_체크는_완주로_기록되지_않는다() {
+        long id = openEnded(100);
+        joinAs("guest-a-0001", id, false);
+        long planId = participantOf(id, "guest-a-0001").planId();
+
+        finishAllTasks(planId);                         // 마감이 지난 뒤 100%를 만들어도
+        challengeService.onPlanProgress(planId, true);  // 저장소가 마감 이후의 변경을 무시한다
+        challengeService.settleDue();
+
+        assertThat(participantOf(id, "guest-a-0001").completedAt()).isNull();
         assertThat(participantOf(id, "guest-a-0001").payout()).isZero();
+        assertThat(points.ledger().sumOf(PointAccounts.BURN)).isEqualTo(100);
+    }
+
+    @Test
+    void 마감_후_목표를_삭제해도_동결된_완주_기록은_보존되고_정산된다() {
+        long id = openEnded(100);
+        joinAs("guest-a-0001", id, true); // 참가 시점에 이미 100% — 마감 전 기록
+        long planId = participantOf(id, "guest-a-0001").planId();
+
+        challengeService.onPlanProgress(planId, false); // 마감 후 삭제 훅 — 무시된다
+        planRepository.deleteById(planId, plan -> { });
+        challengeService.settleDue();
+
+        assertThat(participantOf(id, "guest-a-0001").payout()).isEqualTo(100); // 풀 100을 혼자 받는다
+        assertThat(challengeRepository.balanceOf("guest-a-0001")).isEqualTo(INITIAL_BALANCE);
+        assertThat(points.ledger().sumOf(PointAccounts.BURN)).isZero();
+    }
+
+    @Test
+    void 정산_후_목표를_삭제해도_결과는_유지되고_응답은_삭제됨으로_표시된다() {
+        long id = openInstant(2, 100);
+        joinAs("guest-a-0001", id, true);
+        joinAs("guest-b-0001", id, false);
+        challengeService.settleDue();
+        long planId = participantOf(id, "guest-a-0001").planId();
+
+        planRepository.deleteById(planId, plan -> { });
+        var view = challengeService.list("guest-a-0001").challenges().getFirst();
+
+        assertThat(view.status()).isEqualTo("CLOSED");
+        assertThat(view.myPayout()).isEqualTo(200);        // 확정된 정산 결과
+        assertThat(view.myPlan().deleted()).isTrue();      // 화면은 "삭제되었어요"만 말한다
+        assertThat(view.myPlan().completed()).isTrue();    // 기록은 보존
+    }
+
+    @Test
+    void 목록_응답은_참가에_쓴_목표를_보여준다() {
+        long id = open(5, 100);
+        joinAs("guest-a-0001", id, false);
+
+        var view = challengeService.list("guest-a-0001").challenges().getFirst();
+
+        assertThat(view.myPlan().goalName()).isEqualTo("정보처리기사 실기");
+        assertThat(view.myPlan().ratePercent()).isEqualTo(50); // 1/2
+        assertThat(view.myPlan().deleted()).isFalse();
+        assertThat(challengeService.list("guest-other-01").challenges().getFirst().myPlan()).isNull();
     }
 
     @Test
