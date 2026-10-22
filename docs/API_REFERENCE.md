@@ -57,6 +57,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `AI_RESPONSE_INVALID` | 502 | AI 응답 해석·정규화 불가 |
 | `AI_TOOL_LOOP_EXCEEDED` | 502 | 에이전트 루프가 도구 호출 상한(4턴)까지 가고도 최종 답을 못 냄 — 프론트는 자유 대화로 폴백 (v0.15.0) |
 | `DEPOSIT_ALREADY_EXISTS` | 409 | 계획당 목표 예치는 1건 (v0.32.0) — 판정 주체는 `plan_deposits`의 PK |
+| `AUTH_LOGIN_REQUIRED` | 403 | 로그인 회원 전용 API(목표 예치 조회·등록)에 Bearer 세션 토큰 없이 접근 |
 | `DEPOSIT_NOT_ALLOWED` | 409 | 고정(CONFIRMED)이 아닌 계획에 예치 시도 |
 | `DEPOSIT_AMOUNT_INVALID` | 400 | 예치 금액이 10~500P 범위 밖 |
 | `DEPOSIT_NOT_FOUND` | 404 | 그 계획에 걸린 예치 없음(조회) |
@@ -636,6 +637,10 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 "잔액은 줄었는데 원장에는 없는" 상태가 생기지 않는다 — **잔액을 직접 조작하는 API는 없다.**
 
 ### P-0. 목표 예치 (`/api/v1/plans/{planId}/deposit`) — v0.32.0
+
+조회(GET)·등록(POST) 모두 **로그인 회원 전용**이다. 유효한 `Authorization: Bearer <token>`이
+필요하고, 게스트는 403 `AUTH_LOGIN_REQUIRED`, 무효·만료 세션은 401 `AUTH_TOKEN_INVALID`를 받는다.
+화면에서도 게스트에게 예치 블록을 표시하거나 예치 조회를 요청하지 않는다.
 
 고정(CONFIRMED)한 계획에 자기 포인트를 걸어 두고, 계획이 **종결되는 순간 달성률만큼 돌려받는다**
 (나머지는 `system:burn`으로 소각). 챌린지가 여럿이 걸고 완주자끼리 나누는 판이라면 이쪽은 혼자

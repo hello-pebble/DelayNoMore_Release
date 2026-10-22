@@ -13,4 +13,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.PARAMETER)
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Owner {
+    /** true이면 게스트로 폴백하지 않고 유효한 로그인 세션을 요구한다. */
+    boolean loginRequired() default false;
 }
