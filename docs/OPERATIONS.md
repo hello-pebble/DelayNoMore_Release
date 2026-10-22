@@ -14,7 +14,7 @@
 | **데이터** | Supabase PostgreSQL(`postgres` 프로필, Flyway 스키마) + `deploy/db-backup.sh`·`db-restore.sh`(pg_dump), 일일 백업 cron(`setup-backup-cron.sh`, 14일 보존), 오프사이트 복사 훅(`BACKUP_UPLOAD_CMD`) | 오프사이트 대상 선택·설정은 운영자 몫(훅만 제공), 복원 리허설(분기 1회 수동) |
 | **관측** | `ai.usage` 토큰 사용량 로그([AGENT.md 6장](AGENT.md#6-관측--토큰-사용량-로그-v0152)), `ai.ratelimit` 차단 로그, `/api/v1/ai/health`(키·상한 소진 사유 포함) | 외부 업타임 감시·알림, 에러 알림, 로그 보존·로테이션 (Spring Actuator 미포함) |
 | **비용 방어** | 계획 생성 게스트당 하루 5회 제한(v0.20.0), LLM 일일 상한 2층(소유자별·서버 전역, v0.30.0) | 상한 소진 시 알림 없음(로그 `ai.ratelimit blocked`·`/ai/health` 사유로만 확인), 상한값 튜닝은 실사용 관측 후 |
-| **품질 게이트** | CI(`ci.yml`), 릴리스별 QA 체크리스트·QA 결과, EVAL 하네스([EVAL.md](EVAL.md)) | 배포 후 프로덕션 스모크 테스트 자동화 |
+| **품질 게이트** | CI(`ci.yml` — `-PrequireIntegrationTests`로 PostgreSQL IT가 하나라도 스킵되면 빌드 실패, 스킵 집계는 로컬에서도 출력), 릴리스별 QA 체크리스트·QA 결과, EVAL 하네스([EVAL.md](EVAL.md)) | 배포 후 프로덕션 스모크 테스트 자동화 |
 | **보안** | API 키 서버 전용(`~/.delaynomore.env`, chmod 600), HTTPS, `Cache-Control: no-store`, X-Guest-Id 소유자 격리 | 키 로테이션 절차, OS 자동 보안 패치, 엣지 레이트리밋 |
 
 ## 2. 운영 시작 전 필수 (P0)

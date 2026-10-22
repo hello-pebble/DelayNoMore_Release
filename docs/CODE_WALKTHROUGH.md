@@ -835,6 +835,9 @@ if (bearer != null) {
     return authRepository.findUserIdByToken(hash(bearer))
             .orElseThrow(() -> new BusinessException(AUTH_TOKEN_INVALID));  // 401
 }
+if (parameter.getParameterAnnotation(Owner.class).loginRequired()) {
+    throw new BusinessException(AUTH_LOGIN_REQUIRED);                       // 403 — 게스트 폴백 ❌
+}
 return OwnerGuestId.resolve(webRequest.getHeader("X-Guest-Id"));
 ```
 
@@ -851,6 +854,11 @@ return OwnerGuestId.resolve(webRequest.getHeader("X-Guest-Id"));
 **만료된 세션을 게스트로 조용히 강등하지 않는 이유:** 사용자는 로그인 상태라고 믿는데 데이터는
 게스트 보관함에 쌓인다. 어느 쪽에도 온전한 기록이 남지 않는 최악의 결과다. 401을 던지면 프론트가
 저장된 auth를 지우고 명시적으로 게스트로 복귀한다.
+
+**회원 전용 API는 파라미터 한 줄로 표시한다.** 목표 예치 컨트롤러는 `@Owner(loginRequired = true)`
+라서 Bearer 없이 게스트 ID만 보내면 403 `AUTH_LOGIN_REQUIRED`로 거부된다(게스트 경제는 참가비
+소멸·한도 우회가 얽혀 있어 예치는 로그인 회원에게만 연다). 판정이 이 한 지점이라 컨트롤러마다
+if문을 두지 않는다.
 
 ### 9-5. 파생 상태는 저장하지 않는다
 

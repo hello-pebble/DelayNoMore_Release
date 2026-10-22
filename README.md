@@ -18,6 +18,8 @@
 핀테크 축 2단계다. 원장(v0.31.0) 위에 올렸기에 발행·소각이 전부 두 줄로 남고, 불변식 2종이
 모든 새 경로에서 그대로 성립한다. 실제 PostgreSQL에 붙여 돌렸을 때만 드러난 순서 함정 둘
 (예치 등록 vs 차감 · 계획 삭제 vs 정산)은 [CONCURRENCY.md 11장](docs/CONCURRENCY.md)에 기록했다.
+v0.32.0 이후 미릴리스 수정(예치 회원 전용화 · CI의 통합 테스트 스킵 게이트)은
+[CHANGELOG.md의 Unreleased](CHANGELOG.md)에 있다.
 전체 이력은 [CHANGELOG.md](CHANGELOG.md), 실측 수치는
 [docs/QA_RESULT_v0.26.0-v0.32.0.md](docs/QA_RESULT_v0.26.0-v0.32.0.md)(v0.26~v0.32 소급 점검) 참고.
 
