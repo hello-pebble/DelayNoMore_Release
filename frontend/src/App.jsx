@@ -5,7 +5,7 @@ import SlackLinkCard from './components/slack_link';
 import { checkOpenRouterConnection } from './ai_engine';
 import { getNickname, setNickname, randomGuestNickname } from './nickname';
 import { getGuestId, isGuestIdPersisted } from './guest_id';
-import { getAuth, setAuth, clearAuth } from './auth';
+import { getAuth, setAuth, clearAuth, onAuthChange } from './auth';
 import { fetchAuthConfig, postGoogleLogin, postLogout } from './db_service';
 
 export default function App() {
@@ -49,8 +49,7 @@ export default function App() {
     try {
       // 현재 localStorage 닉네임을 함께 보낸다 — 최초 가입 시 서버 닉네임으로 이관된다.
       const data = await postGoogleLogin(response.credential, getNickname());
-      setAuth(data);
-      setAuthState(data);
+      setAuth(data); // 화면 상태 전환은 아래 onAuthChange 구독이 맡는다
     } catch (err) {
       alert(err?.message || '로그인에 실패했습니다. 다시 시도해주세요.');
     }
@@ -59,8 +58,25 @@ export default function App() {
   const handleLogout = () => {
     postLogout().catch(() => {}); // 서버 세션 삭제가 실패해도 로컬 로그아웃은 진행한다
     clearAuth();
-    setAuthState(null);
   };
+
+  // 계정이 바뀌는 모든 경로(로그인·로그아웃·401 만료·다른 탭)의 단일 입구. 토큰이 실제로 바뀐
+  // 경우에만 epoch를 올려 ChatCoach를 새로 만든다 — 이전 계정의 계획·대화·예치·자료가 화면에 남은 채
+  // 새 계정으로 요청이 나가는 불일치를 없애고, 새 소유자 기준으로 처음부터 다시 불러온다.
+  // (동시에 여러 요청이 401을 받아도 두 번째부터는 토큰이 같아 no-op이다.)
+  // ponytail: 디바운스(600ms) 중이던 미저장 편집은 버려진다 — 새 소유자로 잘못 저장하는 것보다 낫다.
+  const [epoch, setEpoch] = useState(0);
+  const [expiredNotice, setExpiredNotice] = useState(false);
+  const tokenRef = useRef(getAuth()?.token);
+  useEffect(() => onAuthChange(({ expired }) => {
+    const next = getAuth();
+    setAuthState(next);
+    if (next?.token === tokenRef.current) return;
+    tokenRef.current = next?.token;
+    setEpoch((e) => e + 1);
+    setMyPageOpen(false);
+    setExpiredNotice(expired);
+  }), []);
 
   // 로그인 설정 조회 — 서버에 클라이언트 ID가 없으면 enabled=false라 버튼 자체가 안 그려진다.
   useEffect(() => {
@@ -137,8 +153,37 @@ export default function App() {
   // 닉네임 수동 입력 게이트(NicknameSetup)는 시작 흐름에서 빠졌다 — 이름은 시작을 막을 이유가
   // 없고, 바꾸고 싶으면 헤더의 "변경" 오버레이가 그대로 있다. 로그인 상태면 이 화면 자체를
   // 건너뛴다(표시는 로컬 닉네임 → 서버 닉네임 → 이메일 순 폴백).
+  // 만료 안내 — 로컬 닉네임이 없으면 만료 직후 시작 화면으로 돌아오므로 두 화면 모두에서 보여 준다.
+  const expiredBanner = expiredNotice && (
+    <div
+      role="alert"
+      style={{
+        flexShrink: 0,
+        display: 'flex',
+        justifyContent: 'space-between',
+        gap: '8px',
+        padding: '8px 12px',
+        fontSize: '12px',
+        color: '#7c2d12',
+        background: '#fef3c7',
+        borderBottom: '1px solid var(--border)'
+      }}
+    >
+      <span>로그인이 만료되어 로그아웃됐어요. 다시 로그인하면 내 계획을 이어서 볼 수 있어요.</span>
+      <button
+        onClick={() => setExpiredNotice(false)}
+        aria-label="닫기"
+        style={{ border: 'none', background: 'none', color: 'inherit', cursor: 'pointer' }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+
   if (!nickname && !auth) {
     return (
+      <>
+        {expiredBanner}
       <div
         style={{
           flex: 1,
@@ -188,6 +233,7 @@ export default function App() {
           닉네임은 자동 생성되며 나중에 바꿀 수 있어요.
         </div>
       </div>
+      </>
     );
   }
 
@@ -310,8 +356,10 @@ export default function App() {
         </div>
       )}
 
-      {/* 데이터 스코프는 게스트 ID(안정)라 닉네임이 바뀌어도 ChatCoach를 리마운트하지 않는다. */}
-      <ChatCoach agentEnabled={agentEnabled} isLoggedIn={!!auth?.token} />
+      {expiredBanner}
+
+      {/* 닉네임이 바뀌어도 ChatCoach는 그대로 두지만, 계정(토큰)이 바뀌면 epoch key로 새로 만든다. */}
+      <ChatCoach key={epoch} agentEnabled={agentEnabled} isLoggedIn={!!auth?.token} />
 
       {/* 마이페이지 — 헤더 닉네임으로 연다. 오버레이라 ChatCoach가 마운트된 채 위에 얹혀
           대화·계획 상태가 유지된다(닉네임 변경 오버레이와 같은 이유). */}

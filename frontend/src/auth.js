@@ -3,8 +3,12 @@
 // 만료를 알리고, 그때 clearAuth로 지우면 다음 요청부터 기존 게스트(X-Guest-Id) 흐름으로
 // 자연 복귀한다. guestId는 로그인 후에도 계속 전송된다 — 로그인 시 게스트 보관함을 계정으로
 // 흡수하는 재료이기 때문(서버 AuthService.absorbGuest).
+//
+// 계정이 바뀌는 순간(로그인·로그아웃·만료·다른 탭의 변경)은 onAuthChange로 알린다. 화면이 이전
+// 계정의 상태를 들고 새 계정으로 요청하는 불일치를 막으려고, App이 이 신호로 화면을 다시 만든다.
 
 const AUTH_KEY = 'delaynomore:auth';
+const AUTH_EVENT = 'delaynomore:auth';
 
 // { token, nickname, email } 또는 null. 파싱 실패·차단 환경은 비로그인으로 취급한다.
 export function getAuth() {
@@ -16,18 +20,38 @@ export function getAuth() {
   }
 }
 
+const notify = (expired) => window.dispatchEvent(new CustomEvent(AUTH_EVENT, { detail: { expired } }));
+
 export function setAuth(auth) {
   try {
     localStorage.setItem(AUTH_KEY, JSON.stringify(auth));
   } catch {
     // localStorage 차단(프라이빗 모드 등) — 로그인이 이 탭에서만 유지되는 것을 감수한다.
   }
+  notify(false);
 }
 
-export function clearAuth() {
+// expired=true는 서버가 401로 세션 만료를 알렸을 때 — 사용자에게 이유를 안내하기 위한 표시다.
+export function clearAuth(expired = false) {
   try {
     localStorage.removeItem(AUTH_KEY);
   } catch {
     // 차단 환경이면 지울 것도 없다.
   }
+  notify(expired);
+}
+
+// 같은 탭의 변경(커스텀 이벤트)과 다른 탭의 변경(storage 이벤트)을 한 콜백으로 받는다.
+// cb({ expired })를 호출하고, 구독 해제 함수를 돌려준다.
+export function onAuthChange(cb) {
+  const onCustom = (e) => cb({ expired: !!e.detail?.expired });
+  const onStorage = (e) => {
+    if (e.key === AUTH_KEY) cb({ expired: false });
+  };
+  window.addEventListener(AUTH_EVENT, onCustom);
+  window.addEventListener('storage', onStorage);
+  return () => {
+    window.removeEventListener(AUTH_EVENT, onCustom);
+    window.removeEventListener('storage', onStorage);
+  };
 }

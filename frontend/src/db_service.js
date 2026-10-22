@@ -8,6 +8,12 @@ import { getAuth, clearAuth } from './auth';
 
 const API_BASE = '/api/v1';
 
+// 401 = 그 요청이 실은 토큰이 만료·무효. 요청이 나간 뒤 사용자가 다시 로그인했다면 저장된 토큰은
+// 이미 새 것이므로, 늦게 도착한 옛 토큰의 401이 새 로그인을 지우지 않게 같을 때만 지운다.
+const clearExpiredAuth = (sentToken) => {
+  if (sentToken && getAuth()?.token === sentToken) clearAuth(true);
+};
+
 // 공통 JSON 요청 — 백엔드의 ApiResponse({ success, data, error })를 언래핑해 data만 돌려준다.
 // 실패 시(HTTP 오류 또는 success=false) error.message로 예외를 던진다(필드 오류가 있으면 첫 사유 우선).
 // 던지는 Error에 error.code(예: PLAN_NOT_FOUND)를 붙여 호출부가 오류 종류를 분기할 수 있게 한다.
@@ -28,6 +34,7 @@ const requestJson = async (path, payload, method = 'POST') => {
   if (auth?.token) {
     headers['Authorization'] = `Bearer ${auth.token}`;
   }
+  const sentToken = auth?.token;
   const response = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -48,7 +55,7 @@ const requestJson = async (path, payload, method = 'POST') => {
     // 세션 만료(401) — 저장된 auth를 지워 다음 요청부터 게스트로 복귀한다. 예외는 그대로
     // 던져 호출부의 기존 오류 UI("로그인이 만료되었습니다...")를 재사용한다.
     if (response.status === 401) {
-      clearAuth();
+      clearExpiredAuth(sentToken);
     }
     const fieldErrors = body?.error?.fieldErrors;
     const firstFieldError = fieldErrors && Object.values(fieldErrors)[0];
@@ -90,6 +97,7 @@ const consumeSse = async (path, payload, onEvent) => {
   if (auth?.token) {
     headers['Authorization'] = `Bearer ${auth.token}`;
   }
+  const sentToken = auth?.token;
   const response = await fetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers,
@@ -98,7 +106,7 @@ const consumeSse = async (path, payload, onEvent) => {
 
   if (!response.ok || !response.body) {
     if (response.status === 401) {
-      clearAuth(); // requestJson과 같은 규칙 — 만료 세션은 지우고 게스트로 복귀
+      clearExpiredAuth(sentToken); // requestJson과 같은 규칙 — 만료 세션은 지우고 게스트로 복귀
     }
     throw new Error(`HTTP ${response.status}`);
   }
