@@ -5,15 +5,19 @@ import com.delaynomore.backend.domain.challenge.dto.ChallengeParticipantResponse
 import com.delaynomore.backend.domain.challenge.dto.JoinResponse;
 import com.delaynomore.backend.domain.challenge.service.ChallengeService;
 import com.delaynomore.backend.global.auth.Owner;
+import com.delaynomore.backend.global.error.BusinessException;
+import com.delaynomore.backend.global.error.ErrorCode;
 import com.delaynomore.backend.global.response.ApiResponse;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,6 +36,11 @@ import java.util.List;
  *
  * 참가는 본문 없는 도메인 액션(POST /{id}/join)이다 — 클라이언트가 정원이나 잔액을 실어 보내지
  * 않는다. 판정 규칙은 전부 서버(저장소의 원자 구간)가 소유한다.
+ *
+ * 참가는 로그인(회원) 전용이다(v0.36.0). @Owner는 Bearer가 없으면 게스트로 폴백하고 소유자
+ * 문자열만으로는 게스트·회원을 구분할 수 없으므로, SlackLinkController와 같은 방식으로 컨트롤러가
+ * Authorization 헤더 존재를 먼저 확인한다(헤더가 있는데 무효면 리졸버가 이미 401로 끊는다).
+ * 서비스 호출 전에 거부하므로 잠금·참가 등록·포인트 차감·정원 변경이 전혀 일어나지 않는다.
  */
 @Tag(name = "challenge")
 @RestController
@@ -64,12 +73,23 @@ public class ChallengeController {
     }
 
     // 동시 참가 요청에서 정원을 초과시키지 않는 것이 이 엔드포인트의 전부다.
-    // 실패는 409 CHALLENGE_FULL / 409 CHALLENGE_ALREADY_JOINED / 400 POINTS_INSUFFICIENT.
-    @Operation(summary = "챌린지 참가 — 정원 한정, 참가비 차감")
+    // 실패는 403 CHALLENGE_LOGIN_REQUIRED(게스트) / 409 CHALLENGE_FULL / 409 CHALLENGE_ALREADY_JOINED
+    // / 400 POINTS_INSUFFICIENT.
+    @Operation(summary = "챌린지 참가 — 로그인 전용, 정원 한정, 참가비 차감")
     @PostMapping("/{id}/join")
     public ApiResponse<JoinResponse> join(@PathVariable long id,
+                                          @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
                                           @Owner String owner) {
+        requireMember(authorization);
         log.info("Received request to join challenge {}", id);
         return ApiResponse.ok(challengeService.join(id, owner));
+    }
+
+    // ponytail: 컨트롤러 단 검사 — 참가의 유일한 호출처가 이 엔드포인트라 충분하다. 에이전트 도구 등
+    // 다른 호출처가 생기면 회원 여부를 ChallengeService.join 인자로 내려야 한다.
+    private static void requireMember(String authorization) {
+        if (authorization == null || authorization.isBlank()) {
+            throw new BusinessException(ErrorCode.CHALLENGE_LOGIN_REQUIRED);
+        }
     }
 }
