@@ -113,6 +113,20 @@ async function copyTextToClipboard(text) {
 }
 
 // 모바일 전용 화면이라 탭 타깃 최소 높이(약 40px)를 지켜, 손가락으로 눌러도 빗나가지 않게 한다.
+// 오늘 패널 빈 상태의 버튼 묶음 — 주 동작 하나 + 선택적 보조 동작.
+function TodayEmptyActions({ primary, secondary }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'center', marginTop: '12px' }}>
+      <button type="button" onClick={primary.onClick} style={{ ...quickReplyButtonStyle, background: 'var(--primary)', color: '#fff', border: 'none' }}>
+        {primary.label}
+      </button>
+      {secondary && (
+        <button type="button" onClick={secondary.onClick} style={quickReplyButtonStyle}>{secondary.label}</button>
+      )}
+    </div>
+  );
+}
+
 const quickReplyButtonStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -208,9 +222,15 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 활성 탭 — 좁은 폭에서는 이 패널 하나만, 넓은 폭에서는 대화 옆 오른쪽 칸에 이 패널이 보인다.
   // 네 패널은 항상 마운트해 두고 비활성만 숨기므로(아래 렌더 참고) 탭을 오가도 스크롤 위치와
   // 진행 중인 스트리밍이 끊기지 않는다.
-  // 초기값: 넓은 화면은 대화가 이미 왼쪽에 있으므로 오른쪽 칸을 체크리스트로 열어 둔다(빈 칸 방지).
-  const [activeTab, setActiveTab] = useState(() =>
-    window.matchMedia('(min-width: 1024px)').matches ? 'checklist' : 'chat'); // 'chat' | 'today' | 'checklist' | 'challenge'
+  // 초기값: 화면 폭과 무관하게 '오늘' — 재방문하면 탭 이동 없이 오늘 할 일을 바로 체크한다.
+  const [activeTab, setActiveTab] = useState('today'); // 'chat' | 'today' | 'checklist' | 'challenge'
+  // 이동 요청 시퀀스 — 비동기 이동(계획 보기 등)이 끝나기 전에 사용자가 다른 탭을 고르면
+  // 늦은 응답이 그 선택을 되돌리지 않게 한다. 사용자가 탭을 직접 고를 때마다 올린다.
+  const navSeqRef = useRef(0);
+  const goTab = (tab) => {
+    navSeqRef.current += 1;
+    setActiveTab(tab);
+  };
 
   const chatEndRef = useRef(null);
   const thinkingTimerRef = useRef(null);
@@ -357,10 +377,10 @@ export default function ChatCoach({ agentEnabled = false }) {
           ? (locked
             // 문구를 에이전트 가용 여부로 가르지 않는다 — 복원은 마운트 직후라 헬스체크 응답 전이고,
             // 그 시점의 agentEnabled는 대체로 false다(레이스). 양쪽 모드에서 모두 참인 문구를 쓴다.
-            ? `고정된 "${goalName}" 계획을 불러왔습니다. 지금은 실행 모드예요 — 완료 체크는 체크리스트 탭에서 이어가고, 진행 상황이나 궁금한 점은 여기서 물어보세요.`
-            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 체크리스트 탭을 확인해 주세요. 계속 대화로 수정할 수 있어요.`)
+            ? `고정된 "${goalName}" 계획을 불러왔습니다. 지금은 실행 모드예요 — 완료 체크는 오늘·체크리스트 탭에서 이어가고, 진행 상황이나 궁금한 점은 여기서 물어보세요.`
+            : `이전에 보던 "${goalName}"을 서버 보관함에서 불러왔습니다. 오늘·체크리스트 탭에서 확인할 수 있고, 계속 대화로 수정할 수 있어요.`)
           : (locked
-            ? `보관함의 "${goalName}"을 불러왔습니다. 고정된 계획이라 내용은 그대로 두고 실행에 집중해요 — 완료 체크는 체크리스트 탭에서, 질문은 여기서 하세요.`
+            ? `보관함의 "${goalName}"을 불러왔습니다. 고정된 계획이라 내용은 그대로 두고 실행에 집중해요 — 완료 체크는 오늘·체크리스트 탭에서, 질문은 여기서 하세요.`
             : `보관함의 "${goalName}"을 불러왔습니다. 계속 대화로 수정할 수 있어요.`)
       }
     ]);
@@ -727,9 +747,9 @@ export default function ChatCoach({ agentEnabled = false }) {
 
   // 오늘 보기 밴드에서의 완료 토글. 활성 계획이면 기존 toggleTask에 위임한다 —
   // draftChecklist가 단일 진실 원천으로 남아 디바운스 동기화 경로가 그대로 동작한다
-  // (사본 분기·동기화 경합 없음). 비활성 계획이면 savedPlans 스냅샷을 낙관적으로 갱신하고
-  // 전체 계획을 즉시 PUT한다(백엔드는 부분 갱신이 없음). 디바운스는 두지 않는다 —
-  // 단발 클릭이고, 매 호출이 최신 낙관 상태를 읽으므로 연속 토글도 누적 반영된다.
+  // (사본 분기·동기화 경합 없음). 비활성 계획이면 작업 완료 API(updateTaskCompletion)로
+  // 해당 작업만 즉시 저장하고 응답으로 savedPlans 스냅샷을 교체한다(실패 시 롤백). 디바운스는
+  // 두지 않는다 — 단발 클릭이다. 오늘 탭이 첫 화면이라 이 경로가 가장 자주 쓰인다.
   const toggleTodayTask = async (planId, taskId) => {
     if (planId === activePlanId) {
       await toggleTask(todayStr(), taskId);
@@ -968,9 +988,11 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 남으므로(활성 포인터만 해제) 언제든 목록에서 다시 불러올 수 있다. 고정된 계획을 바꾸고
   // 싶을 때의 탈출구이기도 하다: 새 계획을 만들고, 필요하면 목록에서 이전 계획을 삭제한다.
   // 요청이 진행 중일 때 리셋하면 나중에 도착하는 응답이 새 상태를 덮어써버릴 수 있어 막는다.
+  // 반환값: 실제로 초기화했는지(취소·진행 중이면 false) — 호출자가 탭 이동 여부를 정한다.
   const handleResetPlan = async () => {
-    if (isTyping) return;
-    if (draftChecklist && !window.confirm('현재 계획은 보관함에 남고, 새 계획을 처음부터 시작합니다. 계속할까요?')) return;
+    if (isTyping) return false;
+    if (draftChecklist && !window.confirm('현재 계획은 보관함에 남고, 새 계획을 처음부터 시작합니다. 계속할까요?')) return false;
+    hasInteractedRef.current = true; // 뒤늦은 자동 복원이 새 계획 시작을 덮어쓰지 않게
     // 떠나기 전에 대기 중 변경(완료 토글 등)을 마저 저장한다 — 보관함에 남길 것이므로 유실 금지.
     await syncActivePlan({ recreateIfMissing: false });
     // 떠나는 계획의 스냅샷도 라이브 상태로 최신화(오늘 보기가 낡은 값을 보이지 않게).
@@ -990,16 +1012,19 @@ export default function ChatCoach({ agentEnabled = false }) {
     setMessages([
       { id: generateUniqueId('bot-reset'), sender: 'bot', text: getNextQuestion(nextSlot) }
     ]);
+    return true;
   };
 
   // 보관함 목록에서 계획 선택 — 전환 시점의 최신본을 서버에서 다시 읽는다(다른 방문자의
   // 수정·진행이 반영되도록). 현재 계획은 자동 동기화로 이미 서버에 있으니 확인 창은 불필요.
+  // 반환값: 해당 계획이 화면에 로드됐는지(진행 중·조회 실패면 false) — 오늘 카드가 탭 이동 여부를 정한다.
   const handleLoadPlan = async (planId) => {
-    if (isTyping) return;
+    if (isTyping) return false;
     if (planId === activePlanId) {
       setShowPlanList(false);
-      return;
+      return true;
     }
+    hasInteractedRef.current = true; // 뒤늦은 자동 복원이 사용자가 고른 계획을 덮어쓰지 않게
     // 전환 전에 현재 계획의 대기 중 변경을 마저 저장한다(디바운스가 취소돼 유실되지 않게).
     await syncActivePlan({ recreateIfMissing: false });
     // 떠나는 계획의 savedPlans 스냅샷을 라이브 상태로 최신화한다 — 활성일 때는 오늘 보기가
@@ -1013,6 +1038,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       restorePlan(plan, 'switched');
       // 방금 서버에서 읽은 최신본으로 대상 행 스냅샷도 갱신(다른 방문자의 변경 반영).
       setSavedPlans((prev) => prev.map((p) => (p.id === plan.id ? plan : p)));
+      return true;
     } catch (err) {
       if (err.code === 'PLAN_NOT_FOUND') {
         window.alert('이미 삭제된 계획입니다.');
@@ -1020,6 +1046,7 @@ export default function ChatCoach({ agentEnabled = false }) {
       } else {
         window.alert('계획을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
       }
+      return false;
     }
   };
 
@@ -1668,6 +1695,26 @@ export default function ChatCoach({ agentEnabled = false }) {
   // === 오늘 할 일 패널 (하단 탭: 오늘) ===
   // 대화/체크리스트와 같은 높이의 세로 칸. 새로고침 버튼으로 보관함을 다시 불러와
   // 다른 기기/방문자의 변경을 반영한다(자동 갱신은 마운트 fetch + 각 조작 경로가 담당).
+  // 최초 조회 중(idle 포함)과 재조회 중을 구분한다 — 목록이 없을 때만 "불러오는 중"으로 대체하고,
+  // 있을 때는 기존 목록을 유지한 채 갱신 표시만 한다.
+  const plansLoading = plansStatus === 'idle' || plansStatus === 'loading';
+  const hasUnarchivedDraft = !!draftChecklist && activePlanId == null;
+  // 이동 헬퍼 — 비동기 결과가 늦게 와도 그 사이 사용자가 고른 탭을 되돌리지 않는다(navSeqRef).
+  const openPlanFromToday = async (planId) => {
+    const seq = ++navSeqRef.current;
+    if (await handleLoadPlan(planId) && navSeqRef.current === seq) setActiveTab('checklist');
+  };
+  const startNewPlanFromToday = async () => {
+    const seq = ++navSeqRef.current;
+    if (await handleResetPlan() && navSeqRef.current === seq) setActiveTab('chat');
+  };
+  const openPlanListFromToday = () => {
+    goTab('checklist');
+    setShowPlanList(true);
+    refreshPlans();
+  };
+  const todayEmptyTextStyle = { fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' };
+
   const todayPanel = (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, height: '100%', background: 'var(--bg-card)' }}>
       <div
@@ -1692,6 +1739,8 @@ export default function ChatCoach({ agentEnabled = false }) {
         <button
           type="button"
           onClick={refreshPlans}
+          disabled={plansStatus === 'loading'}
+          aria-label="오늘 할 일 새로고침"
           title="오늘 할 일 새로고침"
           style={{ marginLeft: 'auto', display: 'flex', background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '4px' }}
         >
@@ -1699,12 +1748,46 @@ export default function ChatCoach({ agentEnabled = false }) {
         </button>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {savedPlans.length === 0 ? (
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>
-              보관된 계획이 아직 없습니다.<br />계획을 만들면 오늘 할 일이 여기에 모여요.
+          {/* 목록이 있는 채로 재조회 중/실패 — 기존 목록은 마지막 조회 결과라 최신 보장이 없음을 알린다. */}
+          {savedPlans.length > 0 && plansStatus === 'loading' && (
+            <div role="status" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>갱신 중…</div>
+          )}
+          {savedPlans.length > 0 && plansStatus === 'error' && (
+            <div role="alert" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+              최신 정보를 불러오지 못했어요.
+              <button type="button" onClick={refreshPlans} style={{ ...quickReplyButtonStyle, minHeight: '28px', padding: '2px 10px' }}>다시 시도</button>
             </div>
+          )}
+          {savedPlans.length === 0 ? (
+            plansLoading ? (
+              <div role="status" style={todayEmptyTextStyle}>오늘 할 일을 불러오는 중이에요.</div>
+            ) : plansStatus === 'error' ? (
+              <div role="alert" style={todayEmptyTextStyle}>
+                계획을 불러오지 못했어요.
+                <TodayEmptyActions
+                  primary={{ label: '다시 시도', onClick: refreshPlans }}
+                  secondary={{ label: '대화 열기', onClick: () => goTab('chat') }}
+                />
+              </div>
+            ) : hasUnarchivedDraft ? (
+              <div style={todayEmptyTextStyle}>
+                작성 중인 계획이 있어요.
+                <TodayEmptyActions primary={{ label: '이어서 작성하기', onClick: () => goTab('chat') }} />
+              </div>
+            ) : (
+              <div style={todayEmptyTextStyle}>
+                아직 만든 계획이 없어요.<br />계획을 만들면 오늘 할 일이 여기에 모여요.
+                <TodayEmptyActions primary={{ label: '계획 만들기', onClick: () => goTab('chat') }} />
+              </div>
+            )
           ) : todayGroups.length === 0 ? (
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', textAlign: 'center', paddingTop: '24px' }}>오늘 할 일이 없습니다</div>
+            <div style={todayEmptyTextStyle}>
+              오늘 예정된 할 일이 없어요.
+              <TodayEmptyActions
+                primary={{ label: '보관된 계획 보기', onClick: openPlanListFromToday }}
+                secondary={{ label: '새 계획 만들기', onClick: startNewPlanFromToday }}
+              />
+            </div>
           ) : (
             todayGroups.map((group) => (
               <div
@@ -1724,7 +1807,7 @@ export default function ChatCoach({ agentEnabled = false }) {
                   {group.isCurrent && <span style={{ fontSize: '13px', color: 'var(--primary)', flexShrink: 0 }}>· 보는 중</span>}
                   <button
                     type="button"
-                    onClick={() => handleLoadPlan(group.planId)}
+                    onClick={() => openPlanFromToday(group.planId)}
                     disabled={isTyping}
                     style={{
                       marginLeft: 'auto',
@@ -2761,7 +2844,7 @@ export default function ChatCoach({ agentEnabled = false }) {
             role="tab"
             data-tab={id}
             aria-selected={activeTab === id}
-            onClick={() => setActiveTab(id)}
+            onClick={() => goTab(id)}
           >
             <span className="tab-icon">
               <Icon size={19} />
