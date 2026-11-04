@@ -58,6 +58,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `AI_TOOL_LOOP_EXCEEDED` | 502 | 에이전트 루프가 도구 호출 상한(4턴)까지 가고도 최종 답을 못 냄 — 프론트는 자유 대화로 폴백 (v0.15.0) |
 | `AI_DAILY_LIMIT_EXCEEDED` | 429 | LLM 일일 상한 소진 (v0.30.0) — 소유자별(요청 수)·서버 전역(업스트림 호출 수) 2층. SSE 경로에서는 HTTP가 아니라 `error` 이벤트로 전달되고, `/ai/health`가 사유와 함께 `connected:false`를 내려 프론트는 mock으로 폴백 |
 | `CHALLENGE_NOT_FOUND` | 404 | 없는 챌린지 id (v0.21.0) |
+| `CHALLENGE_LOGIN_REQUIRED` | 403 | 게스트의 챌린지 참가 — `Authorization: Bearer` 없이 `POST /challenges/{id}/join` 호출 (v0.36.0). 서비스 호출 전에 거부되어 참가 등록·정원·포인트에 변화 없음 |
 | `CHALLENGE_FULL` | 409 | 챌린지 참가 시 정원 마감 — 판정은 조건부 UPDATE(`WHERE participant_count < capacity`) 단독 |
 | `CHALLENGE_ALREADY_JOINED` | 409 | 이미 참가한 챌린지에 재참가 |
 | `CHALLENGE_CLOSED` | 409 | 정산 마감된 챌린지에 참가 — 미달 환불로 닫힌 챌린지 포함 (v0.25.0) |
@@ -613,7 +614,11 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 
 오류: 404 `CHALLENGE_NOT_FOUND`(없는 id)
 
-### C-3. POST /challenges/{id}/join — 참가 (정원 한정, 참가비 차감)
+### C-3. POST /challenges/{id}/join — 참가 (로그인 전용, 정원 한정, 참가비 차감)
+
+**로그인 회원 전용(v0.36.0)** — `Authorization: Bearer <토큰>`이 없으면 403 `CHALLENGE_LOGIN_REQUIRED`로
+거부되고(있는데 무효면 401 `AUTH_TOKEN_INVALID`), 거부 시 참가 등록·정원·포인트는 변하지 않는다.
+`X-Guest-Id`는 다른 엔드포인트와 같이 계속 보낸다.
 
 **본문 없는 POST** — 클라이언트가 정원·잔액을 실어 보내지 않고, 판정 규칙은 전부 서버(저장소의
 원자 구간)가 소유한다. 참가 시점에 **같은 조건의 고정된 계획을 서버가 자동으로 찾아 연결**한다
@@ -629,9 +634,9 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
   "balance": 800 }
 ```
 
-오류: 404 `CHALLENGE_NOT_FOUND`, 409 `CHALLENGE_FULL`(정원 마감) / `CHALLENGE_ALREADY_JOINED` /
-`CHALLENGE_CLOSED`(정산 마감, v0.25.0), 400 `POINTS_INSUFFICIENT` / `CHALLENGE_PLAN_REQUIRED`(같은
-조건의 고정된 계획 없음, v0.25.0)
+오류: 403 `CHALLENGE_LOGIN_REQUIRED`(게스트, v0.36.0), 404 `CHALLENGE_NOT_FOUND`, 409 `CHALLENGE_FULL`(정원 마감) /
+`CHALLENGE_ALREADY_JOINED` / `CHALLENGE_CLOSED`(정산 마감, v0.25.0), 400 `POINTS_INSUFFICIENT` /
+`CHALLENGE_PLAN_REQUIRED`(같은 조건의 고정된 계획 없음, v0.25.0)
 
 ---
 

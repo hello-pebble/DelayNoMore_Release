@@ -473,11 +473,18 @@
 
 > 정원이 한정된 챌린지에 여러 사람이 **동시에** 참가를 요청해도 정확히 정원까지만 성공해야 하고,
 > 실패한 사람의 포인트는 차감되지 않아야 한다. 정원 판정은 서버의 조건부 UPDATE 한 문장이
-> 단독으로 한다(`docs/CONCURRENCY.md`). 초기 포인트는 게스트당 1000P.
+> 단독으로 한다(`docs/CONCURRENCY.md`). 초기 포인트는 소유자당 1000P.
+>
+> **v0.36.0부터 참가는 로그인 회원 전용**이다(F-46). 아래 curl의 `X-Guest-Id`만으로는 모두 403
+> `CHALLENGE_LOGIN_REQUIRED`가 되므로, 참가 요청에는 **서로 다른 회원의 토큰**을
+> `-H "Authorization: Bearer $T1"` 형태로 넣어야 한다(토큰은 로그인한 브라우저의 Local Storage).
+> 회원 여러 명을 준비하기 어려우면 동시성 규칙은 `ChallengeJoinConcurrencyIT`(Postgres 통합 테스트)로
+> 대신 확인하고, 화면 항목만 수행한다.
 >
 > **선행**: v0.23.0부터 챌린지는 개설할 수 없다. 아래 항목을 확인하려면 **F-32를 먼저 수행해**
 > 자동 생성된 챌린지를 하나 만들어 두어야 한다(정원 5명·참가비 100P로 열린다).
 
+- [ ] (v0.36.0) 아래 화면 항목은 **Google 로그인한 상태**에서 수행한다 — 게스트 화면은 F-46
 - [ ] 하단 탭바에 **챌린지** 탭(4번째)이 있고, 열면 우측 상단에 내 포인트(최초 1000P)가 보인다
 - [ ] 화면 어디에도 **"챌린지 개설" 버튼·폼이 없다**(v0.23.0에서 제거)
 - [ ] 자동 생성된 카드가 `0/5`로 표시되고, 참가하면 `1/5` + 포인트가 참가비(100P)만큼 줄어든다
@@ -493,14 +500,15 @@
     -H "Content-Type: application/json" -H "X-Guest-Id: qa-challenge-host" \
     -d '{"title":"cert study 14d","durationDays":14,"capacity":5,"entryFee":100}' \
     | sed -E 's/.*"id":([0-9]+).*/\1/')
-  # 2) 먼저 4명을 채워 남은 자리를 1개로 만든다
-  for g in qa-seat-0001 qa-seat-0002 qa-seat-0003 qa-seat-0004; do
-    curl -s -o /dev/null -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: $g"
+  # 2) 먼저 4명을 채워 남은 자리를 1개로 만든다 (v0.36.0: 참가는 회원 토큰 필요 — $T_seat_n은 각기 다른 회원)
+  for t in $T_seat_1 $T_seat_2 $T_seat_3 $T_seat_4; do
+    curl -s -o /dev/null -X POST http://localhost/api/v1/challenges/$CID/join \
+      -H "Authorization: Bearer $t" -H "X-Guest-Id: qa-seat"
   done
   # 3) 5명이 동시에 참가 요청 (백그라운드로 한꺼번에 발사)
-  for g in qa-race-0001 qa-race-0002 qa-race-0003 qa-race-0004 qa-race-0005; do
-    curl -s -o /dev/null -w "$g: %{http_code}\n" -X POST \
-      http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: $g" &
+  for t in $T_race_1 $T_race_2 $T_race_3 $T_race_4 $T_race_5; do
+    curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+      http://localhost/api/v1/challenges/$CID/join -H "Authorization: Bearer $t" -H "X-Guest-Id: qa-race" &
   done; wait
   # 기대: 200이 정확히 1건, 409가 4건 (409 본문 code = CHALLENGE_FULL)
   ```
@@ -512,21 +520,21 @@
   # 기대: 해당 챌린지의 participantCount = 5, remainingSeats = 0, full = true
   ```
 
-- [ ] **탈락자의 포인트가 차감되지 않았다** — 409를 받은 게스트로 목록을 조회하면 잔액이 1000P 그대로다:
+- [ ] **탈락자의 포인트가 차감되지 않았다** — 409를 받은 회원으로 목록을 조회하면 잔액이 1000P 그대로다:
 
   ```bash
-  for g in qa-race-0001 qa-race-0002 qa-race-0003 qa-race-0004 qa-race-0005; do
-    echo -n "$g: "; curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: $g" \
+  for t in $T_race_1 $T_race_2 $T_race_3 $T_race_4 $T_race_5; do
+    curl -s http://localhost/api/v1/challenges -H "Authorization: Bearer $t" -H "X-Guest-Id: qa-race" \
       | sed -E 's/.*"balance":([0-9]+).*/\1/'
   done
   # 기대: 정확히 1명만 900, 나머지 4명은 1000 (자리를 못 얻었는데 참가비만 잃는 일 없음)
   ```
 
-- [ ] 같은 게스트로 참가를 **두 번** 호출 → 두 번째는 409 `CHALLENGE_ALREADY_JOINED`이고 인원수·잔액이 더 변하지 않는다:
+- [ ] 같은 회원으로 참가를 **두 번** 호출 → 두 번째는 409 `CHALLENGE_ALREADY_JOINED`이고 인원수·잔액이 더 변하지 않는다:
 
   ```bash
-  curl -s -o /dev/null -w "1st: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: qa-dup-0001"
-  curl -s -o /dev/null -w "2nd: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: qa-dup-0001"
+  curl -s -o /dev/null -w "1st: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "Authorization: Bearer $T_dup" -H "X-Guest-Id: qa-dup"
+  curl -s -o /dev/null -w "2nd: %{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "Authorization: Bearer $T_dup" -H "X-Guest-Id: qa-dup"
   # 기대: 1st = 200(자리가 남아 있다면) 또는 409 CHALLENGE_FULL, 2nd = 409 CHALLENGE_ALREADY_JOINED
   ```
 
@@ -554,7 +562,7 @@
 - [ ] 게스트 상태로 계획을 1개 생성해 둔다 → Google 로그인 → **방금 만든 계획이 그대로 보인다**(게스트 보관함 흡수)
 - [ ] 로그인 후 헤더 닉네임이 유지되고(가입 시 로컬 닉네임이 서버로 이관), 로그인 버튼 자리가 **로그아웃** 버튼으로 바뀐다
 - [ ] **다른 브라우저**(또는 시크릿 창)에서 같은 Google 계정으로 로그인 → **같은 계획 목록이 보인다**(기기 간 재연결 — 이번 릴리스의 핵심)
-- [ ] 두 번째 브라우저에서 로그인 **전** 챌린지에 참가해 지갑을 만든 뒤 로그인 → 챌린지 탭 포인트가 **두 지갑의 합**이다(지갑 병합)
+- [ ] 두 번째 브라우저에서 로그인 **전** 게스트 지갑이 생성된 상태(챌린지 탭을 한 번 열어 잔액 1000P 확인 — v0.36.0부터 게스트는 참가할 수 없다)에서 로그인 → 챌린지 탭 포인트가 **두 지갑의 합**이다(지갑 병합)
 - [ ] 로그아웃 → 게스트 보관함(로그인 전에 쓰던 브라우저별 데이터)으로 돌아가고, 다시 로그인하면 계정 데이터가 보인다
 - [ ] 서버 확인(curl) — 로그인 설정 조회(비밀값 아님):
 
@@ -751,7 +759,8 @@
 - [ ] 서버 확인(curl) — 참가 자격 거부:
 
   ```bash
-  curl -s -X POST http://localhost/api/v1/challenges/1/join -H "X-Guest-Id: qa-noplan-0001"
+  # v0.36.0: 참가는 회원 전용 — 고정 계획이 없는 회원의 토큰($T_noplan)으로 호출한다(게스트는 403이 먼저 난다)
+  curl -s -X POST http://localhost/api/v1/challenges/1/join -H "Authorization: Bearer $T_noplan" -H "X-Guest-Id: qa-noplan-0001"
   # 기대: {"success":false,"error":{"code":"CHALLENGE_PLAN_REQUIRED",...}}
   ```
 
@@ -1369,6 +1378,51 @@
 - [ ] **종결 계획·서버 잠금 거부** — 종결 계획의 체크박스는 비활성이고, 서버가 거부하면 성공처럼 표시되지 않는다
 - [ ] 미완료 이월·오늘 마무리(회고)가 기존과 동일하게 동작한다(F-8 · F-6)
 - [ ] 320px에서 빈 상태 버튼이 **잘리거나 하단 탭바와 겹치지 않는다**. 아이콘 버튼(새로고침)은 스크린리더에서 이름("오늘 할 일 새로고침")이 읽히고, 로딩은 상태·실패는 경고로 안내된다
+## F-46. 게스트의 챌린지 참가 차단 (v0.36.0)
+
+> 챌린지 참가는 Google 로그인 회원만 할 수 있다. 게스트 화면은 참가 버튼 대신 로그인 안내를 보이고,
+> 서버는 `Authorization: Bearer` 없는 참가 요청을 403으로 거부한다. **거부 시 참가 등록·정원·포인트가
+> 전혀 변하지 않아야 한다.** `G`=게스트 ID(개발자도구 > Application > Local Storage), `CID`=모집중
+> 챌린지 id(`GET /challenges`), `T`=로그인한 브라우저 Local Storage의 세션 토큰.
+
+### 게스트 화면
+
+- [ ] **게스트로 챌린지 탭** — 모집중 카드에 **참가 버튼이 없고** "챌린지 참가는 로그인 후 이용할 수 있어요. 상단 닉네임 ⚙ → 계정으로 이어서 쓰기" 안내가 보인다
+- [ ] 목록·인원수·내 포인트·참가자 현황(펼치기)은 게스트도 **그대로 볼 수 있다**
+- [ ] 안내대로 **마이페이지 → Google 로그인** 하면 챌린지 탭에 참가 버튼이 **다시 보인다**(계정 변경 시 화면 재마운트)
+- [ ] 로그아웃하면 다시 안내로 돌아간다
+
+### 서버 거부 (curl)
+
+- [ ] **게스트 참가는 403** — 자격(같은 조건의 고정 계획)이 있어도 거부된다:
+
+  ```bash
+  curl -s -w "\n%{http_code}\n" -X POST http://localhost/api/v1/challenges/$CID/join -H "X-Guest-Id: $G"
+  # 기대: {"success":false,"error":{"code":"CHALLENGE_LOGIN_REQUIRED",...}} + HTTP 403
+  ```
+
+- [ ] **거부 전후로 아무것도 변하지 않았다** — 위 호출 전과 후에 각각 조회해 비교한다:
+
+  ```bash
+  curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: $G" \
+    | sed -E 's/.*"balance":([0-9]+).*/balance=\1/'          # 기대: 1000 그대로(차감 없음)
+  curl -s http://localhost/api/v1/challenges -H "X-Guest-Id: $G" \
+    | grep -o "\"id\":$CID,[^}]*\"participantCount\":[0-9]*"   # 기대: participantCount 변동 없음, joined=false
+  curl -s http://localhost/api/v1/challenges/$CID/participants -H "X-Guest-Id: $G"
+  # 기대: me=true 항목 없음(참가 행 미생성)
+  ```
+
+  (postgres 프로필이면 `SELECT count(*) FROM challenge_participants WHERE challenge_id=<CID>;`와
+  `SELECT * FROM point_ledger WHERE tx_key LIKE 'join:<CID>:%';`가 호출 전후 동일)
+
+- [ ] **무효 토큰은 401** — `-H "Authorization: Bearer not-a-token"`을 붙이면 401 `AUTH_TOKEN_INVALID`이고 마찬가지로 상태 불변(게스트로 조용히 폴백해 참가되지 않는다)
+- [ ] **회원은 200** — `-H "Authorization: Bearer $T"`로 참가하면 200이고 잔액이 참가비만큼 줄어든다(F-30 규칙 그대로)
+- [ ] 단위 테스트 `ChallengeControllerTest`(게스트 403·회원 200·무효 토큰 401 + 세 가지 불변)가 통과한다: `cd backend && ./gradlew test --tests '*ChallengeControllerTest'`
+
+### 회귀
+
+- [ ] 로그인 회원의 참가·정원·중복·잔액 규칙(F-30)과 정산(F-35·F-44)이 기존과 같다
+- [ ] 이전 버전에서 **게스트로 참가했던 기록**은 로그인하면 계정으로 흡수되어 카드에 "참가 중"으로 보인다(F-31)
 
 ## 참고
 - **키 없이 배포**한 상태면 E·F 결과는 **템플릿 mock**이라 내용이 정형화되어 있다. 실제 AI 문장을 보려면 키를 넣고 재배포
