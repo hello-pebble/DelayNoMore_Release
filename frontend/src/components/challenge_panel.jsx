@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Users, Coins, ChevronDown, ChevronUp } from 'lucide-react';
 import { fetchChallenges, joinChallenge, fetchChallengeParticipants, fetchPointLedger } from '../db_service';
+import { getAuth } from '../auth';
 
 // Goal Challenge 패널 — 정원이 한정된 목표 챌린지의 목록·참가(v0.21.0).
 // 개설 폼은 없다(v0.23.0): 챌린지는 사용자가 만드는 것이 아니라, 비슷한 조건(기간 + 목적)의
@@ -17,8 +18,13 @@ const JOIN_ERROR_LABEL = {
   POINTS_INSUFFICIENT: '포인트가 부족해 참가할 수 없어요.',
   CHALLENGE_NOT_FOUND: '챌린지를 찾을 수 없어요. 이미 삭제되었을 수 있습니다.',
   CHALLENGE_PLAN_REQUIRED: '같은 조건의 고정된 계획이 있어야 참가할 수 있어요. 계획을 먼저 고정해 주세요.',
-  CHALLENGE_CLOSED: '이미 종료된 챌린지예요.'
+  CHALLENGE_CLOSED: '이미 종료된 챌린지예요.',
+  CHALLENGE_LOGIN_REQUIRED: '챌린지 참가는 로그인 후 이용할 수 있어요.'
 };
+
+// 게스트에게 참가 버튼 대신 보여 주는 안내(v0.36.0). 로그인 버튼은 마이페이지(헤더 닉네임 ⚙)에
+// 하나만 그려지므로 여기서는 경로만 알려 준다. 서버도 게스트 참가를 403으로 거부한다.
+const GUEST_JOIN_NOTICE = '챌린지 참가는 로그인 후 이용할 수 있어요. 상단 닉네임 ⚙ → 계정으로 이어서 쓰기';
 
 // 상태 뱃지 표기 — 판정(status)은 서버가 내려주고 여기는 라벨·색만 고른다.
 const STATUS_BADGE = {
@@ -55,6 +61,9 @@ function payoutLabel(c) {
 }
 
 export default function ChallengePanel() {
+  // 로그인 여부는 렌더 시점에 읽어도 정확하다 — 계정이 바뀌면 App이 ChatCoach(와 이 패널)를
+  // key로 다시 마운트하기 때문(App.jsx의 epoch). 별도 구독·prop 전달을 두지 않는다.
+  const isGuest = !getAuth();
   const [balance, setBalance] = useState(null);
   const [challenges, setChallenges] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -250,8 +259,12 @@ export default function ChallengePanel() {
               </div>
             )}
             {/* 모집 중일 때만 참가 버튼 — 진행중·종료 챌린지에는 할 수 있는 행동이 없다.
-                비활성화는 표시상 편의일 뿐, 판정은 언제나 서버가 한다(파일 상단 주석). */}
-            {c.status === 'RECRUITING' && (
+                비활성화는 표시상 편의일 뿐, 판정은 언제나 서버가 한다(파일 상단 주석).
+                게스트에게는 버튼 대신 로그인 안내 — 이것도 표시일 뿐 실제 차단은 서버의 403이다. */}
+            {c.status === 'RECRUITING' && isGuest && (
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: 1.5 }}>{GUEST_JOIN_NOTICE}</div>
+            )}
+            {c.status === 'RECRUITING' && !isGuest && (
               <button
                 type="button"
                 disabled={c.joined || c.full || joiningId === c.id}
