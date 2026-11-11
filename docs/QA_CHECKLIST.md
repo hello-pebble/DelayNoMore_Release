@@ -1381,6 +1381,63 @@
 - [ ] 로그인 회원의 참가·정원·중복·잔액 규칙(F-30)과 정산(F-35·F-44)이 기존과 같다
 - [ ] 이전 버전에서 **게스트로 참가했던 기록**은 로그인하면 계정으로 흡수되어 카드에 "참가 중"으로 보인다(F-31)
 
+## F-47. 지표 A·B·C 계측 (v0.37.0)
+
+> 캐릭터 독 성공 판정의 기준선을 서버 데이터로 뽑는다. 화면 변화는 없다 — 요청 헤더 `X-Visit-Id` 하나와
+> 마운트 시 `POST /app-opens` 1회가 전부다. 사전 조건: (postgres 프로필) V16 적용. `G`=게스트 ID,
+> `V`=임의 방문 ID(예: `qa-visit-0001`).
+
+### 기록
+
+- [ ] **앱 오픈 1회 기록** — 앱을 열고(게스트 시작 화면 통과) 개발자도구 Network에서 `POST /api/v1/app-opens`가 **200**이고 요청 헤더에 `X-Visit-Id`가 있다. 로컬 dev(StrictMode)에서 요청이 2번 가도:
+
+  ```sql
+  SELECT count(*) FROM app_opens WHERE visit_id = '<Network에서 본 X-Visit-Id>';  -- 기대: 1
+  ```
+
+- [ ] **새로고침 = 새 방문** — F5 후 `X-Visit-Id`가 바뀌고 `app_opens`에 새 행이 생긴다(총 2행)
+- [ ] **로그인·로그아웃으로 재마운트**되면 같은 방문 ID로 다시 보내고 행은 늘지 않는다(1 방문 = 1행)
+- [ ] **체크에 visit_id가 남는다** — 오늘 항목을 체크한 뒤:
+
+  ```sql
+  SELECT type, visit_id FROM audit_events ORDER BY id DESC LIMIT 1;
+  -- 기대: TASK_COMPLETED, visit_id = 현재 화면의 X-Visit-Id
+  ```
+
+- [ ] **슬랙·에이전트 경유 체크는 visit_id가 NULL**이다(슬랙 DM으로 완료 처리 후 위 쿼리 → NULL)
+- [ ] 모든 요청(GET 포함)에 `X-Visit-Id`가 실리지만 **응답 바디 어디에도 나오지 않는다**(`GET /plans/{id}/audit-events`의 항목에 `visitId` 없음)
+
+### 서버 계약 (curl)
+
+- [ ] 방문 ID 없이 호출 → 400 `VISIT_ID_REQUIRED`, 행 없음:
+
+  ```bash
+  curl -s -w "\n%{http_code}\n" -X POST http://localhost/api/v1/app-opens -H "X-Guest-Id: $G"
+  # 기대: {"success":false,"error":{"code":"VISIT_ID_REQUIRED",...}} + 400
+  ```
+
+- [ ] 같은 방문 ID로 2회 호출 → 둘 다 200, 행은 1개:
+
+  ```bash
+  for i in 1 2; do curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost/api/v1/app-opens -H "X-Guest-Id: $G" -H "X-Visit-Id: $V"; done
+  # 기대: 200, 200 → SELECT count(*) FROM app_opens WHERE visit_id = '$V'; = 1
+  ```
+
+- [ ] `X-Guest-Id` 없이 호출 → 400 `GUEST_ID_REQUIRED`
+- [ ] 단위 테스트 통과: `cd backend && ./gradlew test --tests '*AppOpenControllerTest' --tests '*AuditEventServiceTest'`
+
+### 집계 (OPERATIONS.md 2-7장)
+
+- [ ] **지표 A 쿼리**가 KST 일별로 `opens / opens_with_check / pct`를 낸다. 위에서 체크한 방문이 `opens_with_check`에 1로 잡힌다
+- [ ] **지표 B 쿼리**가 V16 **이전** 데이터(기존 `PLAN_CREATED`·`TASK_COMPLETED`)에서도 값을 낸다
+- [ ] **지표 C 쿼리**는 7일이 지난 기준일만 보여 준다(오늘 기준일은 행이 없다)
+
+### 회귀
+
+- [ ] 계획 생성·수정·체크·회고·이월·삭제의 변경 이력이 기존과 같이 남고 화면 "변경 이력"에 그대로 보인다(`visitId` 추가가 `AuditEventResponse`를 바꾸지 않음)
+- [ ] 백엔드가 꺼진 상태에서도 앱이 평소대로 뜬다(`POST /app-opens` 실패는 삼켜지고 콘솔에 unhandled rejection이 없다)
+- [ ] 평문 HTTP(`crypto.randomUUID` 없음) 환경에서도 `X-Visit-Id`가 `v-…` 형식으로 생성된다
+
 ## 참고
 - **키 없이 배포**한 상태면 E·F 결과는 **템플릿 mock**이라 내용이 정형화되어 있다. 실제 AI 문장을 보려면 키를 넣고 재배포
   (`OPENROUTER_API_KEY=... ./deploy/oci-setup.sh`) 후 헤더가 "AI 연결됨"인지 확인하고 E·F를 다시 테스트한다.

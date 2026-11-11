@@ -8,6 +8,8 @@ import com.delaynomore.backend.domain.plan.entity.PlanStatus;
 import com.delaynomore.backend.domain.plan.repository.AuditEventRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Instant;
 import java.util.List;
@@ -149,7 +151,18 @@ public class AuditEventService {
     // 유지한다(DB 행 1:1 관례·응답 형식 불변).
     private void append(long planId, String ownerId, AuditEventType type, String detail, String sessionId) {
         auditEventRepository.append(new AuditEvent(
-                0, planId, ownerId, type.name(), detail, sanitizeSessionId(sessionId), Instant.now().toString()));
+                0, planId, ownerId, type.name(), detail, sanitizeSessionId(sessionId),
+                sanitizeSessionId(currentVisitId()), Instant.now().toString()));
+    }
+
+    // 방문 ID(X-Visit-Id)는 호출 시그니처에 꿰지 않고 현재 HTTP 요청에서 직접 읽는다 — sessionId처럼
+    // 15곳의 컨트롤러·서비스 인자를 늘리지 않기 위해서다. 요청 스레드 밖(SSE 에이전트 실행기·슬랙·
+    // 스케줄러)에서는 null — 지표 A는 화면에서의 직접 체크만 세므로 의도된 공백이다.
+    // ponytail: 에이전트 도구의 체크까지 세어야 하면 AgentContext에 visitId를 실어 넘긴다.
+    private static String currentVisitId() {
+        return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attrs
+                ? attrs.getRequest().getHeader("X-Visit-Id")
+                : null;
     }
 
     private static String sanitizeSessionId(String sessionId) {

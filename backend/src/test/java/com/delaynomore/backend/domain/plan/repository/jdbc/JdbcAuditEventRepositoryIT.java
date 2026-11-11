@@ -23,7 +23,7 @@ class JdbcAuditEventRepositoryIT extends AbstractPostgresIntegrationTest {
     private PlanRepository planRepository;
 
     private static AuditEvent event(long planId, String owner, String type) {
-        return new AuditEvent(0, planId, owner, type, null, "sess-1", "2026-07-21T10:00:00Z");
+        return new AuditEvent(0, planId, owner, type, null, "sess-1", null, "2026-07-21T10:00:00Z");
     }
 
     @Test

@@ -14,6 +14,16 @@
 > 재번호했다. 이미 병합된 커밋 메시지·PR 제목은 과거 기록이라 원문(v0.9.0/v0.10.0/v0.11.0/
 > v0.11.1)을 그대로 둔다.
 
+## [0.37.0]
+
+**캐릭터 독 착수 전에 성공 판정 지표의 기준선을 서버 데이터로 뽑을 수 있게 했다.** `docs/MEETING_character_dock.md` §6은 독의 성공 판정을 A(앱 오픈 → 그 방문에서 첫 완료 체크 도달률)·B(계획 생성 후 24h 내 체크 비율)·C(7일 재방문율)로 고정하고 "A가 계측되지 않았다면 1단계보다 먼저 넣는다"고 못 박았다. B는 기존 `audit_events`(`PLAN_CREATED`·`TASK_COMPLETED`)로 SQL만으로 산출되지만, A·C는 "앱 오픈"을 기록하는 곳이 없고 `X-Session-Id`가 영구 브라우저 ID라 방문을 구분하지 못해 측정할 수 없었다. 분석 SDK·접근 로그·Actuator 없이 최소 두 가지만 추가한다.
+
+**`POST /app-opens` + 방문 ID.** 프론트가 페이지 로드마다 새 `X-Visit-Id`를 만들어 모든 요청에 실고, `ChatCoach` 마운트마다 `POST /api/v1/app-opens`를 1회 보낸다(본문 없음, 실패 무시). 서버는 `app_opens(visit_id PK, owner_id, created_at)`(V16)에 `ON CONFLICT DO NOTHING`으로 기록해 StrictMode 이중 마운트·재시도는 1행이다. `GET /plans`에 부작용을 두지 않은 이유: 새로고침·생성 후 재조회와 "오픈"을 서버가 구분할 수 없어서다. 읽기 행동 전반을 기록하는 것이 아니라 오픈 1건만 별도 테이블에 둔다(`AuditEvent`의 "조회는 기록하지 않는다" 원칙 유지).
+
+**변경 이력에 `visit_id`를 함께 남긴다.** `audit_events.visit_id`(V16)에 같은 방문 ID를 저장해 `app_opens`와 조인하면 "그 방문에서 체크에 도달했는가"가 나온다. 호출 시그니처 15곳에 인자를 늘리지 않고 `AuditEventService.append`가 현재 HTTP 요청의 헤더를 직접 읽는다 — 요청 스레드 밖(SSE 에이전트 실행기·슬랙·스케줄러)에서는 NULL이고, 지표 A는 화면에서의 직접 체크만 세므로 의도된 공백이다. 기존 행도 NULL이라 **기준선은 배포 이후부터 쌓인다**. 집계 SQL(A·B·C, KST 일 단위)은 `docs/OPERATIONS.md` 2-7장. 조회 API·대시보드는 만들지 않았다(운영자 SQL).
+
+**다음:** 배포 후 최소 7일 기준선을 모은 뒤 캐릭터 독 1단계(`MEETING_character_dock.md` §5)에 착수한다.
+
 ## [0.36.0]
 
 **챌린지 참가는 로그인한 회원만 할 수 있다.** 참가비와 정산은 포인트가 걸린 약속인데, 게스트 신원은 브라우저를 잃으면 재연결할 수 없어 휘발성 계정에 포인트 약속을 묶는 꼴이었다. 이제 `POST /challenges/{id}/join`은 `Authorization: Bearer` 없이 오면 **403 `CHALLENGE_LOGIN_REQUIRED`** 로 거부한다. 소유자 문자열만으로는 게스트·회원을 구분할 수 없어(둘 다 접두사 없는 UUID) 슬랙 연결(`SLACK_LOGIN_REQUIRED`)과 같은 방식으로 컨트롤러가 헤더 존재를 확인하고, 헤더가 있는데 무효면 기존대로 401이다. **서비스 호출 전에 거부하므로 거부 시 참가 등록·정원 변경·포인트 차감이 전혀 없다**(`ChallengeControllerTest`가 세 가지 불변을 확인). 목록·참가자 현황 조회는 게스트도 그대로 볼 수 있다.

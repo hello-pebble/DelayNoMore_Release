@@ -20,7 +20,7 @@ import {
 } from '../ai_engine';
 import {
   fetchPlan, deletePlan, carryOverPlan, putReflection,
-  fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes,
+  fetchReflections, fetchAuditEvents, fetchReflectionOptions, fetchAuditEventTypes, postAppOpen,
   fetchWeeklySummary, postRecommendation, postRecommendationDraft, confirmRecommendation,
   confirmPlan, completePlan, cancelPlan, fetchPlanStatuses, createPlanDraftSession, postPlanDraftSessionMessage,
   updateTaskCompletion, fetchTodayDashboard, fetchAgentTools,
@@ -383,6 +383,9 @@ export default function ChatCoach({ agentEnabled = false }) {
   // 성공한 응답만 반영하고 실패는 조용히 폴백 유지(allSettled — 한쪽 실패가 다른 쪽을 막지 않게).
   useEffect(() => {
     let cancelled = false;
+    // 앱 오픈 기록(지표 A의 분모, v0.37.0) — 계정 변경으로 다시 마운트되면 다시 보내고, StrictMode
+    // 이중 마운트는 같은 방문 ID라 서버가 1건으로 합친다. 화면과 무관하므로 실패는 삼킨다.
+    postAppOpen().catch(() => {});
     (async () => {
       const [reflection, auditTypes, planStatuses] = await Promise.allSettled([
         fetchReflectionOptions(),

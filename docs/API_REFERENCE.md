@@ -13,6 +13,7 @@
 | `X-Guest-Id` | 요청 | `/api/v1/plans*` 전부(GET 포함) | **필수** | 브라우저가 생성한 소유자 키(안정 식별자). 값 규칙 `^[A-Za-z0-9-]{8,64}$`(예: `550e8400-e29b-41d4-a716-446655440000`). 누락 → 400 `GUEST_ID_REQUIRED`, 형식 위반 → 400 `GUEST_ID_INVALID`. **닉네임은 이 헤더에 담기지 않으며 서버로 전송되지 않는다**(화면 표시용 라벨). |
 | `X-Guest-Id` | 요청 | `/api/v1/ai/plan-draft-sessions*`, `/api/v1/dashboard/today` | **필수** | 작성 세션의 소유자와 오늘 읽기 모델의 범위를 정한다(v0.19.0). |
 | `X-Session-Id` | 요청 | `/plans` POST·PUT·DELETE, 회고 PUT | 선택 | 변경 이력의 "이 브라우저/다른 세션" 귀속용. 없으면 이력에 `sessionId: null`. 읽기(GET)에는 받지 않는다. |
+| `X-Visit-Id` | 요청 | 모든 요청(프론트가 자동 첨부) | `POST /app-opens`만 **필수**, 그 외 선택 (v0.37.0) | 페이지 로드마다 새로 만드는 **방문 ID**(지표 A의 "그 방문" 경계). 서버는 `app_opens`와 변경 이력(`audit_events.visit_id`)에만 저장하고 응답에 노출하지 않는다. 64자 초과는 절단. |
 | `Authorization: Bearer <token>` | 요청 | 소유자 스코프 전 엔드포인트 | 선택 (v0.22.0) | 로그인 세션 토큰(`POST /auth/google` 응답). 있으면 서버가 `X-Guest-Id` 대신 **계정을 소유자로 해석**한다(`@Owner` 리졸버). 무효·만료면 401 `AUTH_TOKEN_INVALID` — 게스트로 조용히 폴백하지 않는다. 없으면 기존 게스트 해석 그대로. |
 | `Cache-Control: no-store` | 응답 | `/api/v1/plans*`, `/dashboard/today`, `/ai/plan-draft-sessions*` | — | 소유자별 개인 데이터·작성 중 입력이라 프록시·브라우저 캐시 금지(`global/config/WebConfig`, v0.19.0 범위 확장). |
 | `Access-Control-Allow-Headers: X-Guest-Id` | 응답(프리플라이트) | OPTIONS | — | CORS 프리플라이트에서 `X-Guest-Id` 요청 헤더 허용(`@CrossOrigin` 기본 allowedHeaders). |
@@ -42,6 +43,7 @@ SSE를 제외한 모든 REST 응답은 아래 형태로 감쌉니다.
 | `INVALID_INPUT` | 400 | 모든 `@Valid` 검증 실패 (fieldErrors 동반) |
 | `GUEST_ID_REQUIRED` | 400 | `X-Guest-Id` 헤더 누락/공백 |
 | `GUEST_ID_INVALID` | 400 | `X-Guest-Id` 형식 위반(영문·숫자·하이픈 8~64자 아님) |
+| `VISIT_ID_REQUIRED` | 400 | `POST /app-opens`에 `X-Visit-Id` 누락/공백 (v0.37.0) |
 | `PLAN_LIMIT_EXCEEDED` | 400 | 소유자당 계획 개수 초과(최대 10개) |
 | `PLAN_DAILY_LIMIT_EXCEEDED` | 429 | 하루 계획 생성 한도(5회) 초과 — 카운트 소스는 감사 이력(`PLAN_CREATED`)이라 삭제-재생성으로 우회 불가 |
 | `METHOD_NOT_ALLOWED` | 405 | 지원하지 않는 메서드 — 없어진 엔드포인트(예: v0.22.0의 챌린지 개설 POST)를 부르는 구형 클라이언트 대응 |
@@ -680,6 +682,21 @@ startDate/endDate가 없으면(비정상) `weeks`는 빈 배열입니다. 없는
 - `ledgerSum`이 `balance`와 다르면 그 자체가 사고 신호다 — 프론트는 숨기지 않고 표시한다.
 
 ---
+
+## 지표 (`/api/v1/app-opens`) — v0.37.0, 쓰기 전용
+
+### M-1. POST /app-opens — 앱 오픈 기록 (방문당 1회, 멱등)
+
+**본문 없는 POST.** 프론트가 `ChatCoach` 마운트마다 1회 보낸다. **필수 헤더** `X-Guest-Id`(또는 `Authorization: Bearer`), `X-Visit-Id`.
+`visit_id`가 PK라 같은 방문의 재호출(StrictMode 이중 마운트·재시도)은 `ON CONFLICT DO NOTHING`으로 무시된다.
+지표 A(앱 오픈 → 그 방문에서 첫 완료 체크 도달률)의 분모이며, 조회 API는 없다 — 집계는 `docs/OPERATIONS.md` 2-7장의 SQL.
+
+```json
+// 응답
+{ "success": true, "data": null }
+```
+
+오류: 400 `VISIT_ID_REQUIRED`, 400 `GUEST_ID_REQUIRED`, 401 `AUTH_TOKEN_INVALID`
 
 ## 오늘 Dashboard (`/api/v1/dashboard`)
 

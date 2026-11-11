@@ -29,8 +29,8 @@ public class JdbcAuditEventRepository implements AuditEventRepository {
     @Override
     public AuditEvent append(AuditEvent event) {
         String sql = """
-                INSERT INTO audit_events (plan_id, owner_id, type, detail, session_id, created_at)
-                VALUES (:planId, :ownerId, :type, :detail, :sessionId, :createdAt)
+                INSERT INTO audit_events (plan_id, owner_id, type, detail, session_id, visit_id, created_at)
+                VALUES (:planId, :ownerId, :type, :detail, :sessionId, :visitId, :createdAt)
                 RETURNING id
                 """;
         MapSqlParameterSource params = new MapSqlParameterSource()
@@ -39,6 +39,7 @@ public class JdbcAuditEventRepository implements AuditEventRepository {
                 .addValue("type", event.type())
                 .addValue("detail", event.detail())
                 .addValue("sessionId", event.sessionId())
+                .addValue("visitId", event.visitId())
                 .addValue("createdAt", event.createdAt());
         Long id = jdbc.queryForObject(sql, params, Long.class);
         return event.withId(id);
@@ -89,6 +90,7 @@ public class JdbcAuditEventRepository implements AuditEventRepository {
                 rs.getString("type"),
                 rs.getString("detail"),
                 rs.getString("session_id"),
+                rs.getString("visit_id"),
                 rs.getString("created_at"));
     }
 }

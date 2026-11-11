@@ -13,10 +13,12 @@ public record AuditEvent(
                            // | TASK_REOPENED | REFLECTION_SAVED | PLAN_DELETED
         String detail,     // 사람이 읽는 부가 설명(한국어, 없으면 null)
         String sessionId,  // X-Session-Id 헤더 값(구형 클라이언트/curl은 null → 화면에서 "알 수 없음")
+        String visitId,    // X-Visit-Id 헤더 값(페이지 로드 단위, v0.37.0) — app_opens와 조인해 "그 방문에서
+                           // 첫 체크 도달"(지표 A)을 센다. 슬랙·에이전트 경로·구형 클라이언트는 null.
         String createdAt   // 발생 시각(ISO 문자열)
 ) {
 
     public AuditEvent withId(long newId) {
-        return new AuditEvent(newId, planId, ownerId, type, detail, sessionId, createdAt);
+        return new AuditEvent(newId, planId, ownerId, type, detail, sessionId, visitId, createdAt);
     }
 }
