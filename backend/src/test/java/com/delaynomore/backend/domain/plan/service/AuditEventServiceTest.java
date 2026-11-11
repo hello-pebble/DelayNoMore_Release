@@ -371,7 +371,7 @@ class AuditEventServiceTest {
     void append_상한초과_가장오래된것부터축출() {
         // given — 저장소 직접 검증: 상한을 넘겨 append하면 오래된 이벤트가 밀려난다
         for (int i = 0; i < 1010; i++) {
-            auditEventRepository.append(new AuditEvent(0, 1L, OWNER, "PLAN_UPDATED", null, null, "t" + i));
+            auditEventRepository.append(new AuditEvent(0, 1L, OWNER, "PLAN_UPDATED", null, null, null, "t" + i));
         }
 
         // then

@@ -3,6 +3,7 @@
 // 인증·목표 저장·팀·알림 등은 제거되었다.
 
 import { getSessionId } from './session_id';
+import { getVisitId } from './visit_id';
 import { getGuestId } from './guest_id';
 import { getAuth, clearAuth } from './auth';
 
@@ -23,6 +24,9 @@ const requestJson = async (path, payload, method = 'POST') => {
     // 변경 이력의 세션 귀속용 — 서버는 변이 요청에서만 이 헤더를 읽고, 읽기는 기록하지 않는다.
     headers['X-Session-Id'] = getSessionId();
   }
+  // 방문 단위 식별(v0.37.0) — 읽기에도 실린다. 서버는 앱 오픈 기록과 변경 이력에만 저장해
+  // "이 방문에서 첫 체크에 도달했는가"(지표 A)를 센다. 읽기 행동 자체는 여전히 기록하지 않는다.
+  headers['X-Visit-Id'] = getVisitId();
   // 소유자 스코프 — 계획·회고·이력 API는 브라우저 게스트 ID로 데이터가 격리되므로 읽기에도
   // 필요하다. 요청 진입 시점에 한 번 고정해 붙인다(호출 도중 소유자 전환이 생겨도 이 요청은 시작
   // 시점의 소유자로만 나간다 — 로그인 도입 후 guestId→memberId 전환 대비). guestId는 ASCII라
@@ -68,6 +72,10 @@ const requestJson = async (path, payload, method = 'POST') => {
 
   return body.data;
 };
+
+// 앱 오픈 기록(v0.37.0) — ChatCoach 마운트마다 1회. 본문 없음, 방문 ID(X-Visit-Id)가 PK라 중복 호출은
+// 서버가 무시한다. 지표 집계 전용이라 실패해도 화면에 아무 영향이 없다(호출부에서 삼킨다).
+export const postAppOpen = () => requestJson('/app-opens', null);
 
 // AI 계획 초안 생성 요청 — 백엔드(/api/v1/ai/drafts)가 OpenRouter 호출을 대행한다(키는 서버에만 보관).
 // 응답 data: { 날짜: [할 일 문자열] }

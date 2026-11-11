@@ -204,6 +204,55 @@ SELECT p.challenge_id, p.owner, p.plan_id, p.completed_at, pl.goal_name
 > (원장은 append-only, 잔액은 캐시). 다만 그 전에 어긋난 경위를 먼저 찾는다 — 어긋남 자체가
 > 지갑을 원자 구간 밖에서 건드린 코드가 있다는 신호다.
 
+### 2-7. 지표 A·B·C 조회 (v0.37.0, V16)
+
+캐릭터 독 성공 판정(`docs/MEETING_character_dock.md` §6)의 기준선. 대시보드·조회 API는 없고 아래 SQL을
+직접 실행한다. 시각 컬럼은 UTC ISO 문자열이라 `::timestamptz` 캐스트 후 `AT TIME ZONE 'Asia/Seoul'`로
+KST 일 단위에 귀속한다. **기준선은 V16 배포 이후부터** 쌓인다(기존 `audit_events.visit_id`는 NULL).
+
+```sql
+-- A. 앱 오픈 → 그 방문에서 완료 체크 도달률 (KST 일별)
+--    분모 = app_opens 행(방문), 분자 = 같은 visit_id로 TASK_COMPLETED가 1건 이상인 방문.
+--    슬랙·에이전트 경유 체크는 visit_id가 NULL이라 자연히 빠진다(화면 직접 체크만 센다).
+SELECT (o.created_at::timestamptz AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
+       count(*)                                                     AS opens,
+       count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM audit_events e
+            WHERE e.visit_id = o.visit_id AND e.type = 'TASK_COMPLETED')) AS opens_with_check,
+       round(100.0 * count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM audit_events e
+            WHERE e.visit_id = o.visit_id AND e.type = 'TASK_COMPLETED')) / count(*), 1) AS pct
+  FROM app_opens o
+ GROUP BY 1 ORDER BY 1 DESC;
+
+-- B. 계획 생성 후 24시간 내 완료 체크 1건 이상 비율 (생성일 KST 기준)
+--    plan_id로 조인한다 — 로그인 시 owner_id가 re-key돼도 plan_id는 불변.
+SELECT (c.created_at::timestamptz AT TIME ZONE 'Asia/Seoul')::date AS day_kst,
+       count(*) AS plans_created,
+       count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM audit_events e
+            WHERE e.plan_id = c.plan_id AND e.type = 'TASK_COMPLETED'
+              AND e.created_at::timestamptz BETWEEN c.created_at::timestamptz
+                                               AND c.created_at::timestamptz + interval '24 hours')) AS checked_within_24h
+  FROM audit_events c
+ WHERE c.type = 'PLAN_CREATED'
+ GROUP BY 1 ORDER BY 1 DESC;
+
+-- C. 7일 재방문율 — 기준일(d)에 오픈한 소유자 중 d+1 ~ d+7 사이에 다시 오픈한 비율
+WITH daily AS (
+  SELECT DISTINCT owner_id, (created_at::timestamptz AT TIME ZONE 'Asia/Seoul')::date AS d FROM app_opens)
+SELECT a.d AS day_kst, count(*) AS owners,
+       count(*) FILTER (WHERE EXISTS (
+           SELECT 1 FROM daily b WHERE b.owner_id = a.owner_id AND b.d BETWEEN a.d + 1 AND a.d + 7)) AS returned_7d
+  FROM daily a
+ WHERE a.d <= (now() AT TIME ZONE 'Asia/Seoul')::date - 7   -- 7일이 지난 기준일만 확정값
+ GROUP BY 1 ORDER BY 1 DESC;
+```
+
+> 기록 방식(조인 키·NULL 규칙)과 채택하지 않은 대안은 `docs/PLAN_METRICS_FIRST_CHECK.md`. 지표 판정 기준(+10%p 등)은
+> 회의록 §6에 고정돼 있고 사후에 바꾸지 않는다. 게스트→로그인 흡수 시 `app_opens.owner_id`는 re-key하지 않아
+> C는 전환 당일 1명이 2명으로 보일 수 있다(A·B는 영향 없음).
+
 ## 3. 안정화 단계 (P1)
 
 - **관측 강화** — Spring Actuator(health/metrics) 도입 검토, `ai.usage` 로그를 주기 집계해
@@ -256,7 +305,7 @@ EVAL 하네스로 실측 후가 원칙([EVAL.md](EVAL.md)).
 | 주기 | 할 일 |
 | :--- | :--- |
 | 상시(자동) | 업타임 감시·알림(정산 트리거 겸용), 일일 DB 백업 cron(+오프사이트 복사), LLM 일일 상한, OpenRouter 비용 알림 |
-| 주 1회 | 정산 확인 + **포인트 원장 불변식 2종 점검(2-6장)**, `ai.usage` 비용 집계 + `ai.ratelimit blocked` 확인, 슬랙 발송 실패 확인(`docker logs`에서 `slack dispatch failed`·`slack postMessage failed`), 디스크·로그·Supabase 상태 확인 |
+| 주 1회 | 정산 확인 + **포인트 원장 불변식 2종 점검(2-6장)**, **지표 A·B·C 기록(2-7장)**, `ai.usage` 비용 집계 + `ai.ratelimit blocked` 확인, 슬랙 발송 실패 확인(`docker logs`에서 `slack dispatch failed`·`slack postMessage failed`), 디스크·로그·Supabase 상태 확인 |
 | 릴리스마다 | (기존 관례) QA 체크리스트 + README 변경 표, 배포 후 health 확인, 스키마 변경 유무(롤백 가능 여부) 기록 |
 | 분기 1회 | 복원 리허설, 키 로테이션, OS 패치 상태 점검 |
 

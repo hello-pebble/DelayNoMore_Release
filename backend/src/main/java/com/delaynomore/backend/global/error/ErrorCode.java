@@ -14,6 +14,8 @@ public enum ErrorCode {
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "지원하지 않는 요청 방식입니다."),
     GUEST_ID_REQUIRED(HttpStatus.BAD_REQUEST, "게스트 식별자가 필요합니다. X-Guest-Id 헤더를 확인해주세요."),
     GUEST_ID_INVALID(HttpStatus.BAD_REQUEST, "게스트 식별자 형식이 올바르지 않습니다(영문·숫자·하이픈 8~64자)."),
+    // 앱 오픈 기록(v0.37.0)은 방문 ID가 PK라 없으면 기록할 수 없다 — 지표 전용 엔드포인트라 사용자 노출 문구는 아니다.
+    VISIT_ID_REQUIRED(HttpStatus.BAD_REQUEST, "방문 식별자가 필요합니다. X-Visit-Id 헤더를 확인해주세요."),
     AI_UPSTREAM_ERROR(HttpStatus.BAD_GATEWAY, "AI 응답을 가져오지 못했습니다. 잠시 후 다시 시도해주세요."),
     AI_RESPONSE_INVALID(HttpStatus.BAD_GATEWAY, "AI 응답을 해석하지 못했습니다. 잠시 후 다시 시도해주세요."),
     // 에이전트 루프가 도구 호출 상한(MAX_TOOL_TURNS)까지 가고도 최종 답을 못 낸 경우.
