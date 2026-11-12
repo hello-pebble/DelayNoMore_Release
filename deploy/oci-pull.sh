@@ -135,22 +135,34 @@ if [ -n "${DOMAIN}" ]; then
 
   # Caddyfile — 도메인만 적으면 인증서 발급·갱신과 80→443 리다이렉트가 전부 자동이다.
   mkdir -p ~/caddy
-  cat > ~/caddy/Caddyfile <<'EOF'
-{$DOMAIN}
-
-reverse_proxy delaynomore:8080
+  # 이미 있는 Caddyfile은 덮어쓰지 않는다 — 같은 서버의 다른 서비스(n8n 등) 사이트 블록을 직접 넣어 쓰기 때문.
+  if [ ! -f ~/caddy/Caddyfile ]; then
+    cat > ~/caddy/Caddyfile <<'EOF'
+{$DOMAIN} {
+	reverse_proxy delaynomore:8080
+}
 EOF
-  sudo docker rm -f caddy 2>/dev/null || true
-  # caddy_data 볼륨은 인증서 보존용 — 지우면 재발급이 반복돼 Let's Encrypt 한도에 걸린다.
-  sudo docker run -d \
-    --name caddy \
-    --restart unless-stopped \
-    --network dnm \
-    -p 80:80 -p 443:443 \
-    -e DOMAIN="${DOMAIN}" \
-    -v ~/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
-    -v caddy_data:/data \
-    caddy:2
+  else
+    echo "==> 기존 ~/caddy/Caddyfile 유지 (덮어쓰지 않음)"
+  fi
+  # Caddy가 이미 떠 있으면 건드리지 않는다. 앱 컨테이너만 다시 만들어도 같은 dnm 네트워크의
+  # delaynomore 이름으로 다시 연결되므로, 다른 서비스 중단·인증서 재발급이 없다.
+  # (도메인·Caddyfile을 바꿨다면: docker exec caddy caddy reload --config /etc/caddy/Caddyfile)
+  if [ -z "$(sudo docker ps -q -f name='^caddy$')" ]; then
+    sudo docker rm -f caddy 2>/dev/null || true
+    # caddy_data 볼륨은 인증서 보존용 — 지우면 재발급이 반복돼 Let's Encrypt 한도에 걸린다.
+    sudo docker run -d \
+      --name caddy \
+      --restart unless-stopped \
+      --network dnm \
+      -p 80:80 -p 443:443 \
+      -e DOMAIN="${DOMAIN}" \
+      -v ~/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+      -v caddy_data:/data \
+      caddy:2
+  else
+    echo "==> caddy 실행 중 — 그대로 둠"
+  fi
 else
   sudo docker run -d \
     --name "${NAME}" \
