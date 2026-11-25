@@ -44,6 +44,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          # x86(E2 등)와 Ampere A1(arm64) 서버 모두 같은 태그로 pull 할 수 있게 멀티 아키텍처로 올린다.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

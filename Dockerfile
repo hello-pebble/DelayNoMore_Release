@@ -2,7 +2,8 @@
 # 넣고, 하나의 jar/컨테이너가 정적 화면과 /api/* 를 모두 서빙한다.
 
 # 1) 프론트엔드 빌드
-FROM node:20-alpine AS frontend
+# (빌드 단계는 산출물이 플랫폼 무관하므로 빌드 머신의 네이티브로 돌린다 — arm64 이미지도 QEMU 없이 빠르게)
+FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -10,7 +11,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # 2) 백엔드 빌드 (프론트 산출물을 static 으로 포함)
-FROM gradle:8-jdk21 AS backend
+FROM --platform=$BUILDPLATFORM gradle:8-jdk21 AS backend
 WORKDIR /app
 COPY backend/gradlew ./
 COPY backend/gradle gradle
