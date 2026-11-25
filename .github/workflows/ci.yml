@@ -26,7 +26,9 @@ jobs:
 
   backend:
     name: Backend (build + test)
-    runs-on: ubuntu-latest
+    # ubuntu-latest가 26.04로 바뀐 뒤 Testcontainers(1.20.4)가 Docker를 못 써 *IT가 전부 스킵됐다(2026-11-25).
+    # 통과하던 24.04로 고정한다. Testcontainers를 올려 26.04에서 검증되면 latest로 되돌린다.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
