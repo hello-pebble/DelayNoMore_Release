@@ -95,6 +95,20 @@ class UpdatePlanTasksToolTest {
         assertThat(result.message()).contains("patch가 비어 있습니다");
     }
 
+    @Test
+    void 실재하지_않는_날짜는_반영하지_않고_실패로_돌려준다() {
+        // 실측 재현: 11월 28일에 끝나는 계획을 "3일 늘려줘"로 연장하자 모델이 11-29~11-31을 냈다.
+        // 반영했다면 화면엔 늘어난 계획이 보이지만 저장 PUT은 400 → 고정 시 사라진다.
+        AgentContext context = contextWithPlanOf(7);
+        ToolResult result = tool.execute(patch("""
+                {"patch": {"2026-11-30": ["할 일"], "2026-11-31": ["할 일"]}}
+                """), context);
+
+        assertThat(result.ok()).isFalse();
+        assertThat(result.message()).contains("[2026-11-31]");
+        assertThat(context.currentTasks()).hasSize(7);
+    }
+
     // --- helpers ---
 
     // 2026-07-27부터 연속 n일짜리 계획을 가진 DRAFT 문맥. 현재 계획은 실제 병합기로 정규화해

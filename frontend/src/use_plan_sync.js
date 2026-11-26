@@ -127,6 +127,19 @@ export function usePlanSync({
         }
         return;
       }
+      if (err.code === 'INVALID_INPUT') {
+        // 서버 검증 거부(400) — 재시도해도 같은 결과라 대기 변경을 버리고 서버 상태로 되돌린다.
+        // 예전엔 일시 오류로 취급해 조용히 재시도만 반복했고, 화면엔 저장 안 된 변경이 남아
+        // 고정 시 사라졌다(에이전트가 만든 2026-11-31 같은 날짜).
+        notify(`⚠️ 계획 변경을 저장하지 못해 이전 상태로 되돌렸어요. (${err.message})`);
+        try {
+          const fresh = await fetchPlan(pending.id);
+          if (aliveRef.current) applyServerPlan(fresh);
+        } catch {
+          /* 되돌리기 실패 — 다음 조회 때 재동기화된다 */
+        }
+        return;
+      }
       if (err.code !== 'PLAN_NOT_FOUND') {
         console.warn('계획 동기화 실패 — 다음 변경 때 다시 시도합니다:', err);
         dirtyRef.current = pending; // 일시 오류: 되돌려 놔 다음 변경/전환에서 재시도

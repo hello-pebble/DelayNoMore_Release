@@ -176,4 +176,16 @@ class ChatPatchMergerTest {
         assertThat(ChatPatchMerger.merge(current, null)).isNull();
         assertThat(ChatPatchMerger.merge(current, Map.of())).isNull();
     }
+
+    @Test
+    void merge_실재하지않는날짜가있으면_null반환() {
+        // 자유 대화 경로도 같은 병합기를 쓰므로, 저장 검증에서 400이 날 계획을 내보내지 않는다.
+        Map<String, Object> current = Map.of("2026-11-30", List.of(task("t-1", "단어 암기", false)));
+        Map<String, Object> patch = new LinkedHashMap<>();
+        patch.put("2026-12-01", List.of("복습"));
+        patch.put("2026-11-31", List.of("복습"));
+
+        assertThat(ChatPatchMerger.invalidDates(patch)).containsExactly("2026-11-31");
+        assertThat(ChatPatchMerger.merge(current, patch)).isNull();
+    }
 }

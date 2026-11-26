@@ -1,5 +1,7 @@
 package com.delaynomore.backend.domain.ai.service;
 
+import com.delaynomore.backend.domain.plan.support.PlanDates;
+
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -21,10 +23,20 @@ public final class ChatPatchMerger {
     private ChatPatchMerger() {
     }
 
+    // patch 중 실재하지 않는 날짜 키("2026-11-31", "2026-7-1" 등) — 저장 검증(PlanTasksValidator)과
+    // 같은 기준(PlanDates.isIsoDate)이다. 병합 단계에서 걸러야 저장 PUT이 400으로 튕기기 전에 막힌다.
+    public static List<String> invalidDates(Map<String, Object> patch) {
+        if (patch == null) {
+            return List.of();
+        }
+        return patch.keySet().stream().filter(date -> !PlanDates.isIsoDate(date)).toList();
+    }
+
     // patch(변경된 날짜만: 값이 List면 그 날의 새 할 일 문자열/객체, null이면 삭제)를 현재 계획에
-    // 병합해 정규화된 전체 tasks를 돌려준다. 병합 후 남는 날짜가 없으면 null(변경 없음 취급).
+    // 병합해 정규화된 전체 tasks를 돌려준다. 병합 후 남는 날짜가 없거나, 실재하지 않는 날짜가 하나라도
+    // 있으면 null(변경 없음 취급) — 저장될 수 없는 계획을 화면에 내보내지 않는다.
     public static Map<String, Object> merge(Map<String, Object> currentTasks, Map<String, Object> patch) {
-        if (patch == null || patch.isEmpty()) {
+        if (patch == null || patch.isEmpty() || !invalidDates(patch).isEmpty()) {
             return null;
         }
         Map<String, Object> next = new LinkedHashMap<>(currentTasks == null ? Map.of() : currentTasks);
