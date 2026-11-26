@@ -34,6 +34,27 @@ class PlanDraftSessionServiceTest {
     }
 
     @Test
+    void 첫_답의_기간과_하루_시간을_채우고_목표명은_기간_앞까지로_줄인다() {
+        PlanDraftSessionService service = new PlanDraftSessionService(mock(AiService.class), mock(PlanService.class));
+        String owner = "guest-12345678";
+
+        String id = service.create(owner).sessionId();
+        PlanDraftSessionResponse r = service.accept(id, owner,
+                "React 기초 공부를 2주 안에 끝내고 싶어. 하루 1시간 가능해.", "browser-session");
+        assertThat(r.slots()).containsEntry("goalName", "React 기초 공부")
+                .containsEntry("duration", 14).containsEntry("dailyHours", 1);
+        assertThat(r.nextInput()).isEqualTo("currentLevel");
+
+        // 범위 밖 기간은 채우지 않고 묻는다 / 문장 맨 앞의 기간 표현은 목표의 일부로 둔다.
+        String id2 = service.create(owner).sessionId();
+        PlanDraftSessionResponse tooLong = service.accept(id2, owner, "토익 3주 완성", "browser-session");
+        assertThat(tooLong.slots()).containsEntry("goalName", "토익").containsEntry("duration", 0);
+        String id3 = service.create(owner).sessionId();
+        PlanDraftSessionResponse leading = service.accept(id3, owner, "1일 1커밋 하기", "browser-session");
+        assertThat(leading.slots()).containsEntry("goalName", "1일 1커밋 하기").containsEntry("duration", 0);
+    }
+
+    @Test
     void 초안이_판정한_카테고리가_계획_저장까지_전달된다() {
         // 카테고리는 초안 생성 LLM 호출이 함께 돌려준다(추가 호출 없음). 그 값이 저장 경로까지
         // 이어지지 않으면 챌린지 조건이 목표명 키워드 폴백으로만 정해진다.
