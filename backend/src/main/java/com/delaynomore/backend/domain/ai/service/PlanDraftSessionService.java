@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 계획 작성 대화의 질문 순서, 입력 해석, 초안 생성 및 최초 저장을 서버에서 처리한다.
@@ -67,6 +69,9 @@ public class PlanDraftSessionService {
                 return session.response(validationMessage(slot));
             }
             session.slots.put(slot, value);
+            if (GOAL_NAME.equals(slot)) {
+                applyGoalSentenceHints(session.slots, message);
+            }
             String next = nextInput(session.slots);
             if (next != null) {
                 return session.response(question(next));
@@ -118,6 +123,33 @@ public class PlanDraftSessionService {
             case DAILY_HOURS -> parseNumber(message, 1, 24);
             default -> null;
         };
+    }
+
+    private static final Pattern DURATION_HINT = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*(주|일)");
+    private static final Pattern HOURS_HINT = Pattern.compile("(?<!\\d)(\\d{1,2})\\s*시간");
+    private static final Pattern GOAL_TAIL = Pattern.compile("[\\s.,!?~]*(?:을|를|은|는)?[\\s.,!?~]*$");
+
+    /**
+     * 첫 답에 기간·하루 시간이 함께 들어오면("React 기초를 2주 안에… 하루 1시간") 해당 슬롯을 채워
+     * 같은 질문을 다시 하지 않게 하고, 목표명은 기간 표현 앞까지로 줄인다(계획 제목이 문장 전체가 되지 않게).
+     * ponytail: 정규식 휴리스틱 — 기간 표현이 문장 맨 앞이면("1일 1커밋") 목표의 일부로 보고 건드리지 않는다.
+     * 범위 밖 값(3주=21일 등)은 채우지 않아 기존 질문 흐름이 그대로 묻는다.
+     */
+    private static void applyGoalSentenceHints(Map<String, Object> slots, String message) {
+        Matcher duration = DURATION_HINT.matcher(message);
+        if (duration.find()) {
+            String goal = GOAL_TAIL.matcher(message.substring(0, duration.start())).replaceFirst("");
+            if (goal.length() >= 2) {
+                slots.put(GOAL_NAME, goal);
+                int days = Integer.parseInt(duration.group(1)) * ("주".equals(duration.group(2)) ? 7 : 1);
+                if (days >= 1 && days <= 14) slots.put(DURATION, days);
+            }
+        }
+        Matcher hours = HOURS_HINT.matcher(message);
+        if (hours.find()) {
+            int value = Integer.parseInt(hours.group(1));
+            if (value >= 1 && value <= 24) slots.put(DAILY_HOURS, value);
+        }
     }
 
     private static Integer parseNumber(String message, int min, int max) {
