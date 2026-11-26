@@ -70,6 +70,12 @@ public class UpdatePlanTasksTool implements AgentTool {
         if (patch == null || patch.isEmpty()) {
             return ToolResult.fail("patch가 비어 있습니다. 변경할 날짜를 담은 객체를 주세요.");
         }
+        List<String> invalid = ChatPatchMerger.invalidDates(patch);
+        if (!invalid.isEmpty()) {
+            // 모델이 달력을 틀리게 세는 경우(11월 31일 등) — 반영하지 않고 사유를 돌려줘 다시 호출하게 한다.
+            return ToolResult.fail("실재하지 않는 날짜라 반영하지 않았습니다: " + invalid
+                    + ". 달력 기준의 YYYY-MM-DD로 다시 호출하세요(예: 11월 30일 다음 날은 12월 1일).");
+        }
 
         Map<String, Object> merged = ChatPatchMerger.merge(context.currentTasks(), patch);
         if (merged == null || merged.isEmpty()) {
